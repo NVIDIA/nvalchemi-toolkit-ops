@@ -100,9 +100,6 @@ from nvalchemiops.torch.interactions.electrostatics._ewald_direct import (
 from nvalchemiops.torch.interactions.electrostatics._ewald_real_chain import (
     real_space_cell_connect,
 )
-from nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain import (
-    _recip_ksum_energy_torch,
-)
 from nvalchemiops.torch.interactions.electrostatics._registration import (
     ensure_electrostatics_ops_registered,
 )
@@ -598,37 +595,6 @@ def _apply_reciprocal_corrections(
     )
 
 
-def _reciprocal_system_energy_torch(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-    cell: torch.Tensor,
-    k_vectors_2d: torch.Tensor,
-    alpha: torch.Tensor,
-    batch_idx: torch.Tensor | None,
-    num_systems: int,
-) -> torch.Tensor:
-    """Return pure-Torch reciprocal system energies for terminal facades."""
-    cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
-    volume = torch.abs(torch.linalg.det(cell_3d)).to(torch.float64)
-    ksum = _recip_ksum_energy_torch(
-        positions,
-        charges,
-        k_vectors_2d,
-        volume,
-        alpha,
-        batch_idx,
-        num_systems,
-    )
-    energy = _apply_reciprocal_corrections(
-        ksum,
-        charges,
-        volume,
-        alpha,
-        batch_idx,
-    )
-    return _reduce_atom_energy(energy, batch_idx, num_systems)
-
-
 def _reciprocal_space_energy(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -639,7 +605,6 @@ def _reciprocal_space_energy(
     batch_idx: torch.Tensor | None,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
-    preserve_k_vector_grad: bool = False,
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
@@ -733,44 +698,8 @@ def _reciprocal_space_energy(
         torch.zeros_like(e_ksum), charges, volume, alpha, batch_idx
     )
 
-    def _system_fallback(
-        p,
-        q,
-        c,
-        fallback_batch_idx,
-        fallback_k_vectors,
-        fallback_alpha,
-    ):
-        return _reciprocal_system_energy_torch(
-            p,
-            q,
-            c,
-            fallback_k_vectors,
-            fallback_alpha,
-            fallback_batch_idx,
-            num_systems,
-        )
-
     if energy_reduction == "system" and cell.requires_grad:
-        if preserve_k_vector_grad:
-            return _reduce_atom_energy(e_ksum + correction, batch_idx, num_systems)
-        return _InjectCachedEvalGradWithFallback.apply(
-            (e_ksum + correction).detach(),
-            positions,
-            charges,
-            cell,
-            None,
-            None,
-            None,
-            batch_idx,
-            _system_fallback,
-            "system",
-            num_systems,
-            True,
-            True,
-            k_vectors_2d,
-            alpha,
-        )
+        return _reduce_atom_energy(e_ksum + correction, batch_idx, num_systems)
 
     if (
         energy_reduction == "system"
@@ -1372,7 +1301,6 @@ def ewald_reciprocal_space(
         compute_virial=compute_virial,
         hybrid_forces=hybrid_forces,
         allow_cell_grad_with_k_vectors=allow_cell_grad_with_k_vectors,
-        preserve_k_vector_grad=allow_cell_grad_with_k_vectors,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction,
     )
@@ -1427,7 +1355,6 @@ def _ewald_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     allow_cell_grad_with_k_vectors: bool = False,
-    preserve_k_vector_grad: bool = False,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
@@ -1471,6 +1398,8 @@ def _ewald_reciprocal_space(
         else:
             k_vectors_2d = k_vectors.unsqueeze(0)
     num_systems = k_vectors_2d.shape[0]
+    if alpha.shape[0] == 1:
+        alpha = alpha.expand(num_systems)
 
     def _select_energy(energy):
         if energy_reduction == "system":
@@ -1631,7 +1560,6 @@ def _ewald_reciprocal_space(
         batch_idx=batch_idx,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction if not want_direct else "atom",
-        preserve_k_vector_grad=preserve_k_vector_grad,
     )
 
     if not want_direct:
@@ -1677,46 +1605,8 @@ def _ewald_reciprocal_space(
             k_vectors_2d=k_vectors_2d,
         )
 
-    if energy_reduction == "system" and cell.requires_grad:
-        if preserve_k_vector_grad:
-            energies = _select_energy(energies)
-        else:
-
-            def _system_fallback(
-                p,
-                q,
-                c,
-                fallback_batch_idx,
-                fallback_k_vectors,
-                fallback_alpha,
-            ):
-                return _reciprocal_system_energy_torch(
-                    p,
-                    q,
-                    c,
-                    fallback_k_vectors,
-                    fallback_alpha,
-                    fallback_batch_idx,
-                    num_systems,
-                )
-
-            energies = _InjectCachedEvalGradWithFallback.apply(
-                energies.detach(),
-                positions,
-                charges,
-                cell,
-                None,
-                None,
-                None,
-                batch_idx,
-                _system_fallback,
-                "system",
-                num_systems,
-                True,
-                True,
-                k_vectors_2d,
-                alpha,
-            )
+    if energy_reduction == "system" and cell.requires_grad and want_direct:
+        energies = _select_energy(energies)
     elif (
         not cell.requires_grad
         and (positions.requires_grad or charges.requires_grad)

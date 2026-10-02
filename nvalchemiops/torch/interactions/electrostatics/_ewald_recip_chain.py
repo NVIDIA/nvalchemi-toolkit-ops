@@ -35,10 +35,13 @@ math). The chain differentiates:
   Torch composes ``grad_kvectors`` / ``grad_volume`` back to ``grad_cell``
   (mirroring PME's ``grad_volume`` / ``grad_k_squared``).
 
-As with the real chain, the public energy is per-atom ``(N,)`` while the kernels
-consume a per-system ``grad_energy`` ``(S,)``; the chain reduces the per-atom
-cotangent to per-system by a per-system **mean** (uniform for the ``E.sum()``
-contract).
+As with the real chain, the public energy is per-atom ``(N,)``. For cotangents
+that are uniform within each system (including ``E.sum()``), the first backward
+reduces them to per-system means and scales cached atom derivatives. Non-uniform
+cotangents use the exact weighted reciprocal derivative kernels. The uniform
+cached second backward remains available when the cotangent does not require a
+gradient; weighted second backward is used for non-uniform or differentiable
+per-atom cotangents so their per-atom adjoints remain distinct.
 
 **Forward precompute.** The fused ``order="forward"`` E_F /
 E_F_dQ ``compute`` kernels produce the per-atom energy AND the first-order
@@ -48,8 +51,9 @@ energy accumulation order identical across derivative states, so force-only
 training can use E_F and skip charge-gradient work without changing the energy
 value. When cell gradients are requested, the fill loop also emits unweighted
 k-space cell-gradient sums so the first backward consumes O(S*K) cached rows
-instead of recomputing O(N*K). ``double_backward`` is unchanged (recompute from
-forward inputs); the detached caches are first-order value only.
+instead of recomputing O(N*K). Uniform ``double_backward`` recomputes from
+forward inputs; weighted ``double_backward`` uses the weighted derivative kernels.
+The detached caches are first-order values only.
 """
 
 from __future__ import annotations
@@ -63,7 +67,6 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
-    EIGHTPI,
     RECIP_TILED_BLOCK_DIM,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
@@ -74,6 +77,8 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 )
 from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     _make_backward_kspace_from_cache_kernel,
+    _run_ewald_recip_weighted_backward,
+    _run_ewald_recip_weighted_double_backward,
     alloc_ewald_recip_sentinels,
     get_ewald_recip_component_kernel,
     get_ewald_recip_kernel,
@@ -151,66 +156,6 @@ def _cotangent_per_system_uniform(grad_energy_atom, batch_idx, num_systems):
         batch_idx,
         num_systems,
     )
-
-
-def _recip_ksum_energy_torch(
-    positions, charges, k_vectors_2d, volume, alpha, batch_idx, num_systems
-):
-    """Per-atom reciprocal k-sum energy (float64), matching the Warp fill+combine kernels.
-
-    ``E_i = 0.5 * q_i * sum_k [cos(k.r_i) Re_SF[k] + sin(k.r_i) Im_SF[k]]`` with
-    ``Re_SF[k] = G(k) sum_j q_j cos(k.r_j)``, ``Im_SF[k] = G(k) sum_j q_j sin(k.r_j)``,
-    ``G(k) = (8*pi/V) exp(-k^2/(4 alpha^2)) / k^2`` on the half-space k-vectors
-    (``k^2 < 1e-10`` -> 0). Pure Torch and autograd-correct for an arbitrary cotangent;
-    used only on the rare non-uniform-cotangent backward path.
-    """
-    pos = positions.to(torch.float64)
-    q = charges.to(torch.float64)
-    alpha_flat = alpha.reshape(-1).to(torch.float64)
-    if batch_idx is not None:
-        k = k_vectors_2d.to(torch.float64)
-        ksq = (k * k).sum(-1)
-        alpha_system = alpha_flat[0] if alpha_flat.numel() == 1 else alpha_flat
-        exp_factor = 0.25 / (alpha_system * alpha_system)
-        green = (
-            (EIGHTPI / volume.to(torch.float64).unsqueeze(-1))
-            * torch.exp(-ksq * exp_factor.unsqueeze(-1))
-            / ksq
-        )
-        green = torch.where(ksq < 1e-10, torch.zeros_like(green), green)
-        batch_long = batch_idx.to(device=pos.device, dtype=torch.long)
-        k_atom = k.index_select(0, batch_long)
-        kr = (pos.unsqueeze(1) * k_atom).sum(-1)
-        cos_kr = torch.cos(kr)
-        sin_kr = torch.sin(kr)
-        re_sf = (
-            q.new_zeros((num_systems, k.shape[1])).index_add(
-                0, batch_long, q.unsqueeze(1) * cos_kr
-            )
-            * green
-        )
-        im_sf = (
-            q.new_zeros((num_systems, k.shape[1])).index_add(
-                0, batch_long, q.unsqueeze(1) * sin_kr
-            )
-            * green
-        )
-        re_atom = re_sf.index_select(0, batch_long)
-        im_atom = im_sf.index_select(0, batch_long)
-        return 0.5 * q * (cos_kr * re_atom + sin_kr * im_atom).sum(-1)
-
-    a = alpha_flat[0]
-    exp_factor = 0.25 / (a * a)
-    k = k_vectors_2d[0].to(torch.float64)
-    ksq = (k * k).sum(-1)
-    green = (EIGHTPI / volume[0].to(torch.float64)) * torch.exp(-ksq * exp_factor) / ksq
-    green = torch.where(ksq < 1e-10, torch.zeros_like(green), green)
-    kr = pos @ k.transpose(0, 1)
-    cos_kr = torch.cos(kr)
-    sin_kr = torch.sin(kr)
-    re_sf = (q.unsqueeze(1) * cos_kr).sum(0) * green
-    im_sf = (q.unsqueeze(1) * sin_kr).sum(0) * green
-    return 0.5 * q * (cos_kr @ re_sf + sin_kr @ im_sf)
 
 
 def _resolve_max_atoms_per_system(
@@ -469,6 +414,208 @@ def _atom_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     )
 
 
+def _weighted_recip_warp_inputs(
+    wp_scalar,
+    wp_vec,
+    positions,
+    charges,
+    k_vectors_2d,
+    volume,
+    alpha,
+    batch_idx,
+    atom_start,
+    atom_end,
+):
+    """Wrap shared reciprocal inputs for the weighted Warp launchers."""
+    device = wp.device_from_torch(positions.device)
+    batched = batch_idx is not None
+    num_systems = volume.shape[0]
+    alpha_system = alpha.reshape(-1)
+    if alpha_system.numel() == 1:
+        alpha_system = alpha_system.expand(num_systems)
+    if batched:
+        wp_batch_idx = _wp(batch_idx, wp.int32)
+        wp_atom_start = _wp(atom_start, wp.int32)
+        wp_atom_end = _wp(atom_end, wp.int32)
+    else:
+        wp_batch_idx = _s_int_empty(device)
+        wp_atom_start = _s_int_empty(device)
+        wp_atom_end = _s_int_empty(device)
+    return (
+        batched,
+        _wp(positions, wp_vec),
+        _wp(charges, wp_scalar),
+        _wp(k_vectors_2d, wp_vec),
+        _wp(alpha_system, wp_scalar),
+        _wp(volume, wp.float64),
+        wp_batch_idx,
+        wp_atom_start,
+        wp_atom_end,
+    )
+
+
+def _weighted_recip_backward_warp(
+    positions,
+    charges,
+    k_vectors_2d,
+    volume,
+    alpha,
+    batch_idx,
+    atom_start,
+    atom_end,
+    grad_energy_atom,
+    need_pos,
+    need_charge,
+    need_cell,
+):
+    """Run the exact weighted reciprocal VJP, requesting only needed atom grads."""
+    input_dtype = positions.dtype
+    wp_scalar = get_wp_dtype(input_dtype)
+    wp_vec = get_wp_vec_dtype(input_dtype)
+    (
+        batched,
+        wp_positions,
+        wp_charges,
+        wp_k_vectors,
+        wp_alpha,
+        wp_volume,
+        wp_batch_idx,
+        wp_atom_start,
+        wp_atom_end,
+    ) = _weighted_recip_warp_inputs(
+        wp_scalar,
+        wp_vec,
+        positions,
+        charges,
+        k_vectors_2d,
+        volume,
+        alpha,
+        batch_idx,
+        atom_start,
+        atom_end,
+    )
+    grad_positions = torch.zeros(
+        positions.shape, dtype=input_dtype, device=positions.device
+    )
+    grad_charges = torch.zeros(
+        charges.shape, dtype=torch.float64, device=charges.device
+    )
+    grad_kvectors = torch.zeros(
+        k_vectors_2d.shape, dtype=input_dtype, device=positions.device
+    )
+    grad_volume = torch.zeros(volume.shape, dtype=torch.float64, device=volume.device)
+    atom_weights = grad_energy_atom.reshape(-1).to(torch.float64)
+    atom_grad = bool(need_pos or need_charge)
+    with _scoped_stream(positions.device):
+        _run_ewald_recip_weighted_backward(
+            wp_scalar,
+            batched=batched,
+            cell_grad=bool(need_cell),
+            atom_grad=atom_grad,
+            positions=wp_positions,
+            charges=wp_charges,
+            k_vectors=wp_k_vectors,
+            alpha=wp_alpha,
+            volume=wp_volume,
+            batch_idx=wp_batch_idx,
+            atom_start=wp_atom_start,
+            atom_end=wp_atom_end,
+            atom_weights=_wp(atom_weights, wp.float64),
+            grad_positions=_wp(grad_positions, wp_vec),
+            grad_charges=_wp(grad_charges, wp.float64),
+            grad_kvectors=_wp(grad_kvectors, wp_vec),
+            grad_volume=_wp(grad_volume, wp.float64),
+        )
+    if atom_grad and not need_pos:
+        grad_positions.zero_()
+    if atom_grad and not need_charge:
+        grad_charges.zero_()
+    return grad_positions, grad_charges, grad_kvectors, grad_volume
+
+
+def _weighted_recip_double_backward_warp(
+    v_pos,
+    v_charge,
+    v_kvectors,
+    v_volume,
+    positions,
+    charges,
+    k_vectors_2d,
+    volume,
+    alpha,
+    batch_idx,
+    atom_start,
+    atom_end,
+    grad_energy_atom,
+    need_cell,
+):
+    """Run weighted reciprocal Hessian-vector products and per-atom cotangent grads."""
+    input_dtype = positions.dtype
+    wp_scalar = get_wp_dtype(input_dtype)
+    wp_vec = get_wp_vec_dtype(input_dtype)
+    (
+        batched,
+        wp_positions,
+        wp_charges,
+        wp_k_vectors,
+        wp_alpha,
+        wp_volume,
+        wp_batch_idx,
+        wp_atom_start,
+        wp_atom_end,
+    ) = _weighted_recip_warp_inputs(
+        wp_scalar,
+        wp_vec,
+        positions,
+        charges,
+        k_vectors_2d,
+        volume,
+        alpha,
+        batch_idx,
+        atom_start,
+        atom_end,
+    )
+    grad_grad_energy = torch.zeros(
+        positions.shape[0], dtype=torch.float64, device=positions.device
+    )
+    grad_positions = torch.zeros(
+        positions.shape, dtype=input_dtype, device=positions.device
+    )
+    grad_charges = torch.zeros(
+        charges.shape, dtype=torch.float64, device=charges.device
+    )
+    grad_kvectors = torch.zeros(
+        k_vectors_2d.shape, dtype=input_dtype, device=positions.device
+    )
+    grad_volume = torch.zeros(volume.shape, dtype=torch.float64, device=volume.device)
+    atom_weights = grad_energy_atom.reshape(-1).to(torch.float64)
+    with _scoped_stream(positions.device):
+        _run_ewald_recip_weighted_double_backward(
+            wp_scalar,
+            batched=batched,
+            cell_grad=bool(need_cell),
+            positions=wp_positions,
+            charges=wp_charges,
+            k_vectors=wp_k_vectors,
+            alpha=wp_alpha,
+            volume=wp_volume,
+            batch_idx=wp_batch_idx,
+            atom_start=wp_atom_start,
+            atom_end=wp_atom_end,
+            atom_weights=_wp(atom_weights, wp.float64),
+            v_positions=_wp(v_pos, wp_vec),
+            v_charges=_wp(v_charge, wp.float64),
+            v_kvectors=_wp(v_kvectors, wp_vec),
+            v_volume=_wp(v_volume, wp.float64),
+            grad_grad_energy=_wp(grad_grad_energy, wp.float64),
+            grad_positions=_wp(grad_positions, wp_vec),
+            grad_charges=_wp(grad_charges, wp.float64),
+            grad_kvectors=_wp(grad_kvectors, wp_vec),
+            grad_volume=_wp(grad_volume, wp.float64),
+        )
+    return grad_grad_energy, grad_positions, grad_charges, grad_kvectors, grad_volume
+
+
 def _forward_impl(
     positions,
     charges,
@@ -602,16 +749,17 @@ def _backward_impl(
     need_cell,
     max_atoms_per_system_bound: int = 0,
 ):
-    """First backward: scale the cached atom-major dE/dR / dE/dq; recompute k/V on demand.
+    """Use cached atom derivatives for uniform cotangents and recompute weighted VJPs.
 
-    ``grad_positions`` / ``grad_charges`` come from scaling the detached forward caches
-    by the per-system ``grad_energy`` (no atom-major ``compute`` recompute -- identical
-    value to the old ``compute(order="backward")``). The ``grad_kvectors`` / ``grad_volume``
-    cell-input grads are produced by the k-major ``kspace`` kernel ONLY when ``need_cell``
-    (``cell.requires_grad``); otherwise they stay zero (matched to ``None`` by the chain
-    wiring). ``kspace`` consumes no structure factors, so no ``fill`` is launched here --
-    the force+charge step is a true scale with no per-k loop: the
-    cheap k-major piece stays on recompute, and only when cell actually needs grad).
+    A cotangent uniform within each system scales the detached forward ``dE/dR`` and
+    ``dE/dq`` caches by its per-system mean. This keeps the ordinary summed-energy
+    path free of an atom-by-vector recompute. A non-uniform cotangent uses the exact
+    weighted Warp derivative kernels instead. Their primary reduction and atom launch
+    are skipped when neither positions nor charges needs a gradient; in that cell-only
+    case, the separate k-space pass computes ``grad_kvectors`` / ``grad_volume``.
+    Cell gradients are also computed by the k-space pass for the uniform cached route,
+    using cached moments when available. The chain wiring returns zeros for inputs
+    whose gradients are not requested.
     """
     num_atoms = positions.shape[0]
     num_k = k_vectors_2d.shape[-2]
@@ -622,6 +770,38 @@ def _backward_impl(
     wp_vec = get_wp_vec_dtype(input_dtype)
     batched = batch_idx is not None
 
+    if num_atoms == 0 or num_k == 0:
+        return (
+            torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype),
+            torch.zeros(num_atoms, device=positions.device, dtype=torch.float64),
+            torch.zeros(
+                num_systems, num_k, 3, device=positions.device, dtype=input_dtype
+            ),
+            torch.zeros(num_systems, device=positions.device, dtype=torch.float64),
+        )
+
+    # A per-system cache cannot reproduce non-uniform per-atom cotangents. Route
+    # those VJPs through the weighted Warp kernels. Uniform cotangents retain the
+    # cached scale and k-space paths below.
+    any_need = need_pos or need_charge or need_cell
+    if any_need and not _cotangent_per_system_uniform(
+        grad_energy_atom, batch_idx, num_systems
+    ):
+        return _weighted_recip_backward_warp(
+            positions,
+            charges,
+            k_vectors_2d,
+            volume,
+            alpha,
+            batch_idx,
+            atom_start,
+            atom_end,
+            grad_energy_atom,
+            need_pos,
+            need_charge,
+            need_cell,
+        )
+
     grad_positions = torch.zeros(
         num_atoms, 3, device=positions.device, dtype=input_dtype
     )
@@ -630,48 +810,6 @@ def _backward_impl(
         num_systems, num_k, 3, device=positions.device, dtype=input_dtype
     )
     grad_volume = torch.zeros(num_systems, device=positions.device, dtype=torch.float64)
-    if num_atoms == 0 or num_k == 0:
-        return grad_positions, grad_charges, grad_kvectors, grad_volume
-
-    # Non-uniform per-atom cotangent: the cached dE_total/dinput (summed over atoms)
-    # cannot be re-weighted post-hoc, so the per-system-mean scale path below is wrong.
-    # Recompute the exact weighted VJP from the differentiable Torch k-sum energy. The
-    # uniform path (the common training case, e.g. energy.sum()) keeps the fast scale.
-    any_need = need_pos or need_charge or need_cell
-    if any_need and not _cotangent_per_system_uniform(
-        grad_energy_atom, batch_idx, num_systems
-    ):
-        # The custom-op backward runs in inference mode; build a fresh autograd graph
-        # (inference_mode(False) + materialized leaves) for the weighted recompute.
-        with torch.inference_mode(False), torch.enable_grad():
-
-            def _leaf(t, requires_grad):
-                out = torch.empty_like(t, dtype=torch.float64).copy_(t).detach()
-                return out.requires_grad_(requires_grad)
-
-            p_leaf = _leaf(positions, True)
-            q_leaf = _leaf(charges, True)
-            kv_leaf = _leaf(k_vectors_2d, True)
-            vol_leaf = _leaf(volume, True)
-            alpha_f = _leaf(alpha, False)
-            w_f = _leaf(grad_energy_atom.reshape(-1), False)
-            e_i = _recip_ksum_energy_torch(
-                p_leaf, q_leaf, kv_leaf, vol_leaf, alpha_f, batch_idx, num_systems
-            )
-            loss = (w_f * e_i).sum()
-            gp, gq, gkv, gvol = torch.autograd.grad(
-                loss, [p_leaf, q_leaf, kv_leaf, vol_leaf], allow_unused=True
-            )
-        if need_pos and gp is not None:
-            grad_positions = gp.to(input_dtype)
-        if need_charge and gq is not None:
-            grad_charges = gq.to(torch.float64)
-        if need_cell:
-            if gkv is not None:
-                grad_kvectors = gkv.to(input_dtype)
-            if gvol is not None:
-                grad_volume = gvol.to(torch.float64)
-        return grad_positions, grad_charges, grad_kvectors, grad_volume
 
     grad_energy = None
 
@@ -815,6 +953,45 @@ def _double_backward_impl(
     wp_vec = get_wp_vec_dtype(input_dtype)
     batched = batch_idx is not None
 
+    if num_atoms == 0 or num_k == 0:
+        grad_grad_energy = torch.zeros(
+            num_systems, device=positions.device, dtype=torch.float64
+        )
+        grad_positions = torch.zeros(
+            num_atoms, 3, device=positions.device, dtype=input_dtype
+        )
+        grad_charges = torch.zeros(
+            num_atoms, device=positions.device, dtype=torch.float64
+        )
+        grad_kvectors = torch.zeros(
+            num_systems, num_k, 3, device=positions.device, dtype=input_dtype
+        )
+        grad_volume = torch.zeros(
+            num_systems, device=positions.device, dtype=torch.float64
+        )
+        gge = _distribute_to_atoms(grad_grad_energy, batch_idx, num_systems, num_atoms)
+        return gge, grad_positions, grad_charges, grad_kvectors, grad_volume
+
+    if grad_energy_atom.requires_grad or not _cotangent_per_system_uniform(
+        grad_energy_atom, batch_idx, num_systems
+    ):
+        return _weighted_recip_double_backward_warp(
+            v_pos,
+            v_charge,
+            v_kvectors,
+            v_volume,
+            positions,
+            charges,
+            k_vectors_2d,
+            volume,
+            alpha,
+            batch_idx,
+            atom_start,
+            atom_end,
+            grad_energy_atom,
+            need_cell,
+        )
+
     grad_grad_energy = torch.zeros(
         num_systems, device=positions.device, dtype=torch.float64
     )
@@ -826,10 +1003,6 @@ def _double_backward_impl(
         num_systems, num_k, 3, device=positions.device, dtype=input_dtype
     )
     grad_volume = torch.zeros(num_systems, device=positions.device, dtype=torch.float64)
-
-    if num_atoms == 0 or num_k == 0:
-        gge = _distribute_to_atoms(grad_grad_energy, batch_idx, num_systems, num_atoms)
-        return gge, grad_positions, grad_charges, grad_kvectors, grad_volume
 
     grad_energy = _per_system_cotangent(
         grad_energy_atom, batch_idx, num_systems, num_atoms
