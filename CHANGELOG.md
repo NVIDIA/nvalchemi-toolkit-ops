@@ -2,38 +2,10 @@
 
 ## 0.5.0
 
-### Changed
-
-- Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
-  APIs. Naive and cell-list methods, including batched variants, accept
-  ``coo_capacity`` for padded COO output with clipped pointers, raw required row
-  counts, and a scalar launch-metadata validity flag. Batched pair-centric
-  cell-list calls additionally need static launch metadata under ``jax.jit``.
-  Invalid static launch relationships raise before the CUDA query, while runtime
-  metadata mismatches invalidate the returned counts.
-  ``neighbor_list`` performs eager orchestration, and compact COO output uses
-  eager shape compaction.
-- JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
-  require ``cutoff2 >= cutoff1`` and cluster-tile methods require
-  ``cutoff2 >= cutoff``; equal cutoffs remain valid.
-- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
-  `jax.jit`, without unpacking and reconstructing its parameter arrays.
-- Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
-  from Warp's removed experimental JAX module to its public JAX API, restoring
-  compatibility with `warp>=1.15`.
-- Warp initialization now retains warning-level diagnostics instead of
-  suppressing all Warp log output.
-- CUDA tiled direct-Warp multipole launchers now require caller-owned,
-  operation-specific scratch bundles. PyTorch bindings allocate and retain this
-  scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
-  do not require scratch.
-- Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
-  `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
-- PyTorch segmented operations now accept int64 segment indices whose values
-  fit in int32; these inputs are converted to int32 internally.
-
 ### Added
 
+- Added `generate_k_squared_pme` to the Torch and JAX electrostatics
+  namespaces for reciprocal paths that use squared magnitudes.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
@@ -76,6 +48,45 @@
   fixed captured inverse, sort, build, query, and tail sequence even when every
   selective flag is false. Capture covers forward matrix topology, not geometry
   or backward execution.
+
+### Changed
+
+- Torch and JAX PME now default to spline order 5. Automatic mesh sizing rounds
+  upward to dimensions with prime factors 2, 3, 5, and 7. It prefers power-of-two
+  meshes, then smooth dimensions divisible by 4, allowing at most 25% more total
+  mesh points than the smallest smooth mesh (`fft_padding_fraction=0.25`).
+  Setting this to `0` keeps the smallest smooth mesh. Explicit other spline
+  orders retain power-of-two accuracy sizing.
+- Torch and JAX PME energy/force paths reduce peak memory by generating squared
+  reciprocal lengths without unused Cartesian vectors.
+- JAX extras now require `>=0.10.0,<0.10.2`.
+- Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
+  APIs. Naive and cell-list methods, including batched variants, accept
+  ``coo_capacity`` for padded COO output with clipped pointers, raw required row
+  counts, and a scalar launch-metadata validity flag. Batched pair-centric
+  cell-list calls additionally need static launch metadata under ``jax.jit``.
+  Invalid static launch relationships raise before the CUDA query, while runtime
+  metadata mismatches invalidate the returned counts.
+  ``neighbor_list`` performs eager orchestration, and compact COO output uses
+  eager shape compaction.
+- JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
+  require ``cutoff2 >= cutoff1`` and cluster-tile methods require
+  ``cutoff2 >= cutoff``; equal cutoffs remain valid.
+- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
+  `jax.jit`, without unpacking and reconstructing its parameter arrays.
+- Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
+  from Warp's removed experimental JAX module to its public JAX API, restoring
+  compatibility with `warp>=1.15`.
+- Warp initialization now retains warning-level diagnostics instead of
+  suppressing all Warp log output.
+- CUDA tiled direct-Warp multipole launchers now require caller-owned,
+  operation-specific scratch bundles. PyTorch bindings allocate and retain this
+  scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
+  do not require scratch.
+- Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
+  `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
 
 ### Changed
 
@@ -134,13 +145,12 @@
   `examples/dynamics/12_lbfgs_optimization.py` and
   `13_lbfgs_variable_cell.py` for worked examples.
 
-### Changed
-
 - Torch matrix-to-COO conversion now supports `torch.compile(fullgraph=True)`
   when the output edge count changes. Torch extras now require PyTorch >=2.10.
 
 ### Fixed
 
+- Fixed JAX PME cell gradients when reusing cached setup.
 - Torch multipole direct energy now supports symbolic tracing with explicit
   reciprocal vectors, batched valid-k counts, and source overlap constants;
   multipole features can reuse a prepared cache. The shared moment conversion
@@ -172,12 +182,50 @@
 - `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
   `dict`, so type checkers no longer reject valid keyword options.
 
+### Deprecated
+
+- The original FIRE optimizer (`fire_step` and `fire_update`) is being deprecated.
+  For now, it remains callable but emits `DeprecationWarning`. These APIs will
+  be removed in a future release.
+
 ### Notes
 
 - FourierD3 uses a modified coordination-number function that reaches zero at the neighbour
   list cutoff, so its coordination numbers do not depend on the list used to build them.
   Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
   `dftd3`; pass both the same table.
+
+### Changed
+
+- Torch single-system and batched full-list pair-centric calls select grids from
+  current geometry and atom populations, balancing cell visits and cell crowding.
+  Single-system alternatives must preserve or reduce estimated candidate pairs,
+  serial neighbor-loop depth, cell storage, and logical block count. The configured
+  grid wins ties and cost tradeoffs. Batched selection counts setup and
+  neighbor-loop steps across every logical block and preserves source-pass count.
+  Default cell-list calls use the same sizing when their existing strategy rule
+  selects pair-centric execution. Batched selection reuses supplied boundaries.
+  Selected grids are reused during construction.
+  Caller-provided workspaces apply the same rules during the GPU build, updating
+  dimensions and search radii in place within their per-system capacity.
+  Single-system sizing passes the known population directly, and supplied-workspace
+  builds avoid population/count scratch allocation and redundant workspace clears.
+  Compiled full-list calls also use these rules when all cell buffers are supplied.
+- Eager JAX naive tile and cell-list queries reuse compiled inner calls across
+  repeated inputs. Cell-list arrays remain runtime inputs to cached executables.
+- Eager JAX full-list CUDA calls that select `strategy="pair_centric"` reuse
+  the geometry/population grid selector for single systems and batches.
+  Default eager cell-list calls also use it when their existing rule selects
+  pair-centric execution. Grid, search-radius, and cell-count preparation share
+  one kernel; boxes remain runtime inputs. Public signatures and static/JIT
+  launch-metadata paths are preserved.
+
+### Fixed
+
+- Pair-centric grid selection accounts for logical blocks and neighbor-loop
+  steps in dense batched systems. Single-system alternatives preserve estimated
+  candidate-pair work and loop depth. Cell-list allocation and construction retain
+  the existing configured-minimum rule.
 
 ## 0.4.1 - 2026-08-03
 
