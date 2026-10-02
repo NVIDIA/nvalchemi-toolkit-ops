@@ -18,8 +18,23 @@ High-Level Interface
 
 .. autofunction:: nvalchemiops.jax.neighbors.neighbor_list
 
+Prepared Execution
+------------------
+
+Prepared state packages fixed configuration and reusable storage in an
+immutable PyTree threaded between calls. See the
+:ref:`prepared neighbor-list guide <prepared_neighbor_lists>` for route
+selection, lifecycle, and performance guidance.
+
+.. autoclass:: nvalchemiops.jax.neighbors.NeighborListState()
+   :members:
+   :exclude-members: tree_flatten, tree_unflatten
+
+.. autofunction:: nvalchemiops.jax.neighbors.prepare_neighbor_list
+.. autofunction:: nvalchemiops.jax.neighbors.check_neighbor_list_state
+
 Method Selection
-^^^^^^^^^^^^^^^^
+----------------
 
 .. autofunction:: nvalchemiops.jax.neighbors.estimate_neighbor_list_costs
 .. autofunction:: nvalchemiops.jax.neighbors.suggest_neighbor_list_method

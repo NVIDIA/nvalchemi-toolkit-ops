@@ -700,6 +700,126 @@ def get_compute_naive_num_shifts_kernel(wp_dtype: type) -> wp.Kernel:
     )
 
 
+@wp.kernel(enable_backward=False)
+def _check_naive_shift_coverage(
+    cell: wp.array(dtype=Any),
+    cutoff: Any,
+    pbc: wp.array2d(dtype=wp.bool),
+    prepared_range: wp.array(dtype=wp.vec3i),
+    rebuild_flags: wp.array(dtype=wp.bool),
+    status: wp.array(dtype=wp.int32),
+) -> None:
+    """Check runtime periodic-image coverage against prepared ranges.
+
+    Parameters
+    ----------
+    cell : wp.array, shape (num_systems, 3, 3), dtype=wp.mat33*
+        Runtime cell matrices.
+    cutoff : float
+        Largest cutoff used by the prepared route.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool
+        Periodic-axis flags.
+    prepared_range : wp.array, shape (num_systems, 3), dtype=wp.vec3i
+        Fixed ranges allocated during preparation.
+    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+        Systems selected for validation.
+    status : wp.array, shape (num_systems,), dtype=wp.int32
+        OUTPUT: 1 for covered, 0 for insufficient coverage, and 2 for an
+        invalid or singular runtime cell.
+
+    Notes
+    -----
+    - Thread launch: one thread per prepared system.
+    - Modifies: ``status``.
+    """
+    tid = wp.tid()
+    if not rebuild_flags[tid]:
+        status[tid] = 1
+        return
+    current = cell[tid]
+    determinant = wp.determinant(current)
+    if determinant != determinant or wp.abs(determinant) <= type(determinant)(1.0e-12):
+        status[tid] = 2
+        return
+    inverse = wp.transpose(wp.inverse(current))
+    d0 = (
+        wp.length(inverse[0]) * type(inverse[0, 0])(cutoff)
+        if pbc[tid, 0]
+        else type(inverse[0, 0])(0.0)
+    )
+    d1 = (
+        wp.length(inverse[1]) * type(inverse[0, 0])(cutoff)
+        if pbc[tid, 1]
+        else type(inverse[0, 0])(0.0)
+    )
+    d2 = (
+        wp.length(inverse[2]) * type(inverse[0, 0])(cutoff)
+        if pbc[tid, 2]
+        else type(inverse[0, 0])(0.0)
+    )
+    max_int32 = type(inverse[0, 0])(2147483646.0)
+    if (
+        d0 != d0
+        or d1 != d1
+        or d2 != d2
+        or d0 > max_int32
+        or d1 > max_int32
+        or d2 > max_int32
+    ):
+        status[tid] = 2
+        return
+    required = wp.vec3i(
+        wp.int32(wp.ceil(d0)) if pbc[tid, 0] else 0,
+        wp.int32(wp.ceil(d1)) if pbc[tid, 1] else 0,
+        wp.int32(wp.ceil(d2)) if pbc[tid, 2] else 0,
+    )
+    status[tid] = 1
+    if (
+        required[0] > prepared_range[tid][0]
+        or required[1] > prepared_range[tid][1]
+        or required[2] > prepared_range[tid][2]
+    ):
+        status[tid] = 0
+
+
+@lru_cache(maxsize=None)
+def get_check_naive_shift_coverage_kernel(wp_dtype: type) -> wp.Kernel:
+    """Return the specialized prepared-shift coverage kernel."""
+    _vec_dtype, mat_dtype = dtype_info(wp_dtype)
+    kernel = wp.overload(
+        _check_naive_shift_coverage,
+        [
+            wp.array(dtype=mat_dtype),
+            wp_dtype,
+            wp.array2d(dtype=wp.bool),
+            wp.array(dtype=wp.vec3i),
+            wp.array(dtype=wp.bool),
+            wp.array(dtype=wp.int32),
+        ],
+    )
+    name = kernel_specialization_name("_check_naive_shift_coverage", wp_dtype=wp_dtype)
+    return set_fn_doc(set_fn_name(kernel, name), kernel.__doc__)
+
+
+def check_naive_shift_coverage(
+    cell: wp.array,
+    cutoff: float,
+    pbc: wp.array,
+    prepared_range: wp.array,
+    rebuild_flags: wp.array,
+    status: wp.array,
+    wp_dtype: type,
+    device: str,
+) -> None:
+    """Launch the prepared-state periodic-image coverage check."""
+    wp.launch(
+        kernel=get_check_naive_shift_coverage_kernel(wp_dtype),
+        dim=cell.shape[0],
+        inputs=[cell, wp_dtype(cutoff), pbc, prepared_range, rebuild_flags, status],
+        device=device,
+    )
+
+
 def _make_selective_zero_num_neighbors_kernel(*, batched: bool):
     """Build the selective ``num_neighbors`` zeroing kernel."""
     BATCHED = wp.constant(bool(batched))

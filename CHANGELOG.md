@@ -11,8 +11,8 @@
   cell-list calls additionally need static launch metadata under ``jax.jit``.
   Invalid static launch relationships raise before the CUDA query, while runtime
   metadata mismatches invalidate the returned counts.
-  ``neighbor_list`` performs eager orchestration, and compact COO output uses
-  eager shape compaction.
+  Without prepared state, ``neighbor_list`` performs eager orchestration, and
+  compact COO output uses eager shape compaction.
 - JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
   require ``cutoff2 >= cutoff1`` and cluster-tile methods require
   ``cutoff2 >= cutoff``; equal cutoffs remain valid.
@@ -34,6 +34,16 @@
 
 ### Added
 
+- Torch and JAX neighbor lists now share a prepared execution workflow.
+  ``prepare_neighbor_list(...)`` resolves an existing route, validates fixed
+  metadata, and owns reusable storage. Torch reuses a mutable
+  ``NeighborListState`` through ``neighbor_list(..., state=state)``; JAX
+  threads an immutable state and returns ``(results, next_state)``. Existing
+  scientific result tuples remain unchanged. State properties expose the
+  resolved configuration, applicable latest results, and compilation
+  eligibility; JAX additionally provides sticky per-system validity and
+  ``check_neighbor_list_state(...)``. Synthesized nonperiodic cell-list states
+  accept a bounded, translation-invariant ``span_margin``.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
@@ -62,14 +72,12 @@
 - PyTorch cluster-tile neighbor lists now support
   `torch.compile(fullgraph=True)` for tile, matrix, dual-cutoff matrix, and
   exact COO output, including differentiable pair geometry. Exact COO is
-  written directly in source-grouped CSR order. Prepare reusable fixed-layout
-  storage with `prepare_cluster_tile(...)`, then execute it with
-  `cluster_tile_neighbor_list(..., state=state)` or
-  `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
-  matrix rebuilds for single systems and batches. Eager all-false selective
-  calls return immediately. Ordinary compiled calls keep rebuild flags on the
-  device and use a fixed inverse, sort, build, query, and tail sequence while
-  false flags preserve existing topology.
+  written directly in source-grouped CSR order. The general prepared workflow
+  provides reusable fixed-layout storage and optional selective matrix rebuilds
+  for single systems and batches. Eager all-false selective calls return
+  immediately. Ordinary compiled calls keep rebuild flags on the device and
+  use a fixed inverse, sort, build, query, and tail sequence while false flags
+  preserve existing topology.
 - Warmed, compiled prepared matrix-topology calls can be captured with
   `torch.cuda.CUDAGraph` and replayed after copying new positions, cells, or
   selective rebuild flags into the original input tensors. Replay retains the
@@ -83,9 +91,9 @@
   from reusable output buffers. Supplied buffers receive detached value
   snapshots and remain non-differentiable storage. Prepared state exposes these
   buffers as borrowed snapshots that later executions may overwrite.
-- Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
+- Torch prepared state rejects cluster-tile dual-cutoff vectors or
   distances during preparation instead of failing later during execution.
-- Prepared batched Torch cluster-tile state now reuses fixed partition and
+- Batched Torch cluster-tile prepared state reuses fixed partition and
   padded-layout metadata while recomputing geometry-dependent data for rebuilt
   executions or systems.
 - Torch cluster-tile compact COO outputs are now trimmed to the actual pair

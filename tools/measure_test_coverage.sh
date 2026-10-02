@@ -31,6 +31,8 @@ MODULES=(
   "types:test/test_types.py"
   "math:test/math"
   "neighbors:test/neighbors"
+  "neighbors_jax:test/neighbors/bindings/jax"
+  "neighbors_torch:test/neighbors/bindings/torch"
   "dynamics:test/dynamics"
   "batch_utils:test/test_batch_utils.py"
   "warp_dispatch:test/test_warp_dispatch.py"
@@ -51,8 +53,15 @@ for entry in "${MODULES[@]}"; do
   fi
   echo "[run ] $name ($path) at $(date -Is)"
   rm -f "$OUT/.coverage.$name" "$OUT/.coverage.$name".*
-  COVERAGE_FILE="$OUT/.coverage.$name" \
-    "$PY" -m pytest "$path" \
+  pytest_args=("$path")
+  test_env=()
+  if [[ "$name" == "neighbors" ]]; then
+    pytest_args+=(--ignore=test/neighbors/bindings)
+  elif [[ "$name" == "neighbors_jax" ]]; then
+    test_env=(XLA_PYTHON_CLIENT_ALLOCATOR=default XLA_PYTHON_CLIENT_PREALLOCATE=false)
+  fi
+  env "${test_env[@]}" COVERAGE_FILE="$OUT/.coverage.$name" \
+    "$PY" -m pytest "${pytest_args[@]}" \
       -p no:cacheprovider \
       --cov=nvalchemiops --cov-context=test --cov-report= --cov-fail-under=0 \
       -q --no-header \

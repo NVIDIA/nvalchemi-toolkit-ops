@@ -1901,6 +1901,49 @@ class TestBatchTileNeighborListFormats:
         ):
             assert returned is supplied
 
+    def test_nonselective_segmented_coo_geometry_keeps_topology_tuple(
+        self, device, dtype
+    ):
+        """Geometry writes do not extend direct segmented COO topology results."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=47
+        )
+        scratch_kwargs = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype
+            )
+        )
+        _tile_caps, tile_offsets, _pair_caps, pair_offsets = (
+            estimate_batch_cluster_tile_segments(batch_ptr, max_neighbors=64)
+        )
+        max_pairs = int(pair_offsets[-1].item())
+        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
+
+        out = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            format="coo",
+            neighbor_list=torch.empty((2, max_pairs), dtype=torch.int32, device=device),
+            neighbor_list_shifts=torch.empty(
+                (max_pairs, 3), dtype=torch.int32, device=device
+            ),
+            pair_counter=torch.zeros(1, dtype=torch.int32, device=device),
+            tile_offsets=tile_offsets,
+            tile_counts=torch.zeros(1, dtype=torch.int32, device=device),
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            return_vectors=True,
+            neighbor_vectors=torch.empty((max_pairs, 3), dtype=dtype, device=device),
+            **scratch_kwargs,
+        )
+
+        assert len(out) == 4
+        assert out[1] is pair_offsets
+        assert out[2] is pair_counts
+
     def test_selective_segmented_coo_all_true_bootstrap_allocates_state(
         self, device, dtype
     ):

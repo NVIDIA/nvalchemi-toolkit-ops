@@ -38,6 +38,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _cluster_tile_matrix_registration,
     _GraphRegistration,
 )
+from nvalchemiops.jax.neighbors._status import _build_cluster_status_tail
 from nvalchemiops.jax.neighbors.neighbor_utils import _validate_dual_cutoff_order
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -1106,7 +1107,7 @@ def _make_batch_idx(batch_ptr: jax.Array, total_atoms: int) -> jax.Array:
     )
 
 
-def batch_build_cluster_tile_list(
+def _batch_build_cluster_tile_list_bounded(
     positions: jax.Array,
     cutoff: float,
     cell_batch: jax.Array,
@@ -1361,16 +1362,6 @@ def batch_build_cluster_tile_list(
             float(cutoff),
         )
 
-    if rebuild_flags is None:
-        _check_eager_tile_buffer_capacity(num_tiles, tile_row_group)
-    else:
-        _check_eager_tile_buffer_capacity(
-            num_tiles,
-            tile_row_group,
-            tile_offsets=tile_offsets,
-            tile_counts=tile_counts,
-        )
-
     del ngroup  # implicit in group_system.shape[0]
     result = (
         sorted_atom_index,
@@ -1395,6 +1386,108 @@ def batch_build_cluster_tile_list(
     )
     if rebuild_flags is not None:
         return (*result, tile_counts)
+    return result
+
+
+def batch_build_cluster_tile_list(
+    positions: jax.Array,
+    cutoff: float,
+    cell_batch: jax.Array,
+    batch_ptr: jax.Array,
+    *,
+    max_tiles_per_group: int | None = None,
+    rebuild_flags: jax.Array | None = None,
+    tile_offsets: jax.Array | None = None,
+    tile_counts: jax.Array | None = None,
+    num_tiles: jax.Array | None = None,
+    tile_row_group: jax.Array | None = None,
+    tile_col_group: jax.Array | None = None,
+    tile_system: jax.Array | None = None,
+) -> tuple[jax.Array, ...]:
+    """Build a batched cluster tile list with eager overflow checks.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3), dtype=float32
+        Concatenated atomic coordinates.
+    cutoff : float
+        Tile bounding-box cutoff.
+    cell_batch : jax.Array, shape (S, 3, 3), dtype=float32
+        Per-system periodic cells.
+    batch_ptr : jax.Array, shape (S + 1,), dtype=int32
+        Cumulative atom counts for each system.
+    max_tiles_per_group : int, optional
+        Capacity factor for internally allocated tile storage. Eager calls
+        estimate an omitted value. A transformed call that allocates any tile
+        index array requires a positive static Python integer. Complete
+        caller-owned row, column, and system arrays determine capacity directly
+        and do not require this argument.
+    rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
+        Select systems to rebuild. Requires ``tile_offsets`` and
+        ``tile_counts``. Reuse all returned tile state on later calls so false
+        flags can preserve unselected systems.
+    tile_offsets : jax.Array, shape (S + 1,), dtype=int32, optional
+        Fixed per-system tile-segment offsets required for selective rebuilds.
+    tile_counts : jax.Array, shape (S,), dtype=int32, optional
+        Previous active tile count per segment, required for selective rebuilds.
+    num_tiles : jax.Array, shape (1,), dtype=int32, optional
+        Previous or caller-owned global active tile count.
+    tile_row_group, tile_col_group, tile_system : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous or caller-owned tile-index storage. Partial storage still
+        requires a static ``max_tiles_per_group`` under transformation.
+
+    Returns
+    -------
+    tuple of jax.Array
+        Without ``rebuild_flags``, the 19-element state
+        ``(sorted_atom_index, sort_inv, sorted_pos_x, sorted_pos_y,
+        sorted_pos_z, batch_idx_sorted, batch_ptr_padded, group_system,
+        group_ptr, group_ctr_x, group_ctr_y, group_ctr_z, group_ext_x,
+        group_ext_y, group_ext_z, num_tiles, tile_row_group,
+        tile_col_group, tile_system)``. Selective execution appends the updated
+        ``tile_counts`` as element 20.
+
+    Raises
+    ------
+    TileBufferOverflow
+        If an eager build discovers more tile pairs than the supplied buffers.
+
+    Notes
+    -----
+    Cluster-tile construction is float32-only. Eager execution raises when the
+    compact or per-system required tile count exceeds physical storage. A
+    transformed call cannot raise that data-dependent exception from inside
+    the device computation; inspect the returned counts after leaving the
+    transformed region before querying. Writes remain bounded by the supplied
+    arrays.
+
+    See Also
+    --------
+    batch_query_cluster_tile : Convert the tile list to dense matrices.
+    """
+    result = _batch_build_cluster_tile_list_bounded(
+        positions,
+        cutoff,
+        cell_batch,
+        batch_ptr,
+        max_tiles_per_group=max_tiles_per_group,
+        rebuild_flags=rebuild_flags,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+        num_tiles=num_tiles,
+        tile_row_group=tile_row_group,
+        tile_col_group=tile_col_group,
+        tile_system=tile_system,
+    )
+    if rebuild_flags is None:
+        _check_eager_tile_buffer_capacity(result[15], result[16])
+    else:
+        _check_eager_tile_buffer_capacity(
+            result[15],
+            result[16],
+            tile_offsets=tile_offsets,
+            tile_counts=result[-1],
+        )
     return result
 
 
@@ -1847,6 +1940,7 @@ def batch_query_cluster_tile_coo(
     pair_counts: jax.Array | None = None,
     neighbor_list: jax.Array | None = None,
     neighbor_list_shifts: jax.Array | None = None,
+    _return_pair_counter: bool = False,
 ) -> tuple[jax.Array, ...]:
     """Convert the batched tile pair list to flat COO form.
 
@@ -1964,8 +2058,8 @@ def batch_query_cluster_tile_coo(
             int(natom),
             int(max_pairs),
         )
-        del pair_counter
-        return coo_list.T, pair_offsets, pair_counts, coo_shifts
+        result = (coo_list.T, pair_offsets, pair_counts, coo_shifts)
+        return (*result, pair_counter) if _return_pair_counter else result
 
     coo_list = jnp.zeros((max_pairs, 2), dtype=jnp.int32)
     coo_shifts = jnp.zeros((max_pairs, 3), dtype=jnp.int32)
@@ -1988,6 +2082,8 @@ def batch_query_cluster_tile_coo(
         int(max_pairs),
     )
 
+    if _return_pair_counter:
+        return coo_list.T, pair_counter, coo_shifts, pair_counter
     npairs = int(pair_counter[0])
     if npairs > max_pairs:
         raise NeighborOverflowError(int(max_pairs), npairs)
@@ -2041,6 +2137,7 @@ def batch_cluster_tile_neighbor_list(
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
     max_tiles_per_group: int | None = None,
+    _return_status: bool = False,
 ) -> tuple[jax.Array, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call.
 
@@ -2119,8 +2216,9 @@ def batch_cluster_tile_neighbor_list(
     previous_neighbor_matrix_shifts2 : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional
         Shift buffer for the second dual-cutoff matrix.
     return_vectors, return_distances : bool, default False
-        If True, append per-pair displacement vectors / scalar distances
-        to the matrix-format return tuple. Matrix format only.
+        Append per-pair displacement vectors or scalar distances on supported
+        single-cutoff matrix and eager compact-COO paths. Rejected with
+        ``cutoff2``, ``rebuild_flags``, or ``format="tile"``.
     pair_fn, pair_params, neighbor_vectors, neighbor_distances, pair_energies, pair_forces : optional
         Pair-output buffers and inline pair potential. Supported on the
         eager-cutoff fp32 matrix/COO paths; rejected with ``cutoff2``,
@@ -2128,7 +2226,10 @@ def batch_cluster_tile_neighbor_list(
 
     Returns
     -------
-    For ``format == "matrix"``:
+    results : tuple of jax.Array
+        Layout depends on ``format``.
+
+        For ``format="matrix"``:
         ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``. When
         ``cutoff2`` is set, the secondary
         ``(neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
@@ -2141,7 +2242,7 @@ def batch_cluster_tile_neighbor_list(
         ``(tile_offsets, tile_counts, num_tiles, tile_row_group,
         tile_col_group, tile_system)`` so callers can persist segmented
         tile state for the next selective rebuild.
-    For ``format == "coo"``:
+        For ``format="coo"``:
         ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` in compact
         mode, or ``(neighbor_list, pair_offsets, pair_counts,
         neighbor_list_shifts, tile_offsets, tile_counts, num_tiles,
@@ -2151,7 +2252,7 @@ def batch_cluster_tile_neighbor_list(
         by ``(pair_energies, pair_forces)`` when ``pair_fn`` is set. On empty
         selective calls, true flags clear their active pair and tile counts
         while false flags preserve prior counts and state.
-    For ``format == "tile"``:
+        For ``format="tile"``:
         ``(num_tiles, tile_row_group, tile_col_group, tile_system,
         sorted_atom_index, sorted_pos_x, sorted_pos_y, sorted_pos_z,
         batch_idx_sorted, batch_ptr_padded, group_ptr)`` — same 11-tuple
@@ -2297,6 +2398,20 @@ def batch_cluster_tile_neighbor_list(
         )
 
     if N == 0:
+
+        def _empty_with_status(result: tuple[jax.Array, ...]) -> tuple[jax.Array, ...]:
+            if not _return_status:
+                return result
+            empty_status = jnp.zeros((batch_ptr.shape[0] - 1,), dtype=jnp.int32)
+            return (
+                *result,
+                *_build_cluster_status_tail(
+                    tile_failure=jnp.zeros_like(empty_status, dtype=jnp.bool_),
+                    tile_required=empty_status,
+                    tile_capacity=empty_status,
+                ),
+            )
+
         # Public docstring promises any ``N >= 0``.  Empty batches would
         # otherwise trip ``positions[-1:]`` in the JAX morton sort and
         # zero-length ``jax.lax.dynamic_slice`` ops downstream.
@@ -2315,17 +2430,19 @@ def batch_cluster_tile_neighbor_list(
                     jnp.zeros_like(previous_tile_counts),
                     previous_tile_counts,
                 )
-                return (
-                    previous_neighbor_list,
-                    pair_offsets,
-                    empty_pair_counts,
-                    previous_neighbor_list_shifts,
-                    tile_offsets,
-                    empty_tile_counts,
-                    previous_num_tiles,
-                    previous_tile_row_group,
-                    previous_tile_col_group,
-                    previous_tile_system,
+                return _empty_with_status(
+                    (
+                        previous_neighbor_list,
+                        pair_offsets,
+                        empty_pair_counts,
+                        previous_neighbor_list_shifts,
+                        tile_offsets,
+                        empty_tile_counts,
+                        previous_num_tiles,
+                        previous_tile_row_group,
+                        previous_tile_col_group,
+                        previous_tile_system,
+                    )
                 )
             coo_base = (
                 jnp.empty((2, 0), dtype=jnp.int32),
@@ -2344,7 +2461,7 @@ def batch_cluster_tile_neighbor_list(
                         jnp.empty((0, 3), dtype=positions.dtype),
                     )
                 )
-            return (*coo_base, *coo_tail)
+            return _empty_with_status((*coo_base, *coo_tail))
         if format == "tile":
             empty_i32 = jnp.empty(0, dtype=jnp.int32)
             empty_f32 = jnp.empty(0, dtype=positions.dtype)
@@ -2352,61 +2469,71 @@ def batch_cluster_tile_neighbor_list(
             empty_bptr = jnp.zeros(num_systems + 1, dtype=jnp.int32)
             empty_gptr = jnp.zeros(num_systems + 1, dtype=jnp.int32)
             # 11-tuple matching the non-empty ``"tile"`` branch.
-            return (
-                jnp.zeros(1, dtype=jnp.int32),  # num_tiles
-                empty_i32,  # tile_row_group
-                empty_i32,  # tile_col_group
-                empty_i32,  # tile_system
-                empty_i32,  # sorted_atom_index
-                empty_f32,  # sorted_pos_x
-                empty_f32,  # sorted_pos_y
-                empty_f32,  # sorted_pos_z
-                empty_i32,  # batch_idx_sorted
-                empty_bptr,  # batch_ptr_padded
-                empty_gptr,  # group_ptr
+            return _empty_with_status(
+                (
+                    jnp.zeros(1, dtype=jnp.int32),  # num_tiles
+                    empty_i32,  # tile_row_group
+                    empty_i32,  # tile_col_group
+                    empty_i32,  # tile_system
+                    empty_i32,  # sorted_atom_index
+                    empty_f32,  # sorted_pos_x
+                    empty_f32,  # sorted_pos_y
+                    empty_f32,  # sorted_pos_z
+                    empty_i32,  # batch_idx_sorted
+                    empty_bptr,  # batch_ptr_padded
+                    empty_gptr,  # group_ptr
+                )
             )
         # format == "matrix"
         if return_distances and return_vectors:
-            return (
-                nm0,
-                nn0,
-                ns0,
-                jnp.empty((0, int(max_neighbors)), dtype=positions.dtype),
-                jnp.empty((0, int(max_neighbors), 3), dtype=positions.dtype),
+            return _empty_with_status(
+                (
+                    nm0,
+                    nn0,
+                    ns0,
+                    jnp.empty((0, int(max_neighbors)), dtype=positions.dtype),
+                    jnp.empty((0, int(max_neighbors), 3), dtype=positions.dtype),
+                )
             )
         if return_distances:
-            return (
-                nm0,
-                nn0,
-                ns0,
-                jnp.empty((0, int(max_neighbors)), dtype=positions.dtype),
+            return _empty_with_status(
+                (
+                    nm0,
+                    nn0,
+                    ns0,
+                    jnp.empty((0, int(max_neighbors)), dtype=positions.dtype),
+                )
             )
         if return_vectors:
-            return (
-                nm0,
-                nn0,
-                ns0,
-                jnp.empty((0, int(max_neighbors), 3), dtype=positions.dtype),
+            return _empty_with_status(
+                (
+                    nm0,
+                    nn0,
+                    ns0,
+                    jnp.empty((0, int(max_neighbors), 3), dtype=positions.dtype),
+                )
             )
         if dual_cutoff:
             matrix_out = (nm0, nn0, ns0, nm0, nn0, ns0)
         else:
             matrix_out = (nm0, nn0, ns0)
         if selective:
-            return (
-                *matrix_out,
-                tile_offsets,
-                jnp.where(
-                    rebuild_flags,
-                    jnp.zeros_like(previous_tile_counts),
-                    previous_tile_counts,
-                ),
-                previous_num_tiles,
-                previous_tile_row_group,
-                previous_tile_col_group,
-                previous_tile_system,
+            return _empty_with_status(
+                (
+                    *matrix_out,
+                    tile_offsets,
+                    jnp.where(
+                        rebuild_flags,
+                        jnp.zeros_like(previous_tile_counts),
+                        previous_tile_counts,
+                    ),
+                    previous_num_tiles,
+                    previous_tile_row_group,
+                    previous_tile_col_group,
+                    previous_tile_system,
+                )
             )
-        return matrix_out
+        return _empty_with_status(matrix_out)
 
     if has_pair_outputs:
         if fill_value is None:
@@ -2436,12 +2563,23 @@ def batch_cluster_tile_neighbor_list(
                 trg,
                 tcg,
                 ts,
-            ) = batch_build_cluster_tile_list(
+            ) = (
+                _batch_build_cluster_tile_list_bounded
+                if _return_status
+                else batch_build_cluster_tile_list
+            )(
                 p_det,
                 cutoff,
                 c_det,
                 batch_ptr,
                 max_tiles_per_group=max_tiles_per_group,
+            )
+            # A bounded build may report more required tiles than physical
+            # storage.  Query only its stored prefix; raw count is retained by
+            # the private status build below.
+            stored_num_tiles = jnp.minimum(
+                nt,
+                jnp.asarray([trg.shape[0]], dtype=nt.dtype),
             )
             out = batch_query_cluster_tile(
                 sai,
@@ -2449,7 +2587,7 @@ def batch_cluster_tile_neighbor_list(
                 spy,
                 spz,
                 c_det,
-                nt,
+                stored_num_tiles,
                 trg,
                 tcg,
                 ts,
@@ -2530,6 +2668,27 @@ def batch_cluster_tile_neighbor_list(
             tail.append(vectors_out)
         if pair_fn is not None:
             tail.extend((pe_out, pf_out))
+        if _return_status:
+            status_build = _batch_build_cluster_tile_list_bounded(
+                jax.lax.stop_gradient(positions),
+                cutoff,
+                jax.lax.stop_gradient(cell_batch),
+                batch_ptr,
+                max_tiles_per_group=max_tiles_per_group,
+            )
+            tile_capacity = jnp.full(
+                (batch_ptr.shape[0] - 1,), status_build[16].shape[0], jnp.int32
+            )
+            tile_required = jnp.broadcast_to(status_build[15][0], tile_capacity.shape)
+            return (
+                *base,
+                *tail,
+                *_build_cluster_status_tail(
+                    tile_failure=tile_required > tile_capacity,
+                    tile_required=tile_required,
+                    tile_capacity=tile_capacity,
+                ),
+            )
         return (*base, *tail)
 
     positions_topology = jax.lax.stop_gradient(positions)
@@ -2538,7 +2697,11 @@ def batch_cluster_tile_neighbor_list(
     # Candidate tiles must cover both radii. The query filters each matrix with
     # its own cutoff.
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
-    build_out = batch_build_cluster_tile_list(
+    build_out = (
+        _batch_build_cluster_tile_list_bounded
+        if _return_status
+        else batch_build_cluster_tile_list
+    )(
         positions_topology,
         build_cutoff,
         cell_batch_topology,
@@ -2599,23 +2762,51 @@ def batch_cluster_tile_neighbor_list(
         ) = build_out
         tile_counts = None
 
+    tile_capacity = (
+        jnp.diff(tile_offsets)
+        if selective
+        else jnp.full((batch_ptr.shape[0] - 1,), tile_row_group.shape[0])
+    )
+    tile_required = (
+        tile_counts
+        if selective
+        else jnp.broadcast_to(num_tiles[0], tile_capacity.shape)
+    )
+    tile_failure = tile_required > tile_capacity
+
+    def _with_status(result, coo_required=None, coo_capacity=None):
+        if not _return_status:
+            return result
+        return (
+            *result,
+            *_build_cluster_status_tail(
+                tile_failure=tile_failure,
+                tile_required=tile_required,
+                tile_capacity=tile_capacity,
+                coo_required=coo_required,
+                coo_capacity=coo_capacity,
+            ),
+        )
+
     if format == "tile":
         # 11-tuple matching the torch sibling at
         # ``nvalchemiops/torch/neighbors/batch_cluster_tile.py:batch_cluster_tile_neighbor_list``
         # so downstream consumers can rely on a single shape across
         # backends.
-        return (
-            num_tiles,
-            tile_row_group,
-            tile_col_group,
-            tile_system,
-            sorted_atom_index,
-            sorted_pos_x,
-            sorted_pos_y,
-            sorted_pos_z,
-            batch_idx_sorted,
-            batch_ptr_padded,
-            group_ptr,
+        return _with_status(
+            (
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                tile_system,
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                batch_idx_sorted,
+                batch_ptr_padded,
+                group_ptr,
+            )
         )
 
     if format == "coo":
@@ -2641,7 +2832,7 @@ def batch_cluster_tile_neighbor_list(
                 neighbor_list=previous_neighbor_list,
                 neighbor_list_shifts=previous_neighbor_list_shifts,
             )
-            return (
+            result = (
                 *coo_out,
                 tile_offsets,
                 tile_counts,
@@ -2650,9 +2841,10 @@ def batch_cluster_tile_neighbor_list(
                 tile_col_group,
                 tile_system,
             )
+            return _with_status(result, coo_out[2], jnp.diff(pair_offsets))
         if max_pairs is None:
             max_pairs = N * max_neighbors
-        return batch_query_cluster_tile_coo(
+        coo_raw = batch_query_cluster_tile_coo(
             sorted_atom_index,
             sorted_pos_x,
             sorted_pos_y,
@@ -2665,6 +2857,86 @@ def batch_cluster_tile_neighbor_list(
             cutoff,
             N,
             int(max_pairs),
+            _return_pair_counter=_return_status,
+        )
+        if _return_status:
+            coo_prefix, pair_counter, coo_shifts, _ = coo_raw
+            npairs = min(int(pair_counter[0]), int(max_pairs))
+            neighbor_list = coo_prefix[:, :npairs]
+            neighbor_list_shifts = coo_shifts[:npairs]
+            per_atom = jnp.bincount(neighbor_list[0], length=N).astype(jnp.int32)
+            coo_out = (
+                neighbor_list,
+                jnp.concatenate(
+                    [
+                        jnp.zeros(1, dtype=jnp.int32),
+                        jnp.cumsum(per_atom, dtype=jnp.int32),
+                    ]
+                ),
+                neighbor_list_shifts,
+            )
+            # Reuse the fixed-width matrix query to obtain exact raw row
+            # counts without enlarging the caller's COO write capacity.  The
+            # matrix writes stay bounded by ``max_neighbors`` while its count
+            # array records every required row entry.
+            diagnostic_matrix = batch_query_cluster_tile(
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                cell_batch_topology,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                tile_system,
+                cutoff,
+                N,
+                int(max_neighbors),
+                fill_value=fill_value,
+            )
+            atom_owners = _make_batch_idx(batch_ptr, N).astype(jnp.int32)
+            raw_required = jax.ops.segment_sum(
+                diagnostic_matrix[1],
+                atom_owners,
+                num_segments=batch_ptr.shape[0] - 1,
+            )
+            stored_owners = jnp.repeat(
+                jnp.arange(batch_ptr.shape[0] - 1, dtype=jnp.int32),
+                batch_ptr[1:] - batch_ptr[:-1],
+            )[coo_out[0][0]]
+            stored_required = jax.ops.segment_sum(
+                jnp.ones((coo_out[0].shape[1],), dtype=jnp.int32),
+                stored_owners,
+                num_segments=batch_ptr.shape[0] - 1,
+            )
+            clipped_owner = raw_required > stored_required
+            total_required = jnp.sum(raw_required, dtype=jnp.int32)
+            # Compact COO has one shared capacity.  Attribute the aggregate
+            # overflow only to systems whose raw records were clipped, while
+            # retaining the total required count so the prepared lifecycle
+            # can report the meaningful global capacity failure.
+            coo_required = jnp.where(
+                clipped_owner,
+                jnp.full_like(raw_required, total_required),
+                raw_required,
+            )
+        else:
+            coo_out = coo_raw
+            coo_required = None
+        coo_owners = jnp.repeat(
+            jnp.arange(batch_ptr.shape[0] - 1, dtype=jnp.int32),
+            batch_ptr[1:] - batch_ptr[:-1],
+        )[coo_out[0][0]]
+        if coo_required is None:
+            coo_required = jax.ops.segment_sum(
+                jnp.ones((coo_out[0].shape[1],), dtype=jnp.int32),
+                coo_owners,
+                num_segments=batch_ptr.shape[0] - 1,
+            )
+        return _with_status(
+            coo_out,
+            coo_required,
+            jnp.full_like(tile_required, int(max_pairs)),
         )
 
     matrix_out = batch_query_cluster_tile(
@@ -2696,13 +2968,15 @@ def batch_cluster_tile_neighbor_list(
         neighbor_matrix_shifts2=previous_neighbor_matrix_shifts2,
     )
     if selective:
-        return (
-            *matrix_out,
-            tile_offsets,
-            tile_counts,
-            num_tiles,
-            tile_row_group,
-            tile_col_group,
-            tile_system,
+        return _with_status(
+            (
+                *matrix_out,
+                tile_offsets,
+                tile_counts,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                tile_system,
+            )
         )
-    return matrix_out
+    return _with_status(matrix_out)
