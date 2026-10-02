@@ -10269,19 +10269,19 @@ class TestEwaldDoubleBackward:
         return energy_fn, positions, charges, cell
 
     @pytest.mark.parametrize("part", ["real", "recip", "summation"])
-    def test_float32_cuda_double_backward_canary(self, part):
-        """Second-order gradients at float32 CUDA, the new default fast-path dtype.
+    def test_float32_cuda_hvp_matches_finite_differences(self, part):
+        """float32 second-order gradients agree with the forward they pair with.
 
-        ``gradgradcheck_energy`` needs float64 to be numerically reliable (its
-        own docstring says so -- finite-difference noise at float32 swamps the
-        signal), so this does not use it. Instead it compares the fast
-        (default) float32 double-backward against the same computation forced
-        onto the legacy path via ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1``.
-        Both exercise the identical double-backward kernel bundle --
-        ``_ewald_recip_chain._double_backward_impl`` always recomputes with the
-        standard formulation regardless of which forward path ran (see its
-        module comment) -- so the only source of disagreement is forward's
-        float32-vs-float64 core precision, which agrees to ~1e-6 at this size.
+        ``_double_backward_impl`` recomputes the standard formulation whatever
+        forward ran, so comparing the fast path's double backward against the
+        legacy path's is circular -- both dispatch to the same bundle and agree
+        exactly. This instead checks the curvature against central differences
+        of the *same* path's gradient, which is what would actually catch the
+        double backward differentiating a different function than the forward.
+
+        ``gradgradcheck_energy`` needs float64 to be reliable, so the directional
+        derivative is taken along a single fixed vector at a step large enough
+        that float32 cancellation does not dominate.
         """
         if not torch.cuda.is_available():
             pytest.skip("CUDA not available")
@@ -10289,37 +10289,37 @@ class TestEwaldDoubleBackward:
         energy_fn, positions, charges, cell = self._energy_fn(
             part, device, dtype=torch.float32
         )
+        generator = torch.Generator(device="cpu").manual_seed(0)
+        direction = torch.randn(
+            positions.shape, generator=generator, dtype=torch.float32
+        ).to(device)
+        direction /= direction.norm()
 
-        def loss_of(p, q, c):
-            e = energy_fn(p, q, c)
-            (grad_p,) = torch.autograd.grad(e.sum(), p, create_graph=True)
-            return grad_p.pow(2).sum()
+        def grad_at(p):
+            p = p.detach().clone().requires_grad_(True)
+            (g,) = torch.autograd.grad(energy_fn(p, charges, cell).sum(), p)
+            return g.detach()
 
-        def run(legacy):
-            with pytest.MonkeyPatch.context() as mp:
-                if legacy:
-                    mp.setenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", "1")
-                else:
-                    mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", raising=False)
-                _read_legacy_fp32_env.cache_clear()
-                p = positions.clone().requires_grad_(True)
-                q = charges.clone().requires_grad_(True)
-                loss = loss_of(p, q, cell)
-                grad_p, grad_q = torch.autograd.grad(loss, (p, q))
-            _read_legacy_fp32_env.cache_clear()
-            return grad_p, grad_q
-
-        fast_p, fast_q = run(legacy=False)
-        legacy_p, legacy_q = run(legacy=True)
-
-        assert torch.isfinite(fast_p).all() and torch.isfinite(fast_q).all()
-        assert torch.allclose(fast_p, legacy_p, rtol=1e-2, atol=1e-4), (
-            f"{part} float32 double-backward position grad diverges from legacy: "
-            f"max_abs={(fast_p - legacy_p).abs().max().item():.3e}"
+        p = positions.detach().clone().requires_grad_(True)
+        (grad_p,) = torch.autograd.grad(
+            energy_fn(p, charges, cell).sum(), p, create_graph=True
         )
-        assert torch.allclose(fast_q, legacy_q, rtol=1e-2, atol=1e-4), (
-            f"{part} float32 double-backward charge grad diverges from legacy: "
-            f"max_abs={(fast_q - legacy_q).abs().max().item():.3e}"
+        (hvp,) = torch.autograd.grad((grad_p * direction).sum(), p)
+
+        step = 1e-2
+        fd = (
+            grad_at(positions + step * direction)
+            - grad_at(positions - step * direction)
+        ) / (2 * step)
+
+        assert torch.isfinite(hvp).all()
+        rel = ((hvp - fd).norm() / fd.norm()).item()
+        # Float32 finite differences of an Ewald gradient carry ~1e-4 relative
+        # noise at this step; a double backward of the wrong expression would be
+        # orders of magnitude further out.
+        assert rel < 5e-3, (
+            f"{part} float32 HVP disagrees with finite differences of its own "
+            f"gradient: rel={rel:.3e}"
         )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
