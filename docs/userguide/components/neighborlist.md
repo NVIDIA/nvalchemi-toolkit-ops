@@ -572,7 +572,7 @@ $$
 C=\sum_i g_i\,\min(g_i,m)
 $$
 
-records in one buffer pooled across all systems. This formula determines only
+records, pooled in one buffer shared across all systems. This formula determines only
 the total capacity; it does not impose per-system quotas. Segmented batches use
 the same per-system terms but assign each system a fixed interval. Compact JAX
 batches retain their fixed-shape $C=G\,\min(G,m)$ allocation, where
