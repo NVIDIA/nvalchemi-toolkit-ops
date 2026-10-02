@@ -37,6 +37,9 @@ import math
 import torch
 import warp as wp
 
+from nvalchemiops.interactions.electrostatics._pme_mesh import (
+    _DEFAULT_PME_SPLINE_ORDER,
+)
 from nvalchemiops.interactions.electrostatics.pme_multipole_kernels import (
     batch_multipole_pme_convolve_backward_launch,
     batch_multipole_pme_convolve_double_backward_launch,
@@ -2336,7 +2339,7 @@ def multipole_pme_green_structure_factor(
     volume: torch.Tensor,
     *,
     mesh_dimensions: tuple[int, int, int],
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Green's function + structure factor for multipole PME.
 
@@ -2361,7 +2364,7 @@ def multipole_pme_green_structure_factor(
     mesh_dimensions : tuple[int, int, int]
         Full mesh dimensions ``(Nx, Ny, Nz)`` (note ``Nz``, not
         ``Nz_rfft``).
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline order. :math:`|C|^2 = (\mathrm{sinc}_x \, \mathrm{sinc}_y \, \mathrm{sinc}_z)^{2 \cdot \mathrm{spline\_order}}`.
 
     Returns
@@ -2989,7 +2992,7 @@ def multipole_pme_gather_potential(
     positions: torch.Tensor,
     cell: torch.Tensor,
     *,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -3016,7 +3019,7 @@ def multipole_pme_gather_potential(
         as ``mesh``.
     cell : torch.Tensor, shape ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``
         Unit-cell matrix (rows are lattice vectors); ``(B, 3, 3)`` batched.
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p`` (cardinal B-spline).
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state. Shape
@@ -3617,7 +3620,7 @@ def multipole_pme_gather_field(
     positions: torch.Tensor,
     cell: torch.Tensor,
     *,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -3647,7 +3650,7 @@ def multipole_pme_gather_field(
         as ``mesh``.
     cell : torch.Tensor, shape ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``
         Unit-cell matrix (rows are lattice vectors); ``(B, 3, 3)`` batched.
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p``.
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state. Shape
@@ -3836,7 +3839,7 @@ def multipole_pme_gather_hessian(
     positions: torch.Tensor,
     cell: torch.Tensor,
     *,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Gather the symmetric Cartesian Hessian :math:`\nabla^2_\text{cart} \phi(r_i)`.
@@ -3860,7 +3863,7 @@ def multipole_pme_gather_hessian(
         Cartesian atom positions, same dtype as ``mesh``.
     cell : torch.Tensor, shape ``(3, 3)`` or ``(1, 3, 3)``
         Unit-cell matrix (rows are lattice vectors).
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p``.
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state, shape
@@ -5815,7 +5818,7 @@ def multipole_pme_reciprocal_space(
     sigma: float,
     alpha: float,
     mesh_dimensions: tuple[int, int, int],
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     volume: torch.Tensor | None = None,
@@ -5877,7 +5880,7 @@ def multipole_pme_reciprocal_space(
         Ewald splitting parameter (positive).
     mesh_dimensions : tuple[int, int, int]
         FFT mesh dimensions ``(Nx, Ny, Nz)`` — shared across batch.
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p``.
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state. Shape
@@ -6083,7 +6086,7 @@ def multipole_particle_mesh_ewald(
     sigma: float,
     alpha: float | None = None,
     mesh_dimensions: tuple[int, int, int] | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     accuracy: float = 1e-6,
@@ -6142,7 +6145,7 @@ def multipole_particle_mesh_ewald(
         FFT mesh dimensions — shared across batch. Auto-estimated from
         the same Kolafa-Perram balance when ``None``. Override this if
         you need to lock the mesh resolution (e.g. for kernel reuse).
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p`` (used for both spread and gather).
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` — shape ``(3, 3)`` /
@@ -6200,6 +6203,7 @@ def multipole_particle_mesh_ewald(
             batch_idx=batch_idx,
             accuracy=accuracy,
             cost_ratio=cost_ratio,
+            spline_order=spline_order,
         )
         if alpha is None:
             alpha_tensor = params.alpha
@@ -6352,7 +6356,7 @@ def _batch_multipole_pme_reciprocal_space_impl(
     sigma: float,
     alpha: float,
     mesh_dimensions: tuple[int, int, int],
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     volumes: torch.Tensor | None = None,
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,

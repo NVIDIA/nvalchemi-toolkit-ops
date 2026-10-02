@@ -3108,6 +3108,14 @@ The function {func}`~nvalchemiops.torch.interactions.electrostatics.estimate_pme
 (JAX) is used to estimate $\alpha$, the real-space cutoff, and mesh specifications specifically
 for the PME algorithm; the value of $\alpha$ is determined the same way as for Ewald.
 
+PME setup and execution default to B-spline order five. The accuracy estimator
+starts with the smallest mesh whose dimensions have prime factors 2, 3, 5, and 7,
+then may snap to the grid using the FFT preferences described below.
+Explicitly selected other orders retain the upstream power-of-two accuracy sizing.
+An explicit mesh remains caller-controlled; spacing-based sizing uses the same
+smooth-grid selection and snap preferences for every order. Use the same spline
+order when estimating parameters, preparing caches, and evaluating PME.
+
 ::::{tab-set}
 
 :::{tab-item} PyTorch
@@ -3156,6 +3164,9 @@ print(f"r_cutoff = {params.real_space_cutoff:.4f}")
 
 This method returns a `PMEParameters` dataclass, which
 is a light data structure that holds parameters used for the particle-mesh Ewald algorithm.
+Automatic order-five mesh dimensions use smooth FFT sizes and cover
+the requested spline order. Explicit dimensions retain caller control; requested
+mesh spacing uses the same FFT preferences.
 For batched inputs, `estimate_pme_parameters` intentionally returns one shared
 real-space cutoff and one shared $\alpha$ for the whole batch. The shared values
 are computed from the median atom count and median cell volume, while
@@ -3163,10 +3174,48 @@ are computed from the median atom count and median cell volume, while
 `real_space_cutoff=` when a simulation needs to pin the neighbor-list cutoff
 instead of using this median-system heuristic.
 
+### PME Mesh Sizing
+
+Torch and JAX use the same mesh rounding rules. For order-five accuracy sizing,
+each continuous axis estimate first rounds upward to the smallest dimension
+whose prime factors are 2, 3, 5, and 7. Each dimension covers the requested spline
+order. Spacing-based sizing starts with the same smooth dimensions for every
+order. Other spline orders retain the upstream power-of-two accuracy sizing.
+
+The selector then tries to **snap to the grid**: it prefers a power-of-two mesh
+when that mesh adds at most 25% to the total number of points. Otherwise, it
+tries smooth dimensions divisible by four within the same budget, then keeps
+the smallest smooth mesh. The budget applies to the complete three-dimensional
+mesh. For example, `(486, 486, 486)` can snap to `(512, 512, 512)`, adding about
+17% more total points.
+
+Public sizing APIs expose this budget as `fft_padding_fraction=0.25`; set it to
+`0` to use the smallest smooth mesh. To customize the budget, estimate dimensions
+before the PME call and pass the resulting `mesh_dimensions`. The selector uses
+integer arithmetic during setup. Its choices require no runtime calibration or
+FFT planning.
+
+For 131,072 NH3 atoms measured with Torch on an H100 NVL, snapping from `486³`
+to `512³` reduced the full energy, forces, and charge-gradient call from
+13.96 ms to 11.17 ms (20% lower call time). Both runs used order five, `float64`,
+a 9 Å cutoff, and `accuracy=1e-6`. Times are medians of five groups of ten calls
+after three warmups; parameter setup and neighbor-list construction were excluded.
+FFT preferences depend on shape and hardware: a 32,768-atom NH3 case snapping
+from `315³` to `320³` increased call time from 3.07 ms to 3.21 ms (about 5%).
+
+The cutoff and splitting-parameter formulas retain their existing accuracy
+convention. The mesh formula uses `accuracy` as a sizing input; measured force
+error depends on the system and interpolation order. Compare with a converged
+Ewald reference when measured accuracy is needed.
+
+Automatic full-PME calls use the accuracy-based rule. Full-PME and
+reciprocal-component calls with `mesh_spacing` use the spacing rule. Explicit
+`mesh_dimensions` pass through unchanged. Prepare dimensions before compiled
+calls; JAX requires static mesh dimensions during tracing.
+
 ## Units
 
-The electrostatics functions are unit-agnostic; they work in whatever consistent
-unit system you provide. Common conventions:
+Electrostatics execution accepts a consistent unit system. Common conventions:
 
 | Unit System | Positions | Energy | Charge |
 |-------------|-----------|--------|--------|
@@ -3225,12 +3274,12 @@ PME uses cardinal B-splines of order $p$ for charge assignment:
 - Order 1: Nearest-grid-point (NGP)
 - Order 2: Cloud-in-cell (CIC)
 - Order 3: Triangular-shaped cloud (TSC)
-- Order 4: Cubic B-spline (recommended)
-- Order 5: Quartic B-spline
+- Order 4: Cubic B-spline
+- Order 5: Quartic B-spline (PME default)
 - Order 6: Quintic B-spline
 
 Higher spline orders provide better accuracy but spread charges over more grid
-points. Orders 1-6 are supported; order 4 (cubic) is the standard choice,
+points. Orders 1-6 are supported; PME defaults to order 5 (quartic),
 balancing accuracy and efficiency.
 
 ## Troubleshooting

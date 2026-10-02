@@ -26,6 +26,12 @@ from dataclasses import dataclass
 
 import torch
 
+from nvalchemiops.interactions.electrostatics._pme_mesh import (
+    _DEFAULT_PME_FFT_PADDING_FRACTION,
+    _DEFAULT_PME_SPLINE_ORDER,
+    _round_pme_mesh_dimensions,
+)
+
 
 @dataclass
 class EwaldParameters:
@@ -152,8 +158,11 @@ def estimate_pme_mesh_dimensions(
     alpha: torch.Tensor,
     accuracy: float = 1e-6,
     mesh_safety_factor: float = 1.0,
+    *,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
+    fft_padding_fraction: float = _DEFAULT_PME_FFT_PADDING_FRACTION,
 ) -> tuple[int, int, int]:
-    r"""Estimate PME mesh dimensions for a given accuracy.
+    r"""Return accuracy-based FFT mesh dimensions with spline support.
 
     The mesh size along each axis is chosen as
 
@@ -161,17 +170,14 @@ def estimate_pme_mesh_dimensions(
 
         K_i = \left\lceil \text{mesh\_safety\_factor} \cdot \frac{2\alpha L_i}{3\varepsilon^{1/5}} \right\rceil
 
-    rounded up to the next power of 2. The fifth-root scaling
-    :math:`\varepsilon^{1/5}` is the standard heuristic used by production PME
-    codes; it grows the safety margin faster than :math:`\sqrt{-\ln\varepsilon}` as
-    :math:`\varepsilon` tightens, which is empirically necessary to cover both the
-    Gaussian-decay truncation and the B-spline aliasing error at the
-    accuracies typically requested (1e-3 to 1e-6) across a wide
-    ``(alpha, L, spline_order)`` envelope.
-
-    The canonical Essmann lower bound :math:`2\alpha L\sqrt{-\ln\varepsilon}/\pi` is the
-    Gaussian-decay term only; it can under-allocate by 2-4x at low
-    ``alpha`` (large ``rc``), where the B-spline aliasing term dominates.
+    and rounded upward to a mesh with prime factors 2, 3, 5, and 7. For the
+    default order five, snap to powers of two first, then smooth multiples
+    of four, within the configured budget of extra total mesh points.
+    Other spline orders retain upstream power-of-two accuracy sizing. Each
+    dimension covers the continuous target and assignment support.
+    ``accuracy`` controls the historical fifth-root sizing rule. The estimate
+    retains its relative sizing convention; independent force checks determine
+    the measured error for a particular charge distribution.
 
     Parameters
     ----------
@@ -180,38 +186,49 @@ def estimate_pme_mesh_dimensions(
     alpha : torch.Tensor, shape (B,)
         Ewald splitting parameter.
     accuracy : float, default=1e-6
-        Target relative accuracy.
+        Dimensionless input to the legacy mesh-size heuristic.
     mesh_safety_factor : float, default=1.0
-        Multiplier on the standard heuristic. ``1.0`` is the
-        well-tested default that meets accuracy across the
-        configurations covered by the convergence script. Raise for
-        extra paranoia at tight accuracy. **Lower at your own risk:**
-        values below 1.0 can fail the accuracy guarantee on
-        low-:math:`\alpha` / large-L systems (verify with the convergence script
-        before using).
+        Caller-requested multiplier on the continuous size estimate. The
+        default leaves the estimate unchanged.
+    spline_order : int, default=5
+        B-spline assignment order. The mesh covers its assignment support.
+
+    fft_padding_fraction : float, default=0.25
+        Maximum fraction of extra total mesh points for snapping to powers
+        of two, then smooth multiples of four. Zero selects the smallest
+        2/3/5/7-smooth mesh. Explicit other orders keep dyadic accuracy sizing.
 
     Returns
     -------
     tuple[int, int, int]
         Maximum mesh dimensions (nx, ny, nz) across all systems in batch.
+
+    Notes
+    -----
+    Measured example on an NVIDIA H100 NVL with Torch: for 131,072 NH3 atoms,
+    snapping from 486 cubed to 512 cubed increased mesh points by 16.92% and
+    reduced the energy, forces, and charge-gradient call from 13.96 ms to
+    11.17 ms. Both runs used order five, float64, a 9 Angstrom cutoff, and
+    accuracy 1e-6. Times are medians of five groups of ten calls after three
+    warmups; parameter setup and neighbor construction were excluded.
     """
     if cell.ndim == 2:
         cell = cell.unsqueeze(0)
 
     cell_lengths = torch.norm(cell, dim=2)  # (B, 3)
 
-    # K = 2 α L / (3 ε^0.2), with optional safety multiplier + pow-2 snap.
+    # Preserve the public estimator's existing relative sizing convention.
     accuracy_factor = 3.0 * (accuracy**0.2)
     n = (
         mesh_safety_factor * 2.0 * alpha[:, None] * cell_lengths / accuracy_factor
     )  # (B, 3)
 
     max_n = torch.max(n, dim=0).values  # (3,)
-    mesh_dims = torch.pow(2, torch.ceil(torch.log2(max_n))).to(torch.int32)
-    return (
-        int(mesh_dims[0].item()),
-        int(mesh_dims[1].item()),
-        int(mesh_dims[2].item()),
+    return _round_pme_mesh_dimensions(
+        max_n.detach().cpu().numpy(),
+        spline_order=spline_order,
+        power_of_two=(spline_order != _DEFAULT_PME_SPLINE_ORDER),
+        fft_padding_fraction=fft_padding_fraction,
     )
 
 
@@ -222,8 +239,11 @@ def estimate_pme_parameters(
     accuracy: float = 1e-6,
     real_space_cutoff: float | None = None,
     mesh_safety_factor: float = 1.0,
+    *,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
+    fft_padding_fraction: float = _DEFAULT_PME_FFT_PADDING_FRACTION,
 ) -> PMEParameters:
-    r"""Estimate PME parameters for a given accuracy.
+    r"""Estimate PME splitting parameters and FFT-friendly mesh dimensions.
 
     Uses the closed-form Essmann/Kolafa-Perram derivation: a single
     length scale :math:`\eta = (V^2 / N)^{1/6} / \sqrt{2\pi}` determines both ``rc``
@@ -244,13 +264,25 @@ def estimate_pme_parameters(
         Caller-supplied cutoff. When given, ``alpha`` is derived from it via
         :math:`\alpha = \sqrt{-\log\varepsilon} / r_c`; otherwise ``rc`` and ``alpha`` come from ``eta``.
     mesh_safety_factor : float, default=1.0
-        Multiplier on the standard mesh-size heuristic
-        :math:`K = 2\alpha L / (3\varepsilon^{1/5})`. Raise for extra safety at tight :math:`\varepsilon`.
+        Caller-requested multiplier on the continuous mesh-size estimate.
+    spline_order : int, default=5
+        B-spline assignment order used for mesh sizing.
+
+    fft_padding_fraction : float, default=0.25
+        Maximum fraction of extra total mesh points for snapping to powers
+        of two, then smooth multiples of four. Zero selects the smallest
+        2/3/5/7-smooth mesh. Explicit other orders keep dyadic accuracy sizing.
 
     Returns
     -------
     PMEParameters
         Dataclass containing alpha, mesh dimensions, spacing, and cutoffs.
+
+    Notes
+    -----
+    ``accuracy`` retains the public estimator's relative sizing convention.
+    Independent force checks determine the measured error for a charge
+    distribution.
     """
     if cell.ndim == 2:
         cell = cell.unsqueeze(0)
@@ -296,6 +328,8 @@ def estimate_pme_parameters(
         alpha,
         accuracy,
         mesh_safety_factor=mesh_safety_factor,
+        spline_order=spline_order,
+        fft_padding_fraction=fft_padding_fraction,
     )
     mesh_dims_tensor = torch.tensor(
         mesh_dims, dtype=cell_lengths.dtype, device=cell_lengths.device
@@ -527,6 +561,9 @@ def estimate_multipole_pme_parameters(
     batch_idx: torch.Tensor | None = None,
     accuracy: float = 1e-6,
     cost_ratio: float = 1.0,
+    *,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
+    fft_padding_fraction: float = _DEFAULT_PME_FFT_PADDING_FRACTION,
 ) -> MultipolePMEParameters:
     """Estimate GTO-Ewald multipole PME parameters at a given target accuracy.
 
@@ -574,6 +611,14 @@ def estimate_multipole_pme_parameters(
         :func:`estimate_multipole_ewald_parameters` even on the same
         hardware. Setting below 1 is allowed but rarely useful.
 
+    spline_order : int, default=5
+        B-spline assignment order. The mesh covers its assignment support.
+
+    fft_padding_fraction : float, default=0.25
+        Maximum fraction of extra total mesh points for snapping to powers
+        of two, then smooth multiples of four. Zero selects the smallest
+        2/3/5/7-smooth mesh. Explicit other orders keep dyadic accuracy sizing.
+
     Returns
     -------
     MultipolePMEParameters
@@ -610,7 +655,13 @@ def estimate_multipole_pme_parameters(
     # Mesh resolution from the reciprocal-space B-spline error envelope.
     # Width is set by eta; alpha_eff = 1/(sqrt(2) eta) (monopole-equivalent).
     alpha_eff = torch.full_like(eta, 1.0 / math.sqrt(2.0)) / eta
-    mesh_dims = estimate_pme_mesh_dimensions(cell, alpha_eff, accuracy)
+    mesh_dims = estimate_pme_mesh_dimensions(
+        cell,
+        alpha_eff,
+        accuracy,
+        spline_order=spline_order,
+        fft_padding_fraction=fft_padding_fraction,
+    )
 
     cell_lengths = torch.norm(cell, dim=2)  # (B, 3)
     mesh_dims_tensor = torch.tensor(mesh_dims, dtype=cell_lengths.dtype, device=device)
@@ -628,6 +679,9 @@ def estimate_multipole_pme_parameters(
 def mesh_spacing_to_dimensions(
     cell: torch.Tensor,
     mesh_spacing: float | torch.Tensor,
+    *,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
+    fft_padding_fraction: float = _DEFAULT_PME_FFT_PADDING_FRACTION,
 ) -> tuple[int, int, int]:
     """Convert mesh spacing to mesh dimensions.
 
@@ -635,20 +689,32 @@ def mesh_spacing_to_dimensions(
     ----------
     cell : torch.Tensor
         Unit cell matrix.
-    mesh_spacing : float | torch.Tensor
-        Target mesh spacing.
+    mesh_spacing : int, float, or torch.Tensor
+        Target mesh spacing. Scalars apply to every cell and direction.
+        Tensor shapes ``(B,)`` and ``(B, 3)`` specify per-system isotropic
+        and per-system anisotropic spacings, respectively.
+    spline_order : int, default=5
+        B-spline assignment order. Each axis covers its assignment support.
+
+    fft_padding_fraction : float, default=0.25
+        Maximum fraction of extra total mesh points for snapping to powers
+        of two, then smooth multiples of four. Zero selects the smallest
+        2/3/5/7-smooth mesh. These spacing preferences apply to every spline order.
 
     Returns
     -------
     tuple[int, int, int]
-        Mesh dimensions, rounded up to powers of 2.
+        Maximum dimensions across the batch, rounded upward to 2/3/5/7-smooth
+        integers that cover the requested spacing and assignment support.
     """
     if cell.ndim == 2:
         cell = cell.unsqueeze(0)
 
     cell_lengths = torch.norm(cell, dim=2)  # (B, 3)
 
-    if isinstance(mesh_spacing, float):
+    if isinstance(mesh_spacing, (int, float)) or (
+        isinstance(mesh_spacing, torch.Tensor) and mesh_spacing.ndim == 0
+    ):
         mesh_dims = torch.ceil(cell_lengths / mesh_spacing)
     elif isinstance(mesh_spacing, torch.Tensor):
         if mesh_spacing.ndim == 1:
@@ -667,14 +733,12 @@ def mesh_spacing_to_dimensions(
             mesh_dims = torch.ceil(cell_lengths / mesh_spacing)
     else:
         raise TypeError(
-            f"mesh_spacing must be float or torch.Tensor, got {type(mesh_spacing)}"
+            f"mesh_spacing must be int, float, or torch.Tensor, got {type(mesh_spacing)}"
         )
 
-    mesh_dims = torch.pow(2, torch.ceil(torch.log2(mesh_dims))).to(torch.int32)
-
     max_mesh_dims = torch.max(mesh_dims, dim=0).values
-    return (
-        int(max_mesh_dims[0].item()),
-        int(max_mesh_dims[1].item()),
-        int(max_mesh_dims[2].item()),
+    return _round_pme_mesh_dimensions(
+        max_mesh_dims.detach().cpu().numpy(),
+        spline_order=spline_order,
+        fft_padding_fraction=fft_padding_fraction,
     )

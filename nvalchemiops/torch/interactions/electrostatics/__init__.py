@@ -44,6 +44,7 @@ from nvalchemiops.torch.interactions.electrostatics.ewald import (
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_ewald_miller_indices,
+    generate_k_squared_pme,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     k_vectors_from_miller_indices,
@@ -183,6 +184,7 @@ __all__ = [
     "compute_bspline_moduli_1d",
     # K-vectors
     "generate_ewald_miller_indices",
+    "generate_k_squared_pme",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
     "k_vectors_from_miller_indices",
