@@ -12,8 +12,9 @@ provides GPU-accelerated neighbor list algorithms via
 Start with the unified `neighbor_list` function
 ({func}`~nvalchemiops.torch.neighbors.neighbor_list` for PyTorch,
 {func}`~nvalchemiops.jax.neighbors.neighbor_list` for JAX).
-It automatically selects the best algorithm for your system size and handles
-both single and batched inputs.
+It selects a suitable algorithm with the geometry cost model and handles both
+single and batched inputs. For repeated calls with fixed structural metadata,
+see {ref}`prepared_neighbor_lists`.
 ```
 
 ## Why Neighbor Lists Matter for Performance
@@ -38,8 +39,7 @@ guidance.
 ## Quick Start
 
 The `neighbor_list` function provides a unified interface that automatically
-dispatches to the optimal algorithm based on system size and whether batch
-indices are provided.
+selects a suitable algorithm from the system geometry and batching metadata.
 
 ::::::{tab-set}
 
@@ -243,7 +243,7 @@ Neighbor List (COO format)
 
 **Neighbor Matrix** is preferred when:
 
-- Using `torch.compile` or `jax.jit` (fixed memory layout avoids graph breaks)
+- A fixed output shape is the simplest compiled representation
 - Systems have dense, uniform neighbor distributions
 - Cache-friendly access patterns are important
 
@@ -303,22 +303,21 @@ neighbor_list_coo, neighbor_ptr, shifts_coo = get_neighbor_list_from_neighbor_ma
 
 ::::
 
-```{warning}
-Setting `return_neighbor_list=True` incurs a conversion overhead. If you need
-both formats, compute the matrix format first and convert as needed.
-```
-
 ```{note}
-With PyTorch >=2.10, exact COO conversion supports
-`torch.compile(fullgraph=True)` when the edge count changes. Exact sizing via
-`nonzero` may synchronize the host. Capacity overflow raises
-`NeighborOverflowError` in eager execution and an asynchronous runtime error
-in compiled execution.
+For naive and cell-list routes, `return_neighbor_list=True` packs matrix output
+into COO and therefore adds conversion work. Cluster-tile routes have direct COO
+paths. If an application needs both formats, compute the matrix once and convert
+it explicitly unless route-specific measurement justifies another choice.
 ```
 
-## Method Dispatch
+## State-Free Method Dispatch
 
 ### Method and Strategy
+
+This section describes calls without prepared state. Prepared execution selects
+once during {func}`~nvalchemiops.torch.neighbors.prepare_neighbor_list` or
+{func}`~nvalchemiops.jax.neighbors.prepare_neighbor_list`; see
+{ref}`prepared_neighbor_lists`.
 
 `method` is the high-level `neighbor_list(...)` selector. A family method such as
 `method="naive"` or `method="cell_list"` chooses the neighbor-list algorithm family
@@ -333,13 +332,14 @@ implementation, where the scalar/tile strategy is selected.
 `cluster_tile` and `batch_cluster_tile` are complete high-level methods with a
 single implementation. There is no `strategy` choice available for them.
 
-`strategy` is only for direct algorithm calls such as `naive_neighbor_list(...)` or
-`cell_list(...)`. For direct naive calls, `strategy` selects `"auto"`, `"scalar"`,
-or `"tile"`. For direct cell-list calls, `strategy` selects `"auto"`,
+`strategy` is accepted by preparation and by direct algorithm calls such as
+`naive_neighbor_list(...)` or `cell_list(...)`; it is not an argument to the
+state-free `neighbor_list(...)` dispatcher. For naive routes, `strategy` selects
+`"auto"`, `"scalar"`, or `"tile"`. For cell-list routes, it selects `"auto"`,
 `"atom_centric"`, or `"pair_centric"`.
 
-Use `method=` when calling `neighbor_list(...)`. Use `strategy=` only when calling
-a direct algorithm function.
+Use `method=` when calling state-free `neighbor_list(...)`. Use `method=` and,
+when applicable, `strategy=` during preparation to pin a prepared route.
 
 Strategy-pinned high-level methods:
 
@@ -566,20 +566,12 @@ has $g=\sum_i\lceil N_i/32\rceil$ groups in total.
 
 The build stores discovered tile pairs in one buffer shared by all row groups.
 If `max_tiles_per_group` is $m$, a single-system build with $g$ groups reserves
-$C=g\,\min(g,m)$ records. A compact Torch batch reserves
-
-$$
-C=\sum_i g_i\,\min(g_i,m)
-$$
-
-records in one buffer pooled across all systems. This formula determines only
-the total capacity; it does not impose per-system quotas. Segmented batches use
-the same per-system terms but assign each system a fixed interval. Compact JAX
-batches retain their fixed-shape $C=G\,\min(G,m)$ allocation, where
-$G=\sum_i g_i$. Each record contains two `int32` group indices, so the
-tile-index arrays use $8C$ bytes for one system. A compact batch also records
-the system index and uses $12C$ bytes. Other scratch buffers and the neighbor
-output do not depend on $m$.
+$C=g\,\min(g,m)$ records. A compact batch with $G=\sum_i g_i$ groups reserves
+$C=G\,\min(G,m)$ records. Segmented batches instead reserve
+$C_i=g_i\,\min(g_i,m)$ records for system $i$. Each record contains two
+`int32` group indices, so the tile-index arrays use $8C$ bytes for one system.
+A compact batch also records the system index and uses $12C$ bytes. Other
+scratch buffers and the neighbor output do not depend on $m$.
 
 #### Choosing a capacity
 
@@ -591,7 +583,7 @@ execution, they call
 cell volume, and cutoff; its `safety` parameter adds headroom for uneven density
 or changing geometries.
 
-Available capacity choices are:
+There are three ways to choose a capacity:
 
 - Before execution, use the estimator for a heuristic based on the current
   geometry.
@@ -599,10 +591,7 @@ Available capacity choices are:
   requirement for that geometry.
 - For a geometry-independent single-system bound, require capacity of at least
   $g(g+1)/2$ and use `max_tiles_per_group=ceil((g + 1) / 2)`.
-- For a compact Torch batch, the conservative geometry-independent shared
-  factor $m=\max_i\lceil(g_i+1)/2\rceil$ gives every system enough contribution
-  for its dense upper triangle while keeping the resulting buffer pooled.
-- For a compact JAX batch, require total capacity of at least
+- For a compact batch, require total capacity of at least
   $\sum_i g_i(g_i+1)/2$. With $G=\sum_i g_i$, the minimum shared factor is
   $\left\lceil\sum_i g_i(g_i+1)/(2G)\right\rceil$ for a nonempty batch.
 - For a segmented batch, require each segment to hold at least
@@ -617,24 +606,13 @@ cutoff when calling the estimator directly. JAX cluster-tile APIs require
 
 `TileBufferOverflow` reports the required tile-pair count as
 `error.num_tiles` and the allocated capacity as `error.max_tiles`. For a compact
-single-system build, the exact retry value for that geometry is
+single-system or batch build, the exact retry value for that geometry is
 
 $$
 m_{\mathrm{retry}} = \left\lceil\frac{\mathtt{error.num\_tiles}}{g}\right\rceil,
 $$
 
-where $g$ is the system's group count. For a compact Torch batch, choose the
-smallest positive integer $m$ satisfying
-
-$$
-\sum_i g_i\,\min(g_i,m) \ge \mathtt{error.num\_tiles}.
-$$
-
-The capacity remains pooled: one system may consume more than its individual
-term as long as the batch's total count fits. For a compact JAX batch, use the
-single-buffer retry
-$m_{\mathrm{retry}}=\lceil\mathtt{error.num\_tiles}/G\rceil$ with the total
-group count $G$.
+where $g$ is the total group count for the compact build.
 
 A segmented batch gives each system its own interval in the tile buffer. System
 $i$ has capacity `tile_offsets[i + 1] - tile_offsets[i]` and reports its required
@@ -668,27 +646,19 @@ eager-only.
 Exact COO is counted and written directly into source-owned CSR rows without a
 matrix intermediate. For source atom `i`, entries
 `neighbor_ptr[i]:neighbor_ptr[i + 1]` in `neighbor_list` all belong to `i`.
-Atomic writes leave pair order within each row unspecified. Shifts and any
-requested vectors, distances, energies, or forces use the same pair order.
-Topology, shifts, and requested geometry are returned with the exact active
-pair length and do not alias reusable capacity buffers. Compact calls append
-distances before vectors: requesting distances returns
-`(pairs, ptr, shifts, distances)`, requesting vectors returns
-`(pairs, ptr, shifts, vectors)`, and requesting both returns
-`(pairs, ptr, shifts, distances, vectors)`. Optional caller-owned geometry
-buffers hold the active prefix and may be reused; their inactive tails are
-unspecified. These buffers are non-differentiable value snapshots and must not
-require gradients; build losses from the returned exact geometry. Pair
-callbacks keep their existing topology-only return and write aligned callback
-outputs into caller-owned buffers.
+Atomic writes leave pair order within each row unspecified. Shifts and requested
+geometry use the same order. Topology and requested geometry have the exact
+active length and do not alias reusable capacity buffers. Optional reusable
+geometry buffers contain detached active-prefix snapshots; build losses from
+the returned geometry.
 
-A compiled single-system call may allocate its scratch internally when
+A compiled single-system call may allocate scratch internally when
 `max_tiles_per_group` is a positive static integer. Batched compiled calls
 should allocate once with `allocate_batch_cluster_tile_list` and pass the
-caller-owned scratch tuple; selective matrix calls additionally require fixed
+caller-owned scratch tuple. Selective matrix calls additionally require fixed
 output buffers and tile segment metadata. Eager calls retain structured
-`TileBufferOverflow` and `NeighborOverflowError` exceptions. Compiled capacity
-failures are asynchronous device runtime errors.
+`TileBufferOverflow` and `NeighborOverflowError`; compiled capacity failures
+are asynchronous device runtime errors.
 
 ```python
 import torch
@@ -708,140 +678,6 @@ def compiled_matrix(positions, cell):
         return_distances=True,
     )
 ```
-
-#### Prepared PyTorch execution
-
-Use `prepare_cluster_tile` when repeated calls have the same atom count,
-single or batched partition, dtype, device, output format, and capacities.
-Preparation owns the fixed-capacity scratch and output buffers. Execution uses
-the current positions and cell through the matching direct API with the
-prepared state:
-
-```python
-import torch
-
-from nvalchemiops.torch.neighbors import (
-    cluster_tile_neighbor_list,
-    prepare_cluster_tile,
-)
-
-state = prepare_cluster_tile(
-    positions,
-    cutoff,
-    cell,
-    format="matrix",
-    max_neighbors=max_neighbors,
-    max_tiles_per_group=max_tiles_per_group,
-    return_distances=True,
-)
-
-@torch.compile(fullgraph=True)
-def compiled_neighbors(current_positions, current_cell):
-    # Capture state as a closure constant; do not pass it as a graph input.
-    return cluster_tile_neighbor_list(
-        current_positions,
-        cell=current_cell,
-        state=state,
-    )
-```
-
-For a batched state, pass `batch_ptr` to `prepare_cluster_tile` and execute it
-with `batch_cluster_tile_neighbor_list(..., cell_batch=current_cells, state=state)`.
-
-Prepared execution supports single and batched tile, matrix, dual-cutoff
-matrix topology, and nonselective exact COO output. Dual-cutoff prepared state
-does not support vectors or distances. Preparation rejects that combination
-before allocating storage. The other formats preserve the corresponding direct
-function's return tuple. Matrix topology and tile results borrow state-owned
-storage and a later call overwrites them. State-owned matrix geometry buffers
-are also borrowed, non-differentiable snapshots. When autograd reconstruction
-is needed, the function returns fresh differentiable geometry and writes
-matching detached values to those buffers; build losses from the returned
-geometry. Without reconstruction, returned matrix geometry aliases the state
-buffers. Exact COO topology, shifts, and requested geometry are newly sized on
-each call. Reusable exact-COO capacity buffers are available as
-`state.neighbor_vectors` and `state.neighbor_distances`; only the active prefix
-matching the returned pair count is defined, and it is a detached snapshot of
-the returned geometry.
-
-Preparation avoids reallocating the fixed scratch and output buffers, but
-execution may still allocate temporary tensors and exact-sized COO results. It
-is not an allocation-free API. Finish backward before reusing the same state,
-and copy every borrowed result that must survive that reuse. A second state owns
-distinct storage.
-
-Preparation fixes the atom count, batch partition, shape, dtype, and device.
-For batches, it caches atom/system and padded-layout mappings derived only from
-that partition. Morton ordering, sorted coordinates, cell inverses, and group
-bounds remain geometry-dependent and are recomputed when rebuild work runs. A
-mixed selective batch may still sort all atoms even though only selected
-systems' topology is rebuilt. An all-false eager call returns without rebuilding.
-Ordinary compiled selective calls use a fixed device-predicated execution
-sequence, so false flags preserve topology without promising skipped internal
-work.
-Execution rejects mismatches before launching kernels. Prepared pair callbacks,
-energies, forces, and caller-provided buffers are not supported.
-
-`ClusterTileState` is prepared configuration and reusable borrowed storage, not
-the neighbor-list result. Each call returns the same tuple as the corresponding
-unprepared method-specific function. With `state=`, the call ignores `cutoff`,
-`cutoff2`, `format`, `max_neighbors`, `max_pairs`, `fill_value`,
-`max_tiles_per_group`, `return_vectors`, `return_distances`, and `pair_fn`, even
-when they differ from the prepared configuration. The batched API also ignores
-`batch_ptr`. Change these settings by preparing another state. `positions` and
-`cell` or `cell_batch` remain required on every call. `rebuild_flags` remains
-active for selective states. Prepared pair callbacks and `pair_params` are not
-supported. Supplying explicit scratch, output, segment, or inverse-cell buffers
-raises `ValueError`, as does `return_state=True`.
-
-Set `selective=True` during preparation to rebuild matrix topology only for
-selected systems. Selective prepared execution supports single and batched
-matrix output, including dual cutoffs. It does not support tile or COO output,
-vectors, distances, or pair callbacks. Each execution requires a Boolean
-`rebuild_flags` tensor on the prepared device with one value per system. A true
-flag rebuilds that system. A false flag preserves its initialized neighbor
-matrix, counts, and shifts byte-for-byte; preserving a system before its first
-successful rebuild raises an error. Outside CUDA Graph capture, an all-false
-eager call preserves topology and returns before inverse, sorting, and build
-work. Ordinary compiled execution keeps flags on the device and always runs the
-inverse, Morton sort, build, query, and tail sequence; false flags preserve the
-corresponding topology. Consequently, an invalid current cell can fail during
-compiled execution even when every flag is false.
-
-An eager call marks every selected system uninitialized before rebuilding it
-and marks it initialized only after the complete call succeeds. If an eager
-rebuild fails, for example because the matrix capacity is too small, a later
-call cannot preserve any system selected by the failed call. Retry those
-systems with true flags after changing the geometry, or prepare a new state
-with sufficient capacity.
-
-##### CUDA Graph capture
-
-A warmed `torch.compile(fullgraph=True)` prepared callable can be captured with
-`torch.cuda.CUDAGraph` when it returns matrix topology. This supports single and
-batched state, one or two cutoffs, and selective or nonselective execution. For
-selective state, initialize every system before capture. Warm the compiled
-all-true path on a side stream and synchronize that stream before capture.
-
-Keep the prepared state object and the positions, cells, rebuild flags, output,
-and scratch tensors at the same addresses. Shapes, dtypes, devices, capacities,
-the batch partition, and the output format must remain fixed. Update positions,
-cells, and flags by copying into the existing tensors. Do not execute or replay
-the same mutable state concurrently.
-
-Selective replay accepts different flag values without recapture. The captured
-graph always records the complete inverse, Morton sort, metadata update,
-tile-build, query, and tail sequence; device-side flags decide which systems are
-updated on each replay. Therefore an all-false replay preserves topology but
-does not skip sorting or reduce the recorded launch sequence. Eager all-false
-calls return immediately. Ordinary compiled calls use the same fixed sequence
-without reading rebuild flags on the host.
-
-Capture is not supported for a direct eager prepared call, exact COO output,
-tile output, pair geometry, or backward execution. A device assertion during
-replay does not leave the prepared state recoverable. CUDA Graph-private
-temporary allocations may occur; the guarantee is stable prepared/public
-storage and no forbidden host synchronization during capture.
 
 #### Compiled JAX
 
@@ -1019,13 +855,17 @@ and there is no guarantee that the nearest neighbors are included.
 Pre-allocating output arrays avoids repeated memory allocation overhead when
 computing neighbor lists repeatedly across calls.
 
+Manual preallocation reuses caller-owned buffers in eager state-free calls. For
+compiled execution, pass those buffers to a method-specific function or use
+{ref}`prepared_neighbor_lists`.
+
 ::::{tab-set}
 
 :::{tab-item} PyTorch
 :sync: pytorch
 
-Pre-allocation also enables `torch.compile` compatibility by ensuring fixed
-tensor shapes.
+This example shows eager buffer reuse through the state-free dispatcher. Fixed
+shapes alone do not make that dispatcher a supported `torch.compile` boundary.
 
 ```python
 import torch
@@ -1290,6 +1130,302 @@ eager code when the capacity is insufficient.
 ```
 
 ## Usage Patterns
+
+(prepared_neighbor_lists)=
+
+### Prepared Neighbor Lists
+
+Use prepared neighbor lists when repeated calls describe the same structural
+system layout: atom count and ordering; batch membership; cutoffs and PBC
+pattern; output layout; and capacities remain fixed while positions and
+applicable cell values may change. Preparation runs eagerly once; later calls
+execute the resolved route using the prepared state.
+
+Prepared state is the recommended high-level workflow for repeated or compiled
+Torch execution. In JAX, it provides a convenient unified interface and is a
+compiled boundary for eligible routes; method-specific calls with explicit
+buffers and launch metadata remain the lower-overhead choice when latency
+matters. Preparation does not promise a speedup over the underlying route.
+
+#### Prepare once, execute repeatedly
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+Torch captures its mutable state as a compilation closure constant:
+
+```python
+import torch
+
+from nvalchemiops.torch.neighbors import neighbor_list, prepare_neighbor_list
+
+state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="naive",
+    strategy="scalar",
+    max_neighbors=max_neighbors,
+)
+
+
+@torch.compile(fullgraph=True)
+def compiled_neighbors(current_positions, current_cell):
+    return neighbor_list(current_positions, cell=current_cell, state=state)
+
+
+results = compiled_neighbors(positions, cell)
+```
+
+Pin cluster-tile execution by preparing it explicitly; the same general state
+API then owns its tile, topology, and scratch storage:
+
+```python
+cluster_state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="cluster_tile",
+    format="matrix",
+    max_neighbors=max_neighbors,
+    max_tiles_per_group=max_tiles_per_group,
+)
+cluster_results = neighbor_list(positions, cell=cell, state=cluster_state)
+```
+
+See the complete {doc}`Torch example
+</examples/neighbors/01_simple_neighbor_list>`.
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+JAX threads its immutable PyTree state through the compiled call:
+
+```python
+import jax
+
+from nvalchemiops.jax.neighbors import (
+    check_neighbor_list_state,
+    neighbor_list,
+    prepare_neighbor_list,
+)
+
+state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="naive",
+    max_neighbors=max_neighbors,
+)
+
+
+@jax.jit
+def compiled_neighbors(current_positions, current_cell, current_state):
+    return neighbor_list(current_positions, cell=current_cell, state=current_state)
+
+
+results, state = compiled_neighbors(positions, cell, state)
+check_neighbor_list_state(state)  # outside jax.jit
+```
+
+See the complete {doc}`JAX example
+</examples/neighbors/05_jax_neighbor_list>`.
+
+:::
+
+::::
+
+Torch:
+
+- Pass the mutable state as `state=`. A compiled function may capture it in a
+  closure. The call returns the ordinary result tuple and updates the state in
+  place.
+- Fixed result buffers are borrowed; complete backward before reusing the
+  state. Exact-size COO topology is newly allocated on each call, so older
+  returned topology tensors remain usable.
+- Argument errors detected before route execution leave the state reusable. A
+  route-execution failure invalidates it, so prepare a new state. A CUDA device
+  assertion requires restarting the process.
+
+JAX:
+
+- Pass the immutable state explicitly. The call returns `(results, next_state)`;
+  thread that successor into the next call.
+- Result arrays follow functional semantics, and some are also leaves of the
+  successor state. Consume those results before donating that state to a later
+  call, and do not reuse any alias after donation.
+- Failures are sticky per system in the successor state. Call
+  `check_neighbor_list_state(...)` outside `jax.jit`; prepare a new state to
+  reset failure history.
+
+#### Selection and fixed configuration
+
+`neighbor_list(..., state=None, method=None)` selects a route eagerly for each
+call. Both backends select once during `prepare_neighbor_list(...)`.
+
+Torch keeps the route resolved by its selector. JAX automatic preparation may
+replace that route with one of a small set of existing compilation-eligible
+equivalents: selective tiled naive becomes scalar naive, cell-list pair outputs
+may use atom-centric execution, and cluster-tile matrix or fixed-COO output may
+use atom-centric cell-list execution. These substitutions are made only for
+automatic choices. Explicit JAX `method` and `strategy` values pin the route
+and an unsupported combination raises. Inspect `state.method` and
+`state.strategy` after preparation; results follow that resolved route's tuple.
+
+Prepared execution wraps existing routes rather than adding missing algorithms.
+A configuration therefore has one of three outcomes:
+
+- Unsupported combinations raise during preparation.
+- Supported eager-only combinations set `supports_compilation=False` and
+  explain why through `compilation_blocker`.
+- Compilation-eligible combinations set `supports_compilation=True`. This
+  describes the documented route boundary, not compilation history or a
+  guarantee for every environment.
+
+See the Torch or JAX
+{func}`~nvalchemiops.torch.neighbors.prepare_neighbor_list` and
+{func}`~nvalchemiops.jax.neighbors.prepare_neighbor_list` references for the
+exact backend-specific boundaries. Cluster-tile states also follow the shared
+{ref}`cluster-pair tile prerequisites <cluster-pair-tile-algorithm>`.
+Prepared execution is not promised to be allocation-free.
+
+Fixed during preparation:
+
+- Atom count and ordering; batch membership; dtype and device
+- Cutoffs and PBC pattern; target rows; wrapping and pair-function configuration
+- Output layout, capacities, and other route-specific launch metadata
+
+Runtime inputs are positions, applicable current cell values, selective
+`rebuild_flags`, and current `pair_params`.
+
+Recognized execution-time configuration does not override the state, and
+caller-owned output or scratch buffers cannot be combined with it. Omitting a
+runtime cell reuses the prepared cell. Prepare a new state when any fixed item
+changes; callers remain responsible for finite, physically valid geometry.
+
+Torch cluster-tile COO uses `max_pairs`. JAX fixed COO uses `coo_capacity`; one
+value applies to both cutoff groups, while a two-value tuple sets them
+independently. See the Torch or JAX
+{func}`~nvalchemiops.torch.neighbors.prepare_neighbor_list` and
+{func}`~nvalchemiops.jax.neighbors.prepare_neighbor_list` references for all
+capacity defaults and parameter interactions.
+
+##### Bounded nonperiodic reuse
+
+For a synthesized nonperiodic cell-list state (`cell=None`), the bound is
+
+```text
+current_span[system, axis] <= exemplar_span[system, axis] + span_margin
+```
+
+`span_margin` is finite, nonnegative, inclusive at the boundary, and measured
+in coordinate units. Rigid translation does not consume it; zero permits
+translation but no span growth. Only selected systems are checked. It is a
+span-growth allowance—not a neighbor-list skin or padding on each side—and a
+nonzero value is supported only by synthesized nonperiodic cell-list routes.
+
+Naive routes do not use a synthesized cell, so they have no corresponding span
+bound and do not accept a nonzero `span_margin`.
+
+#### Initialization, results, and checks
+
+- `initialized` records initialization, not validity. JAX results require both
+  initialization and `valid=True`; a fresh state is valid but not initialized.
+- Before first execution, fixed-size Torch properties expose allocated buffers
+  with unspecified contents; exact-size Torch COO properties are `None`.
+- Named properties mirror applicable result components. Non-applicable
+  properties return `None`; see the Torch or JAX
+  {class}`~nvalchemiops.torch.neighbors.NeighborListState` and
+  {class}`~nvalchemiops.jax.neighbors.NeighborListState` references for the
+  complete catalogue.
+- JAX `valid` is sticky: later success does not erase an earlier failure.
+  Checking immediately protects the current consumer; checking only after a
+  loop detects history but cannot make previously consumed failed results safe.
+  Checking neither clears status nor establishes initialization. The first
+  failure details are retained; prepare a new state to reset the history.
+
+```{warning}
+Do not use results from a failed JAX system for scientific work. After an eager
+Torch route failure, prepare a new state. A compiled Torch CUDA device assertion
+can invalidate the CUDA context and requires restarting the process.
+```
+
+{func}`~nvalchemiops.jax.neighbors.check_neighbor_list_state` documents the
+exception types and deterministic diagnostic selection.
+
+#### Selective rebuilds
+
+Selective states take one Boolean `rebuild_flags` value per system. The first
+call must use all-true flags because preserving any uninitialized system is a
+failure. Later false flags preserve initialized systems.
+
+```python
+import jax.numpy as jnp
+
+from nvalchemiops.jax.neighbors import neighbor_list, prepare_neighbor_list
+
+selective_state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    batch_idx=batch_idx,
+    batch_ptr=batch_ptr,
+    method="naive",
+    max_neighbors=max_neighbors,
+    selective=True,
+)
+
+# Initialize both systems, then rebuild only system 1.
+results, selective_state = neighbor_list(
+    positions,
+    state=selective_state,
+    rebuild_flags=jnp.array([True, True]),
+)
+results, selective_state = neighbor_list(
+    moved_positions,
+    state=selective_state,
+    rebuild_flags=jnp.array([False, True]),
+)
+```
+
+```{note}
+For selective JAX fixed COO, an update that would discard records belonging to
+an initialized unselected system is rejected atomically. The previously
+published topology remains visible, and the selected update records a capacity
+failure.
+```
+
+##### Torch CUDA Graph capture
+
+A warmed `torch.compile(fullgraph=True)` prepared callable can be captured with
+`torch.cuda.CUDAGraph` when it returns cluster-tile matrix topology. This
+supports single and batched state, one or two cutoffs, and selective or
+nonselective execution. Initialize every system before capturing a selective
+state. Warm the compiled all-true path on a side stream and synchronize that
+stream before capture.
+
+The state object and all captured input, output, and scratch tensors must keep
+the same addresses, shapes, dtypes, devices, capacities, partition, and format.
+Update positions, cells, and rebuild flags by copying into the existing input
+tensors. Do not execute or replay the same mutable state concurrently.
+
+Selective replay accepts different flags without recapture. The captured graph
+still records the complete inverse, Morton sort, metadata update, tile build,
+query, and tail sequence; device flags decide which systems publish updates.
+Thus an all-false replay preserves topology but does not skip the recorded
+work. Eager all-false calls return immediately.
+
+Capture does not cover direct eager prepared calls, exact COO or tile output,
+pair geometry, or backward execution. A device assertion during replay can
+invalidate the CUDA context and the prepared state.
 
 ### Basic Single System
 
@@ -1854,14 +1990,20 @@ without host synchronization. Compiled calls also omit
 host-synchronized offset and overflow diagnostics, so retain the eagerly validated
 capacities. The Warp COO query enforces physical output-buffer bounds as defense in
 depth, but mutated or malformed metadata remains unsupported. Compiled Torch and
-JIT-compiled JAX cannot synchronize to raise a data-dependent metadata error. If
-caller-provided single-system offsets no longer equal `[0, physical_capacity]`, a
-true rebuild is suppressed before it writes and the returned active count is zero.
-For valid offsets, an overflowed count is capped at writable capacity. A false
-rebuild retains valid prior buffers and counts; malformed metadata still returns a
-zero active count without changing those buffers. This prevents a returned count
-from naming unwritten entries; it does not make mutated metadata supported. Batched
-cluster-tile fullgraph support is not provided.
+JIT-compiled JAX cannot synchronize to raise a data-dependent metadata error.
+Compiled Torch capacity failure uses a device assertion and does not return
+consumable results. On the fixed-output JAX path, a true rebuild with
+single-system offsets other than `[0, physical_capacity]` is suppressed before
+it writes and returns an active count of zero. Valid offsets cap an overflowed
+count at writable capacity. A false rebuild retains valid prior buffers and
+counts; malformed metadata returns a zero active count without changing those
+buffers. This prevents a returned count from naming unwritten entries; it does
+not make mutated metadata supported.
+Batched cluster-tile fullgraph calls support fixed tile and matrix output,
+including selective matrices with complete caller-owned state, plus
+nonselective exact COO on supported PyTorch versions. They require the complete
+scratch tuple from `allocate_batch_cluster_tile_list`; selective segmented COO
+remains eager-only.
 
 ```python
 @torch.compile(fullgraph=True)
@@ -1997,14 +2139,6 @@ and `vectors` with shape `(n_atoms, max_neighbors, 3)`, slot-aligned with
 on both the PyTorch and JAX paths (each emitted pair's geometry is reconstructed
 live from its indices and shift), so they can flow straight into a loss without
 re-deriving geometry.
-
-For PyTorch cluster-tile methods, geometry output buffers are
-non-differentiable write targets and must not require gradients. When matrix
-geometry must be reconstructed for autograd, the returned distances and vectors
-are fresh differentiable tensors; any supplied buffers receive detached
-snapshots of the same values. Without reconstruction, the returned geometry
-continues to be the supplied or internally allocated buffers. Build losses from
-the returned tensors rather than from reusable output buffers.
 
 ### Inline Pair Potentials with `pair_fn`
 

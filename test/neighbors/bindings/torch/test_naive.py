@@ -26,11 +26,37 @@ from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from ...test_utils import (
     assert_neighbor_lists_equal,
+    assert_neighbor_matrix_equal,
     brute_force_neighbors,
     create_random_system,
     create_simple_cubic_system,
 )
 from .conftest import requires_vesin
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("periodic", [False, True])
+def test_explicit_naive_topology_strategies_agree(periodic: bool) -> None:
+    """CUDA topology output agrees for every supported naive strategy."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.6, 0.1, 0.1], [1.1, 0.1, 0.1]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 2.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs = {"cell": cell, "pbc": pbc} if periodic else {"cell": None, "pbc": None}
+    reference = naive_neighbor_list(
+        positions, 0.75, max_neighbors=8, strategy="scalar", **kwargs
+    )
+    for strategy in ("auto", "scalar", "tile"):
+        assert_neighbor_matrix_equal(
+            reference,
+            naive_neighbor_list(
+                positions, 0.75, max_neighbors=8, strategy=strategy, **kwargs
+            ),
+        )
 
 
 class TestNaiveCorrectness:

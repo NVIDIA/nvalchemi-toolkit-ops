@@ -34,6 +34,10 @@ from nvalchemiops.jax.neighbors._registration import (
     _lazy_cell_list_build_kernel,
     _lazy_cell_list_query_kernel,
 )
+from nvalchemiops.jax.neighbors._resolution import (
+    resolve_cell_strategy as _resolve_cell_strategy,
+)
+from nvalchemiops.jax.neighbors._status import _build_cell_list_status_tail
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
@@ -47,7 +51,6 @@ from nvalchemiops.neighbors.cell_list import (
 from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     is_pair_centric_parallelism_sufficient,
-    select_cell_list_strategy,
 )
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as _warp_query_cell_list,
@@ -319,50 +322,6 @@ def _validate_compact_target_buffers(
         "pair_forces",
         pair_forces,
         (num_rows, max_neighbors, 3),
-    )
-
-
-def _resolve_cell_strategy(
-    strategy: str,
-    *,
-    total_atoms: int,
-    cutoff: float,
-    device_is_cpu: bool,
-    half_fill: bool = False,
-) -> str:
-    """Resolve the cell-list query sub-strategy to ``atom_centric``/``pair_centric``.
-
-    Mirrors the Torch resolution (``torch/neighbors/cell_list.py:565-585``):
-
-    - ``"auto"`` -> :func:`select_cell_list_strategy` on GPU, or ``"atom_centric"``
-      on CPU (pair-centric kernels use CUDA block scheduling).  When
-      ``half_fill`` is set, ``"auto"`` also resolves to ``"atom_centric"``
-      because the JAX pair-centric path is full-fill only - so the default
-      (no explicit strategy) keeps working for every geometry with half_fill.
-    - ``"atom_centric"`` -> ``"atom_centric"``.
-    - ``"pair_centric"`` -> ``"pair_centric"`` on GPU; raises on CPU.
-
-    This is the strategy *decision* only. Pair-centric parallelism guards,
-    transparent launch coarsening, and launch sizing live in
-    ``query_cell_list``. Callers can supply a static ``n_outer`` when the
-    runtime ``neighbor_search_radius`` is traced.
-    """
-    if strategy == "auto":
-        if device_is_cpu or half_fill:
-            return "atom_centric"
-        return select_cell_list_strategy(int(total_atoms), float(cutoff))
-    if strategy == "atom_centric":
-        return "atom_centric"
-    if strategy == "pair_centric":
-        if device_is_cpu:
-            raise ValueError(
-                "strategy='pair_centric' is not supported on CPU "
-                "(kernels use CUDA block scheduling).  Pass 'auto' or "
-                "'atom_centric' instead.",
-            )
-        return "pair_centric"
-    raise ValueError(
-        f"strategy must be 'auto' | 'atom_centric' | 'pair_centric', got {strategy!r}",
     )
 
 
@@ -2917,6 +2876,7 @@ def cell_list(
     pair_forces: jax.Array | None = None,
     coo_capacity: int | None = None,
     pair_centric_n_outer: int | None = None,
+    _return_status: bool = False,
 ) -> tuple[jax.Array, ...]:
     """Build and query spatial cell list for efficient neighbor finding.
 
@@ -3524,6 +3484,30 @@ def cell_list(
                 tail.append(vectors_out)
             if pair_fn is not None:
                 tail.extend((pe_out, pf_out))
+            if _return_status:
+                requested_cells = jnp.prod(
+                    _derive_promoted_cells_per_dimension(cell, pbc, cutoff),
+                    dtype=jnp.int32,
+                ).reshape(1)
+                required_rows = jnp.max(raw_counts, initial=jnp.int32(0)).reshape(1)
+                required_coo = jnp.sum(raw_counts, dtype=jnp.int32).reshape(1)
+                available_rows = jnp.full_like(required_rows, int(max_neighbors))
+                available_coo = jnp.full_like(
+                    required_rows, 0 if coo_capacity is None else int(coo_capacity)
+                )
+                status_tail = _build_cell_list_status_tail(
+                    requested_cells=requested_cells,
+                    available_cells=jnp.full_like(
+                        requested_cells, atoms_per_cell_count.shape[0]
+                    ),
+                    required_rows=required_rows,
+                    available_rows=available_rows,
+                    required_coo=required_coo,
+                    available_coo=available_coo,
+                    metadata_valid=metadata_valid,
+                    coo_capacity=coo_capacity,
+                )
+                return (*base, *tail, *status_tail)
             return (*base, *tail)
 
         (
@@ -3555,6 +3539,31 @@ def cell_list(
             sorted_atom_periodic_shifts=sorted_atom_periodic_shifts,
         )
 
+    if _return_status:
+        # The private prepared-state suffix is deliberately computed from raw
+        # query counts, not fixed COO pointers.  Ordinary direct calls do not
+        # need this diagnostic-only work.
+        requested_cells = jnp.prod(
+            _derive_promoted_cells_per_dimension(cell, pbc, cutoff), dtype=jnp.int32
+        ).reshape(1)
+        available_cells = jnp.full_like(requested_cells, atoms_per_cell_count.shape[0])
+        required_rows = jnp.max(raw_counts, initial=jnp.int32(0)).reshape(1)
+        available_rows = jnp.full_like(required_rows, int(max_neighbors))
+        required_coo = jnp.sum(raw_counts, dtype=jnp.int32).reshape(1)
+        available_coo = jnp.full_like(
+            required_rows, 0 if coo_capacity is None else int(coo_capacity)
+        )
+        status_tail = _build_cell_list_status_tail(
+            requested_cells=requested_cells,
+            available_cells=available_cells,
+            required_rows=required_rows,
+            available_rows=available_rows,
+            required_coo=required_coo,
+            available_coo=available_coo,
+            metadata_valid=metadata_valid,
+            coo_capacity=coo_capacity,
+        )
+
     if return_neighbor_list:
         if coo_capacity is not None:
             packed, _plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
@@ -3565,7 +3574,9 @@ def cell_list(
                 fill_value=positions.shape[0],
                 metadata_valid=metadata_valid,
             )
-            return packed
+            if not _return_status:
+                return packed
+            return (*packed, *status_tail)
         neighbor_list, neighbor_ptr, neighbor_list_shifts = (
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
@@ -3574,11 +3585,14 @@ def cell_list(
                 fill_value=positions.shape[0],
             )
         )
-        return (
+        result = (
             neighbor_list,
             neighbor_ptr,
             neighbor_list_shifts,
         )
+        if not _return_status:
+            return result
+        return (*result, *status_tail)
     else:
         if fill_value is not None and int(fill_value) != positions.shape[0]:
             # The kernel pads unfilled matrix entries with ``total_atoms``; real
@@ -3588,8 +3602,11 @@ def cell_list(
                 jnp.int32(fill_value),
                 neighbor_matrix,
             )
-        return (
+        result = (
             neighbor_matrix,
             num_neighbors,
             neighbor_matrix_shifts,
         )
+        if not _return_status:
+            return result
+        return (*result, *status_tail)

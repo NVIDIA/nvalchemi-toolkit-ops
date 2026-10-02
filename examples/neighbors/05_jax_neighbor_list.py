@@ -28,6 +28,7 @@ In this example you will learn:
 - Using ``half_fill`` mode for symmetric neighbor lists
 - Building compact partial lists with ``target_indices``
 - Validating neighbor distances are within cutoff
+- Preparing and threading reusable state through ``jax.jit``
 - ``jax.jit`` compilation of matrix and fixed-capacity COO outputs
 - Estimating dispatch cost with ``estimate_neighbor_list_costs`` /
   ``suggest_neighbor_list_method``
@@ -55,9 +56,11 @@ try:
     import warp as wp
 
     from nvalchemiops.jax.neighbors import (
+        check_neighbor_list_state,
         compute_naive_num_shifts,
         estimate_neighbor_list_costs,
         neighbor_list,
+        prepare_neighbor_list,
         suggest_neighbor_list_method,
     )
 except Exception as exc:
@@ -169,6 +172,94 @@ for i in range(min(5, neighbor_list_coo.shape[1])):
     tgt = int(target_atoms[i])
     shift = shifts_coo[i].tolist()
     print(f"  Pair {i}: atom {src} -> atom {tgt}, shift {shift}")
+
+# %%
+# Prepared Execution
+# ==================
+# Preparation performs route selection, validation, capacity sizing, and
+# reusable allocation eagerly. The immutable JAX state is then threaded through
+# the compiled function while the scientific result keeps the selected route's
+# tuple. This is the convenient unified interface for compiled loops. A
+# method-specific compiled function with explicit fixed buffers and launch
+# metadata is the lower-overhead option when latency matters, as shown later.
+
+print("\n" + "=" * 70)
+print("PREPARED JAX EXECUTION")
+print("=" * 70)
+
+prepared_state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="naive",
+    strategy="scalar",
+    max_neighbors=128,
+)
+
+
+@jax.jit
+def compiled_prepared(current_positions, current_cell, current_state):
+    """Execute a prepared route and return its successor state."""
+    return neighbor_list(
+        current_positions,
+        cell=current_cell,
+        state=current_state,
+    )
+
+
+(prepared_matrix, prepared_counts, prepared_shifts), prepared_state = compiled_prepared(
+    positions, cell, prepared_state
+)
+check_neighbor_list_state(prepared_state)
+print(f"Prepared method: {prepared_state.method}")
+print(f"Compilation eligible: {prepared_state.supports_compilation}")
+print(f"Prepared matrix shape: {prepared_matrix.shape}")
+print(f"Prepared pair count: {int(prepared_counts.sum())}")
+print(f"Prepared shift shape: {prepared_shifts.shape}")
+
+# Automatic preparation may prefer an equivalent compilation-eligible route.
+# Read these properties after preparation to make that decision visible. Pass
+# explicit method and strategy values, as shown above, when implementation identity
+# matters; an unsupported explicit combination raises instead of changing it.
+print(f"Resolved prepared strategy: {prepared_state.strategy}")
+
+# Selective states require one Boolean rebuild flag per system. Initialize a
+# system before asking a later call to preserve it. The false flag below keeps
+# the previously initialized result while still returning a successor state.
+selective_state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="naive",
+    max_neighbors=128,
+    selective=True,
+)
+
+
+@jax.jit
+def compiled_selective(current_positions, current_state, rebuild_flags):
+    """Execute a selective prepared route and return its successor state."""
+    return neighbor_list(
+        current_positions,
+        state=current_state,
+        rebuild_flags=rebuild_flags,
+    )
+
+
+selective_results, selective_state = compiled_selective(
+    positions, selective_state, jnp.array([True])
+)
+check_neighbor_list_state(selective_state)
+preserved_results, selective_state = compiled_selective(
+    positions, selective_state, jnp.array([False])
+)
+check_neighbor_list_state(selective_state)
+print(
+    "Selective preservation kept counts: "
+    f"{bool(jnp.array_equal(selective_results[1], preserved_results[1]))}"
+)
 
 # %%
 # Algorithm Comparison
@@ -487,6 +578,7 @@ print("  Auto-allocated, returned, and forward-only.")
 # This example demonstrated the JAX neighbor list API in nvalchemiops:
 #
 # - **Unified API**: ``neighbor_list()`` provides a single entry point
+# - **Prepared execution**: Conveniently thread reusable state through ``jax.jit``
 # - **Matrix format**: Dense (N, max_neighbors) format for neighbor indices
 # - **COO format**: Sparse (2, num_pairs) format for graph neural networks
 # - **Algorithm choice**: Direct naive and cell-list calls for comparison
@@ -502,7 +594,9 @@ print("SUMMARY")
 print("=" * 70)
 print("\nKey takeaways:")
 print("  - Use neighbor_list() for eager dispatch and capacity management")
-print("  - Compile method-specific functions with fixed capacities")
+print("  - Use prepared state for a convenient unified compiled interface")
+print("  - Use method-specific compiled functions when lower call overhead matters")
+print("  - Inspect state.method and state.strategy after automatic preparation")
 print("  - Use return_neighbor_list=True for COO format (GNNs)")
 print("  - Add coo_capacity for fixed-shape COO inside jax.jit")
 print("  - Use half_fill=True to store only unique pairs")
