@@ -29,6 +29,7 @@ import pytest
 
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_ewald_miller_indices,
+    generate_k_squared_pme,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     generate_miller_indices,
@@ -316,6 +317,186 @@ class TestKVectorsPME:
         # k_squared_safe shape: (nx, ny, nz/2+1)
         assert k_squared_safe.shape == (16, 16, 9)
 
+    @pytest.mark.parametrize("batch_size", [1, 3])
+    def test_direct_k_squared_matches_vector_path(self, batch_size):
+        """Test separate squared components against Cartesian vectors."""
+        base = jnp.array(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=jnp.float64,
+        )
+        cells = jnp.stack([base * (1.0 + 0.1 * i) for i in range(batch_size)])
+        mesh_dims = (8, 10, 12)
+
+        _, expected = generate_k_vectors_pme(cells, mesh_dims)
+        actual = generate_k_squared_pme(cells, mesh_dims)
+
+        assert jnp.allclose(actual, expected)
+
+    @pytest.mark.parametrize(
+        ("dtype", "skew"),
+        [
+            (jnp.float32, 1000.0),
+            (jnp.float32, 10000.0),
+            (jnp.float64, 10000.0),
+            (jnp.float64, 1000000.0),
+        ],
+    )
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize("precomputed", [False, True])
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_k_squared_preserves_small_skew_cell_modes(
+        self, dtype, skew, batched, precomputed, compiled
+    ):
+        """Eager and compiled small modes survive cancellation in skew cells."""
+        cell = jnp.array(
+            [[1.0, -skew, 0.0], [0.0, skew, 0.0], [0.0, 0.0, 1.0]],
+            dtype=dtype,
+        )
+        if batched:
+            cell = jnp.stack((cell, jnp.diag(jnp.array([8.0, 9.0, 10.0], dtype=dtype))))
+        reciprocal_cell = 2.0 * jnp.pi * jnp.linalg.inv(cell) if precomputed else None
+        generate_squared = (
+            jax.jit(generate_k_squared_pme, static_argnames="mesh_dimensions")
+            if compiled
+            else generate_k_squared_pme
+        )
+        # Use full float32 dot precision for the Cartesian reference on GPUs.
+        with jax.default_matmul_precision("highest"):
+            _, expected = generate_k_vectors_pme(cell, (4, 4, 4), reciprocal_cell)
+        actual = generate_squared(cell, (4, 4, 4), reciprocal_cell)
+
+        assert actual.shape == expected.shape
+        assert actual.dtype == dtype
+        rtol = 1e-6 if dtype == jnp.float32 else 1e-12
+        assert jnp.allclose(actual, expected, rtol=rtol, atol=0.0)
+        assert jnp.allclose(
+            actual[..., 1, 3, 0], expected[..., 1, 3, 0], rtol=rtol, atol=0.0
+        )
+        small_mode = actual[0, 1, 3, 0] if batched else actual[1, 3, 0]
+        analytic_mode = jnp.asarray((2.0 * jnp.pi / skew) ** 2, dtype=dtype)
+        assert jnp.allclose(small_mode, analytic_mode, rtol=rtol, atol=0.0)
+        assert jnp.all(actual[..., 0, 0, 0] == jnp.asarray(1e-12, dtype=dtype))
+
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize("precomputed", [False, True])
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_k_squared_skew_cell_gradients_match_vector_path(
+        self, batched, precomputed, compiled
+    ):
+        """The small-mode cell derivative matches the Cartesian vector path."""
+        cell = jnp.array(
+            [[1.0, -1000.0, 0.0], [0.0, 1000.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=jnp.float64,
+        )
+        if batched:
+            cell = jnp.stack((cell, cell * 1.1))
+
+        def loss(value, generator):
+            reciprocal_cell = (
+                2.0 * jnp.pi * jnp.linalg.inv(value) if precomputed else None
+            )
+            result = generator(value, (4, 4, 4), reciprocal_cell)
+            squared = result[1] if isinstance(result, tuple) else result
+            return squared[..., 1, 3, 0].sum()
+
+        gradient = jax.grad(lambda value: loss(value, generate_k_squared_pme))
+        if compiled:
+            gradient = jax.jit(gradient)
+        expected = jax.grad(lambda value: loss(value, generate_k_vectors_pme))(cell)
+        actual = gradient(cell)
+
+        assert jnp.isfinite(actual).all()
+        assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-14)
+
+    @pytest.mark.parametrize(
+        "generator", [generate_k_vectors_pme, generate_k_squared_pme]
+    )
+    @pytest.mark.parametrize("argument", ["cell", "reciprocal_cell"])
+    @pytest.mark.parametrize(
+        "shape", [(2, 2), (3, 4), (4, 3), (1, 2, 2), (3,), (1, 1, 3, 3)]
+    )
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_pme_cell_shapes_are_validated(self, generator, argument, shape, compiled):
+        """Both PME generators reject malformed cells before JIT execution."""
+        cell = jnp.eye(3, dtype=jnp.float64)
+        malformed = jnp.zeros(shape, dtype=cell.dtype)
+        kwargs = {"cell": cell, "reciprocal_cell": None}
+        kwargs[argument] = malformed
+        if compiled:
+            generator = jax.jit(generator, static_argnames="mesh_dimensions")
+
+        with pytest.raises(ValueError, match=f"^{argument} must have shape"):
+            generator(mesh_dimensions=(4, 4, 4), **kwargs)
+
+    def test_vector_path_accepts_single_precomputed_reciprocal_cell(self):
+        """A documented 2-D reciprocal cell matches both implicit paths."""
+        cell = jnp.array(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=jnp.float64,
+        )
+        mesh_dims = (8, 10, 12)
+
+        expected = generate_k_vectors_pme(cell, mesh_dims)
+        reciprocal_cell = 2.0 * jnp.pi * jnp.linalg.inv(cell)
+        actual = generate_k_vectors_pme(
+            cell,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cell,
+        )
+        expected_squared = generate_k_squared_pme(cell, mesh_dims)
+        actual_squared = generate_k_squared_pme(
+            cell,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cell,
+        )
+
+        assert jnp.allclose(actual[0], expected[0])
+        assert jnp.allclose(actual[1], expected[1])
+        assert jnp.allclose(actual_squared, expected_squared)
+
+    def test_precomputed_reciprocal_cell_accepts_matching_batch(self):
+        """Matching batched reciprocal cells preserve both PME grid paths."""
+        base = jnp.array(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=jnp.float64,
+        )
+        cells = jnp.stack((base, base * 1.1))
+        mesh_dims = (8, 10, 12)
+        reciprocal_cells = 2.0 * jnp.pi * jnp.linalg.inv(cells)
+
+        expected_vectors, expected_squared = generate_k_vectors_pme(cells, mesh_dims)
+        actual_vectors, actual_squared = generate_k_vectors_pme(
+            cells,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cells,
+        )
+        direct_squared = generate_k_squared_pme(
+            cells,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cells,
+        )
+
+        assert actual_vectors.shape[0] == 2
+        assert jnp.allclose(actual_vectors, expected_vectors)
+        assert jnp.allclose(actual_squared, expected_squared)
+        assert jnp.allclose(direct_squared, expected_squared)
+
+    @pytest.mark.parametrize(
+        "generator",
+        (generate_k_vectors_pme, generate_k_squared_pme),
+    )
+    def test_precomputed_reciprocal_cell_rejects_mismatched_batch(self, generator):
+        """A single reciprocal cell cannot describe a multi-cell batch."""
+        base = jnp.array(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=jnp.float64,
+        )
+        cells = jnp.stack((base, base * 1.1))
+        reciprocal_cell = 2.0 * jnp.pi * jnp.linalg.inv(base)
+
+        with pytest.raises(ValueError, match="batch dimension must match"):
+            generator(cells, (8, 10, 12), reciprocal_cell=reciprocal_cell)
+
     def test_k_squared_positive(self):
         """Test that k_squared_safe is always positive (avoids division by zero)."""
         cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 10.0
@@ -401,6 +582,23 @@ class TestKVectorGradients:
 
         assert grad_val is not None
         assert jnp.isfinite(grad_val).all()
+
+    def test_direct_k_squared_cell_gradient_matches_vector_path(self):
+        """Test separate squared-component gradients against the vector path."""
+        cell = jnp.array(
+            [[[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]]],
+            dtype=jnp.float64,
+        )
+        mesh_dims = (8, 10, 12)
+
+        expected = jax.grad(
+            lambda value: generate_k_vectors_pme(value, mesh_dims)[1].sum()
+        )(cell)
+        actual = jax.grad(lambda value: generate_k_squared_pme(value, mesh_dims).sum())(
+            cell
+        )
+
+        assert jnp.allclose(actual, expected)
 
     def test_ewald_k_vectors_gradients_with_miller_bounds(self):
         """Test that gradients flow through cell when miller_bounds is provided."""

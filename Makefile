@@ -82,7 +82,7 @@ license:  ## Check license headers
 FULL_GROUPS := types math neighbors dynamics batch_utils warp_dispatch \
 	torch_boundary segment_ops segment_ops_backward segment_ops_torch \
 	segment_ops_jax interactions dispersion electrostatics electrostatics_jax \
-	electrostatics_torch
+	electrostatics_torch electrostatics_shared benchmarks
 
 ARGS_types                := test/test_types.py
 ARGS_math                 := test/math
@@ -100,6 +100,8 @@ ARGS_dispersion           := test/interactions/dispersion
 ARGS_electrostatics       := test/interactions/electrostatics --ignore=test/interactions/electrostatics/bindings
 ARGS_electrostatics_jax   := test/interactions/electrostatics/bindings/jax
 ARGS_electrostatics_torch := test/interactions/electrostatics/bindings/torch
+ARGS_electrostatics_shared := test/interactions/electrostatics/bindings/test_pme_mesh_selection.py
+ARGS_benchmarks           := test/benchmarks test/test_benchmark_pme_mesh_integration.py
 
 # ------------------------------------------------------------------------------
 # The pull-request suite
