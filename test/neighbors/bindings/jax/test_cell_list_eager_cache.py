@@ -71,3 +71,39 @@ def test_warmed_cell_calls_reuse_compilation_with_new_positions(compact, batched
     ):
         counts = np.diff(np.asarray(result[1])) if compact else np.asarray(result[1])
         np.testing.assert_array_equal(counts, expected)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("batched", [False, True])
+def test_explicit_capacity_atom_calls_keep_cells_on_device(dtype, batched):
+    """Explicit cell capacity avoids host reads of fresh eager GPU cells."""
+    num_systems = 2 if batched else 1
+    positions = jnp.array([[0, 0, 0], [0.4, 0, 0], [2, 0, 0]] * num_systems, dtype)
+    kwargs = dict(
+        cutoff=0.75,
+        pbc=jnp.ones((num_systems, 3), dtype=jnp.bool_),
+        max_neighbors=16,
+        max_total_cells=128 * num_systems,
+        strategy="atom_centric",
+    )
+    if batched:
+        kwargs["batch_idx"] = jnp.array([0, 0, 0, 1, 1, 1], jnp.int32)
+        kwargs["batch_ptr"] = jnp.array([0, 3, 6], jnp.int32)
+    call = batch_cell_list if batched else cell_list
+    warm_cell = jnp.broadcast_to(jnp.eye(3, dtype=dtype) * 8, (num_systems, 3, 3))
+    jax.block_until_ready(call(positions, cell=warm_cell, **kwargs))
+
+    for length in (9, 10):
+        # A fresh device result avoids a cached host copy from the warmup.
+        cell = warm_cell.at[:, 0, 0].set(length)
+        with jax.transfer_guard_device_to_host("disallow_explicit"):
+            result = call(positions, cell=cell, **kwargs)
+            jax.block_until_ready(result)
+        np.testing.assert_array_equal(np.asarray(result[1]), [1, 1, 0] * num_systems)
+        matrix = np.asarray(result[0])
+        shifts = np.asarray(result[2])
+        for system in range(num_systems):
+            offset = system * 3
+            assert matrix[offset, 0] == offset + 1
+            assert matrix[offset + 1, 0] == offset
+            np.testing.assert_array_equal(shifts[offset : offset + 2, 0], 0)

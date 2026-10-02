@@ -231,7 +231,7 @@ def _validate_cell_geometry(
     *,
     batched: bool,
 ) -> None:
-    """Reject non-finite or singular eager cells before an atom-centric build."""
+    """Reject non-finite or singular eager cells before capacity estimation."""
     if isinstance(cell, jax.core.Tracer):
         return
 
@@ -3299,10 +3299,9 @@ def cell_list(
     ):
         max_neighbors = estimate_max_neighbors(cutoff)
 
-    if strategy == "atom_centric":
-        _validate_cell_geometry(cell, batched=False)
-
     if max_total_cells is None:
+        if strategy == "atom_centric":
+            _validate_cell_geometry(cell, batched=False)
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
         )

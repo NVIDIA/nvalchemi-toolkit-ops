@@ -2449,7 +2449,7 @@ def batch_cell_list(
         dtype=topology_cell_dtype,
     )
 
-    if strategy == "atom_centric":
+    if strategy == "atom_centric" and max_total_cells is None:
         _validate_cell_geometry(cell, batched=True)
 
     # Build cell list

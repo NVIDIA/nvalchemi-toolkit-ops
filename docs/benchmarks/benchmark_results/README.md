@@ -25,7 +25,9 @@ not alter a timed kernel, callable, grid, or CSV value. The software context was
 Python 3.13.9, Torch 2.12.0+cu126, JAX/JAXlib 0.9.0.1, Warp 1.13.0, CUDA 12.6,
 and ALCHEMI Toolkit-Ops 0.4.0. Collection used NVIDIA H100 80 GB HBM3 GPUs
 (compute capability 9.0) with driver 535.216.03. A future kernel, public API,
-timing-boundary, or grid change requires a complete replacement run.
+timing-boundary, or grid change requires a complete replacement run for the
+affected collection. For NL, each backend and method can be refreshed
+independently while retaining validated results for unchanged methods.
 
 See the per-module doc pages for how to read the plots and how to
 reproduce:
