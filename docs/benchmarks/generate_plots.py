@@ -627,7 +627,13 @@ def _suite_csv_dirs(
         marker.read_text(encoding="ascii").strip() if marker.is_file() else None
     )
     try:
-        validate_result_files(csv_paths, expected_run_id=expected_run_id)
+        # Bundled NL results can refresh one complete method. Other modules and
+        # fresh externally supplied suites retain suite-wide validation.
+        validate_result_files(
+            csv_paths,
+            expected_run_id=expected_run_id if override else None,
+            per_method=not override,
+        )
         validate_reportable_case_matrix(csv_paths, {"torch", "jax", "warp"})
     except ValueError as exc:
         raise RuntimeError(f"Invalid benchmark results in {suite_dir}: {exc}") from exc

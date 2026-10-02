@@ -534,6 +534,68 @@ requires `graph_mode="none"`. Compiled single-system calls provide
 `pair_centric_n_outer`; compiled batched calls provide `pair_centric_total_cells`,
 `pair_centric_n_outer`, and `pair_centric_r_max`.
 
+Allocation and construction retain the configured minimum's doubling rule:
+a natural axis with three cells and a minimum of four becomes six cells.
+Both stages use the same rule, including caller-provided workspaces sized with
+the public estimator's default. Torch retains its strategy-specific settings:
+internally allocated atom-centric calls use a minimum of one; auto and
+pair-centric calls use four. JAX retains its existing minimum settings.
+Torch CUDA single-system and batched full-list pair-centric calls select between
+three grids:
+the box/cutoff grid, the existing
+configured grid, and a grid sized from the population and query block width.
+For batched calls, the estimate counts setup warps and active source-warp passes
+across all cell/offset blocks, including the partly occupied final pass. For
+$C$ cells, stencil volume $S$ and occupancy $q = \lceil N/C\rceil$, the work is
+$CS(w + aq)$, where $w$ is the number of warps per query block and $a$ is the
+number of active warp passes through its source atoms. CUDA warps contain 32
+lanes; with the current 64-thread query blocks, $w = 2$ and
+$a = \lceil q/32\rceil$. Batched alternatives must also preserve or reduce the
+source-pass count relative to the configured grid. Single-system alternatives must also preserve or reduce the
+estimated candidate pair count, serial neighbor-loop depth, cell storage, and
+logical block count relative to the configured grid. These estimates account
+for the atoms in each neighboring cell, assuming approximately uniform occupancy.
+The configured grid wins ties and tradeoffs between these costs. Selected dimensions and search radii are reused during the
+same call's build. Batched builds also reuse the selected cell counts. Preparation and scans
+overwrite their scratch arrays, with binning counts reset in the build.
+Supplied `batch_ptr` boundaries provide populations directly;
+direct binding calls can derive them from `batch_idx`. This also applies when
+automatic method or default strategy selection resolves to this pair-centric path.
+Selection covers
+eager calls and compiled calls with all cell workspace buffers supplied. Half
+lists, selective rebuilds and compiled calls with implicit cell allocation
+retain their existing sizing paths.
+Eager JAX full-list calls that select `strategy="pair_centric"` use the same
+selector for single systems and batches on CUDA. Selection combines grid,
+search-radius, and cell-count preparation in one shared Warp kernel. Current
+boxes and populations remain runtime inputs. JAX calls with static pair-launch
+metadata, traced/JIT calls, half lists, and `graph_mode="warp"` retain their
+existing sizing paths. Default eager calls use the selector when the existing
+strategy rule selects pair-centric execution.
+
+These pair-centric calls calculate the grid from the current box, cutoff,
+and population on each call. With Torch caller-provided workspaces, selection runs
+during the GPU build and updates grid dimensions and search radii in place,
+including under `torch.compile`. Direct compiled calls without `batch_ptr`
+derive populations using a fixed-size count tensor with one entry per system.
+Single-system Torch calls pass the known atom count directly; supplied-workspace
+builds write dimensions and radii without allocating population or count scratch.
+Full-list pair-centric single-system builds overwrite active workspace entries;
+reuse clears only oversized per-atom tails and the counts required for binning.
+Each system receives an equal share of the supplied cell capacity, bounded by
+the existing per-system limit. The selector chooses within that share, so a
+smaller workspace can produce a different grid with the same physical neighbors.
+The workspace must hold at least one cell per system and every atom. Other
+paths continue to require caller-managed capacity and current search radii
+when boxes change.
+The separate build/query API continues to use its caller-configured grid minimum.
+JAX's combined calls bound the selected grid by `max_total_cells`; single-system
+calls also respect supplied cell-count and cell-start array capacities. Torch
+single-system calls also respect those supplied array capacities.
+
+Eager JAX cell-list calls reuse compiled inner
+kernels for matching shapes and dtypes, reading the current arrays on each call.
+
 (cluster-pair-tile-algorithm)=
 
 ## Cluster-Pair Tile Algorithm

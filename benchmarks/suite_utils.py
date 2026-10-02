@@ -1179,6 +1179,7 @@ def validate_result_files(
     csv_paths: Sequence[Path | str],
     *,
     expected_run_id: str | None = None,
+    per_method: bool = False,
 ) -> dict[str, int]:
     """Validate provenance and failure metadata across reportable CSV files.
 
@@ -1187,11 +1188,19 @@ def validate_result_files(
     schema must be identical across all files. External input fingerprints must
     be uniform within each CSV, and runtime/allocator settings must be uniform
     across shards of the same backend.
+
+    With ``per_method=True``, validate each NL (backend, method) collection
+    independently across all systems, cutoffs, and scaling modes. Single and
+    batch variants belong to the same collection. This supports complete NL
+    method refreshes in the published docs; callers must also validate the
+    planned case matrix. Other modules and collection writers retain the
+    suite-wide checks.
     """
     paths = [Path(path) for path in csv_paths]
-    expected_context: dict[str, str] = {}
+    expected_context: dict[tuple[tuple[str, ...], str], str] = {}
     expected_protocol: dict[str, str] = {}
-    backend_runtime_contexts: dict[str, str] = {}
+    backend_runtime_contexts: dict[tuple[str, ...], str] = {}
+    input_contexts: dict[tuple[str, ...], str] = {}
     counts = {"rows": 0, "successes": 0, "failures": 0}
 
     for path in paths:
@@ -1208,7 +1217,7 @@ def validate_result_files(
                     f"expected {previous!r}, found {value!r}"
                 )
 
-        file_input_context: str | None = None
+        group_nl_methods = per_method and path.name.startswith("nl-")
         for row_number, row in enumerate(rows, start=2):
             location = f"{path}:{row_number}"
             missing = [field for field in _ROW_PROVENANCE_FIELDS if not row.get(field)]
@@ -1223,25 +1232,36 @@ def validate_result_files(
                     f"found {row['run_id']}"
                 )
 
+            backend = row.get("backend", "")
+            collection = (
+                (
+                    path.name.split("-", 1)[0],
+                    backend,
+                    row.get("method", "").removeprefix("batch_"),
+                )
+                if group_nl_methods
+                else ()
+            )
+            if group_nl_methods and (not backend or not row.get("method")):
+                raise ValueError(f"Missing benchmark backend or method at {location}")
             for field in _PROVENANCE_FIELDS:
-                previous = expected_context.setdefault(field, row[field])
+                previous = expected_context.setdefault((collection, field), row[field])
                 if row[field] != previous:
                     raise ValueError(
                         f"Mixed benchmark {field} at {location}: expected "
                         f"{previous!r}, found {row[field]!r}"
                     )
 
-            if file_input_context is None:
-                file_input_context = row["input_context"]
-            elif row["input_context"] != file_input_context:
+            input_key = collection if group_nl_methods else (str(path),)
+            previous_input = input_contexts.setdefault(input_key, row["input_context"])
+            if row["input_context"] != previous_input:
                 raise ValueError(
-                    f"Mixed benchmark input_context at {location}; one CSV cannot "
-                    "combine different external artifacts"
+                    f"Mixed benchmark input_context at {location}; inputs must "
+                    "match within the validated collection"
                 )
 
-            backend = row.get("backend", "")
             previous_runtime = backend_runtime_contexts.setdefault(
-                backend, row["runtime_context"]
+                (*collection, backend), row["runtime_context"]
             )
             if row["runtime_context"] != previous_runtime:
                 raise ValueError(

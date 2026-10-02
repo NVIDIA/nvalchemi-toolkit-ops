@@ -349,6 +349,158 @@ class TestCellListEdgeCases:
         assert torch.equal(neighbor_search_radius_2d, expected_radius)
         assert torch.equal(neighbor_search_radius_1d, expected_radius)
 
+    def test_estimate_cell_list_sizes_retains_minimum_rule(self, device, dtype):
+        """Double a natural three-cell axis to meet the configured minimum."""
+        cell = torch.diag(
+            torch.tensor([3.9, 10.9, 10.9], dtype=dtype, device=device)
+        ).reshape(1, 3, 3)
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff=1.0,
+        )
+
+        assert max_cells == 600
+        assert torch.equal(
+            neighbor_search_radius,
+            torch.tensor([2, 1, 1], dtype=torch.int32, device=device),
+        )
+
+    def test_estimate_cell_list_sizes_accepts_left_handed_cell(self, device, dtype):
+        """Sizing accepts a nondegenerate cell with negative orientation."""
+        cell = torch.diag(
+            torch.tensor([-4.0, 4.0, 4.0], dtype=dtype, device=device)
+        ).reshape(1, 3, 3)
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff=1.0,
+        )
+
+        assert max_cells > 0
+        assert neighbor_search_radius.shape == (3,)
+
+    @requires_vesin
+    def test_preallocated_atom_centric_grid_matches_estimate(self, device, dtype):
+        """Build an atom-centric list in a cache sized by the public estimate."""
+        expected_capacity = 100
+        expected_radius = [2, 1, 1]
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.diag(
+            torch.tensor([51.0, 126.0, 126.0], dtype=dtype, device=device)
+        ).reshape(1, 3, 3)
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff=25.0,
+        )
+        assert max_cells == expected_capacity
+        assert torch.equal(
+            neighbor_search_radius,
+            torch.tensor(expected_radius, dtype=torch.int32, device=device),
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius,
+            device,
+        )
+
+        neighbor_list, _, shifts = cell_list(
+            positions,
+            25.0,
+            cell,
+            pbc,
+            max_neighbors=8,
+            return_neighbor_list=True,
+            strategy="atom_centric",
+            cells_per_dimension=cell_list_cache[0],
+            neighbor_search_radius=cell_list_cache[1],
+            atom_periodic_shifts=cell_list_cache[2],
+            atom_to_cell_mapping=cell_list_cache[3],
+            atoms_per_cell_count=cell_list_cache[4],
+            cell_atom_start_indices=cell_list_cache[5],
+            cell_atom_list=cell_list_cache[6],
+        )
+
+        # The grid follows the estimator's four-cell minimum, so the caller's
+        # search radius fits the cells that were built.
+        assert torch.equal(
+            cell_list_cache[0],
+            torch.tensor([4, 5, 5], dtype=torch.int32, device=device),
+        )
+        i_ref, j_ref, shifts_ref, _ = brute_force_neighbors(
+            positions,
+            cell,
+            pbc,
+            25.0,
+        )
+        assert_neighbor_lists_equal(
+            (neighbor_list[0], neighbor_list[1], shifts),
+            (i_ref, j_ref, shifts_ref),
+        )
+
+    def test_caller_cache_search_radius_matches_built_grid(self, device, dtype):
+        """A caller cache from the public estimate matches the grid built."""
+        positions = torch.tensor(
+            [[0.5, 0.5, 0.5], [2.0, 2.5, 3.0], [4.5, 1.0, 6.5]],
+            dtype=dtype,
+            device=device,
+        )
+        lengths = torch.tensor([5.0, 5.0, 7.0], dtype=dtype, device=device)
+        cell = torch.diag(lengths).reshape(1, 3, 3)
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+        cutoff = 2.0
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff,
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius,
+            device,
+        )
+
+        cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            max_neighbors=8,
+            strategy="atom_centric",
+            cells_per_dimension=cell_list_cache[0],
+            neighbor_search_radius=cell_list_cache[1],
+            atom_periodic_shifts=cell_list_cache[2],
+            atom_to_cell_mapping=cell_list_cache[3],
+            atoms_per_cell_count=cell_list_cache[4],
+            cell_atom_start_indices=cell_list_cache[5],
+            cell_atom_list=cell_list_cache[6],
+        )
+
+        cells_per_dimension = cell_list_cache[0]
+        assert torch.equal(
+            cells_per_dimension,
+            torch.tensor([4, 4, 6], dtype=torch.int32, device=device),
+        )
+        # For an orthogonal cell the radius a grid needs is
+        # ceil(cutoff * cells / length) along each axis.
+        radius_for_built_grid = torch.ceil(
+            cutoff * cells_per_dimension.to(dtype) / lengths
+        ).to(torch.int32)
+        assert torch.equal(cell_list_cache[1], radius_for_built_grid)
+
     def test_build_cell_list_min_cells_one_uses_legacy_grid(self, device, dtype):
         """build_cell_list should expose the legacy one-cell grid policy."""
         positions = torch.tensor(
@@ -387,10 +539,10 @@ class TestCellListEdgeCases:
             torch.tensor([1, 1, 1], dtype=torch.int32, device=device),
         )
 
-    def test_atom_centric_cell_list_allocates_legacy_grid(self, device, dtype):
-        """Explicit atom-centric cell_list runs on the legacy single-cell grid.
+    def test_atom_centric_cell_list_allocates_one_cell_grid(self, device, dtype):
+        """Explicit atom-centric cell_list handles a cutoff larger than the box.
 
-        With ``cutoff`` larger than the box, the grid collapses to one cell; the
+        The search radius then spans several periodic images, and the
         atom-centric path must still enumerate the pair correctly.
         """
         positions = torch.tensor(
@@ -415,6 +567,81 @@ class TestCellListEdgeCases:
         assert num_neighbors.shape == (2,)
         # Both atoms are within cutoff of each other (and periodic images).
         assert int(num_neighbors.min()) >= 1
+
+    @pytest.mark.gpu
+    @requires_vesin
+    @pytest.mark.parametrize("half_fill", [False, True])
+    @pytest.mark.parametrize("atom_centric_path", ["direct", "sorted"])
+    def test_managed_atom_centric_grid_matches_brute_force_triclinic(
+        self,
+        device,
+        dtype,
+        half_fill,
+        atom_centric_path,
+    ):
+        """Recover exact pair and shift multiplicity on a left-handed cell."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for atom-centric neighbor tests")
+        torch.manual_seed(71)
+        cell = torch.tensor(
+            [[-7.0, 0.2, 0.1], [0.6, 8.0, 0.3], [-0.2, 0.7, 9.0]],
+            dtype=dtype,
+            device=device,
+        ).reshape(1, 3, 3)
+        fractional = torch.rand((19, 3), dtype=dtype, device=device)
+        positions = fractional @ cell[0]
+        pbc = torch.tensor([True, False, True], dtype=torch.bool, device=device)
+        cutoff = 2.2
+
+        neighbor_list, _, shifts = cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            max_neighbors=96,
+            return_neighbor_list=True,
+            half_fill=half_fill,
+            strategy="atom_centric",
+            atom_centric_path=atom_centric_path,
+        )
+        i_ref, j_ref, shifts_ref, _ = brute_force_neighbors(
+            positions,
+            cell,
+            pbc,
+            cutoff,
+        )
+        actual_i, actual_j = neighbor_list
+        actual_shifts = shifts
+        if half_fill:
+            actual_i, actual_j, actual_shifts = (
+                torch.cat((actual_i, actual_j)),
+                torch.cat((actual_j, actual_i)),
+                torch.cat((actual_shifts, -actual_shifts)),
+            )
+
+        assert_neighbor_lists_equal(
+            (actual_i, actual_j, actual_shifts),
+            (i_ref, j_ref, shifts_ref),
+        )
+
+    def test_managed_atom_centric_grid_rejects_singular_cell(self, device, dtype):
+        """Explicit managed atom-centric construction keeps eager errors."""
+        positions = torch.rand((4, 3), device=device, dtype=dtype)
+        cell = torch.tensor(
+            [[[1, 2, 3], [4, 5, 6], [7, 8, 9]]],
+            dtype=dtype,
+            device=device,
+        )
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+
+        with pytest.raises(RuntimeError, match="Cell with volume == 0"):
+            cell_list(
+                positions,
+                3.0,
+                cell,
+                pbc,
+                strategy="atom_centric",
+            )
 
     def test_large_cutoff(self, device, dtype, return_neighbor_list):
         """Large cutoff that includes many neighbors should work correctly."""

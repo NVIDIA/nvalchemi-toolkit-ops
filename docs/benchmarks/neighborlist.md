@@ -559,8 +559,7 @@ The shipped YAML config enables all five strategies. Torch runs all five by
 default. JAX omits pair-centric from its default expansion; an explicit
 pair-centric selection runs as coverage-only. JAX includes cluster-tile by
 default when its CUDA, ``float32``, and fully periodic requirements are met.
-The bundled H100 snapshot includes current JAX cluster-tile coverage at the
-6, 15, and 25 Angstrom cutoffs.
+JAX cluster-tile results cover the 6, 15, and 25 Å cutoffs.
 
 ## Benchmark Configuration
 

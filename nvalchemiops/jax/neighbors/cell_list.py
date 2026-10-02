@@ -22,6 +22,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable
 
@@ -30,7 +31,9 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.jax.neighbors._cell_grid import _select_pair_grid
 from nvalchemiops.jax.neighbors._registration import (
+    _cached_jax_kernel_call,
     _lazy_cell_list_build_kernel,
     _lazy_cell_list_query_kernel,
 )
@@ -139,7 +142,6 @@ __all__ = [
 
 ADAPTIVE_MIN_CELLS = 4
 _DEFAULT_CELL_LIST_BUFFER_FACTOR = 1.5
-_MAX_ADAPTIVE_PROMOTION_STEPS = 8
 
 
 def _reset_query_outputs(
@@ -200,7 +202,8 @@ def _derive_promoted_cells_per_dimension(
         1,
     )
     promote_mask = pbc.astype(jnp.bool_) | (cells_per_dimension > 1)
-    for _ in range(_MAX_ADAPTIVE_PROMOTION_STEPS):
+    # Starting at one, this many doublings reaches the configured minimum.
+    for _ in range((ADAPTIVE_MIN_CELLS - 1).bit_length()):
         cells_per_dimension = jnp.where(
             promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
             cells_per_dimension * 2,
@@ -221,6 +224,35 @@ def _is_cpu_array(array: jax.Array) -> bool:
         return all(device.platform == "cpu" for device in array.devices())
     except (AttributeError, jax.errors.ConcretizationTypeError):
         return False
+
+
+def _validate_cell_geometry(
+    cell: jax.Array,
+    *,
+    batched: bool,
+) -> None:
+    """Reject non-finite or singular eager cells before an atom-centric build."""
+    if isinstance(cell, jax.core.Tracer):
+        return
+
+    cell_host = np.asarray(jax.device_get(cell))
+    if not np.isfinite(cell_host).all():
+        raise RuntimeError("Cell geometry must contain finite values.")
+
+    with np.errstate(invalid="ignore", over="ignore"):
+        volumes = np.sum(
+            np.cross(cell_host[:, 0], cell_host[:, 1]) * cell_host[:, 2],
+            axis=-1,
+        )
+    if not np.isfinite(volumes).all():
+        raise RuntimeError("Cell geometry must contain finite values.")
+    if np.any(np.abs(volumes) == 0.0):
+        subject = "Cells" if batched else "Cell"
+        verb = "are" if batched else "is"
+        raise RuntimeError(
+            f"{subject} with volume == 0.0 detected and {verb} not supported."
+            " Please pass unit cells with `det(cell) != 0.0`."
+        )
 
 
 def _validate_atom_centric_path(atom_centric_path: str) -> str:
@@ -1557,8 +1589,8 @@ def estimate_cell_list_sizes(
     max_total_cells = jnp.max(jnp.array([num_cells_est, 8]))  # Minimum 8 cells
 
     pbc_squeezed = pbc.squeeze()[:3] if pbc.ndim > 1 else pbc[:3]
-    # Match Warp's natural-grid calculation and repeated-doubling promotion,
-    # then apply the single-system capacity clamp below.
+    # Match Warp's natural-grid calculation and minimum-cell promotion, then
+    # apply the single-system capacity clamp below.
     cells_per_dimension = _derive_promoted_cells_per_dimension(
         cell,
         pbc,
@@ -1742,19 +1774,21 @@ def _cell_list_pair_outputs_forward(
                 pair_fn, wp_dtype, is_partial, half_fill
             )
         elif half_fill:
-            pair_kernel = _CELL_LIST_QUERY_REGISTRATIONS[(True, True, "sorted")][
-                positions.dtype
-            ]
+            pair_kernel = _cached_jax_kernel_call(
+                _CELL_LIST_QUERY_REGISTRATIONS[(True, True, "sorted")][positions.dtype]
+            )
         else:
-            pair_kernel = _CELL_LIST_QUERY_REGISTRATIONS[(False, True, "sorted")][
-                positions.dtype
-            ]
+            pair_kernel = _cached_jax_kernel_call(
+                _CELL_LIST_QUERY_REGISTRATIONS[(False, True, "sorted")][positions.dtype]
+            )
         ti_arg = (
             jnp.asarray(target_indices, dtype=jnp.int32)
             if is_partial
             else jnp.zeros((0,), dtype=jnp.int32)
         )
-        gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+        gather_kernel = _cached_jax_kernel_call(
+            _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+        )
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(
@@ -1973,6 +2007,41 @@ def build_cell_list(
             "Use query_cell_list() or the top-level cell_list() wrapper.",
         )
 
+    return _build_cell_list(
+        positions,
+        cutoff,
+        cell,
+        pbc,
+        cells_per_dimension,
+        neighbor_search_radius,
+        atom_periodic_shifts,
+        atom_to_cell_mapping,
+        atoms_per_cell_count,
+        cell_atom_start_indices,
+        cell_atom_list,
+        max_total_cells,
+        graph_mode,
+    )
+
+
+def _build_cell_list(
+    positions: jax.Array,
+    cutoff: float,
+    cell: jax.Array,
+    pbc: jax.Array,
+    cells_per_dimension: jax.Array | None = None,
+    neighbor_search_radius: jax.Array | None = None,
+    atom_periodic_shifts: jax.Array | None = None,
+    atom_to_cell_mapping: jax.Array | None = None,
+    atoms_per_cell_count: jax.Array | None = None,
+    cell_atom_start_indices: jax.Array | None = None,
+    cell_atom_list: jax.Array | None = None,
+    max_total_cells: int | None = None,
+    graph_mode: Literal["none", "warp"] = "none",
+    *,
+    select_pair_grid: bool = False,
+) -> tuple[jax.Array, ...]:
+    """Build using caller-selected sizing or the eager pair-centric selector."""
     graph_mode = _validate_graph_mode(graph_mode)
 
     if cell.ndim == 2:
@@ -2044,22 +2113,42 @@ def build_cell_list(
             float(cutoff),
         )
     else:
-        _construct_bin_size = _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
-            positions.dtype
-        ]
-        _count_atoms = _CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
-        _bin_atoms = _CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
-        # Step 1: Construct bin sizes
-        (cells_per_dimension,) = _construct_bin_size(
-            cell,
-            pbc_bool,
-            empty_bool2d,
-            cells_per_dimension,
-            empty_vec3i,
-            float(cutoff),
-            int(max_total_cells),
-            launch_dims=(1,),
+        _construct_bin_size = _cached_jax_kernel_call(
+            _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][positions.dtype]
         )
+        _count_atoms = _cached_jax_kernel_call(
+            _CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
+        )
+        _bin_atoms = _cached_jax_kernel_call(
+            _CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
+        )
+        if select_pair_grid:
+            capacity = min(
+                max_total_cells,
+                atoms_per_cell_count.shape[0],
+                cell_atom_start_indices.shape[0],
+            )
+            grids, radii, _ = _select_pair_grid(
+                cell,
+                pbc_bool,
+                jnp.asarray([0, total_atoms], dtype=jnp.int32),
+                cutoff,
+                capacity,
+                single_system=True,
+            )
+            cells_per_dimension, neighbor_search_radius = grids[0], radii[0]
+            derive_radius = False
+        else:
+            (cells_per_dimension,) = _construct_bin_size(
+                cell,
+                pbc_bool,
+                empty_bool2d,
+                cells_per_dimension,
+                empty_vec3i,
+                float(cutoff),
+                int(max_total_cells),
+                launch_dims=(1,),
+            )
 
         # Step 2: Count atoms per bin
         atoms_per_cell_count, atom_periodic_shifts = _count_atoms(
@@ -2754,7 +2843,9 @@ def _query_cell_list_with_diagnostics(
             # Sorted path: gather positions/shifts into cell order for coalesced
             # reads.  The direct kernel reads ``positions`` directly and ignores the
             # sorted arrays, so it skips the gather (matching the Torch binding).
-            _gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+            _gather_kernel = _cached_jax_kernel_call(
+                _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+            )
             sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
                 positions,
                 atom_periodic_shifts,
@@ -2763,13 +2854,15 @@ def _query_cell_list_with_diagnostics(
                 sorted_atom_periodic_shifts,
                 launch_dims=(total_atoms,),
             )
-        _build_kernel = _CELL_LIST_QUERY_REGISTRATIONS[
-            (
-                bool(half_fill),
-                False,
-                "direct" if use_direct else "sorted",
-            )
-        ][positions.dtype]
+        _build_kernel = _cached_jax_kernel_call(
+            _CELL_LIST_QUERY_REGISTRATIONS[
+                (
+                    bool(half_fill),
+                    False,
+                    "direct" if use_direct else "sorted",
+                )
+            ][positions.dtype]
+        )
         neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _build_kernel(
             positions,
             atom_periodic_shifts,
@@ -3206,6 +3299,9 @@ def cell_list(
     ):
         max_neighbors = estimate_max_neighbors(cutoff)
 
+    if strategy == "atom_centric":
+        _validate_cell_geometry(cell, batched=False)
+
     if max_total_cells is None:
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
@@ -3333,7 +3429,7 @@ def cell_list(
             cell_atom_start_indices,
             cell_atom_list,
             neighbor_search_radius,
-        ) = build_cell_list(
+        ) = _build_cell_list(
             positions,
             cutoff,
             cell,
@@ -3347,6 +3443,24 @@ def cell_list(
             cell_atom_list=cell_atom_list,
             max_total_cells=max_total_cells,
             graph_mode="none",
+            select_pair_grid=(
+                _resolve_cell_strategy(
+                    strategy,
+                    total_atoms=int(positions.shape[0]),
+                    cutoff=float(cutoff),
+                    device_is_cpu=_is_cpu_array(positions),
+                    half_fill=half_fill,
+                )
+                == "pair_centric"
+                and target_indices is None
+                and not half_fill
+                and pair_centric_n_outer is None
+                and not any(
+                    isinstance(value, jax.core.Tracer)
+                    for value in (positions, cell, pbc)
+                )
+                and not _is_cpu_array(positions)
+            ),
         )
 
         if has_pair_outputs:

@@ -51,6 +51,9 @@ from nvalchemiops.neighbors.output_args import (
     _prepare_pair_output_args,
 )
 
+# Existing batched query width, shared with the grid work estimate.
+_PAIR_CENTRIC_BLOCK_DIM = 64
+
 __all__ = [
     "PAIR_CENTRIC_MAX_LINEAR_LAUNCH",
     "batch_build_cell_list",
@@ -154,6 +157,7 @@ def build_cell_list(
     wp_dtype: type,
     device: str,
     min_cells_per_dimension: int = 4,
+    grid_is_prepared: bool = False,
 ) -> None:
     """Core warp launcher for building spatial cell list.
 
@@ -190,6 +194,8 @@ def build_cell_list(
         Warp device string (e.g., 'cuda:0', 'cpu').
     min_cells_per_dimension : int, default 4
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
+    grid_is_prepared : bool, default False
+        Use the dimensions already stored in ``cells_per_dimension``.
 
     Notes
     -----
@@ -206,24 +212,25 @@ def build_cell_list(
     max_total_cells = atoms_per_cell_count.shape[0]
     wp_cutoff = wp_dtype(cutoff)
 
-    wp.launch(
-        get_build_cell_list_kernel(
-            "construct_bin_size",
-            wp_dtype,
-            min_cells_per_dimension=int(min_cells_per_dimension),
-        ),
-        dim=1,
-        device=device,
-        inputs=(
-            cell,
-            pbc,
-            _empty_sentinel(2, wp.bool, device),
-            cells_per_dimension,
-            _empty_sentinel(1, wp.vec3i, device),
-            wp_cutoff,
-            max_total_cells,
-        ),
-    )
+    if not grid_is_prepared:
+        wp.launch(
+            get_build_cell_list_kernel(
+                "construct_bin_size",
+                wp_dtype,
+                min_cells_per_dimension=int(min_cells_per_dimension),
+            ),
+            dim=1,
+            device=device,
+            inputs=(
+                cell,
+                pbc,
+                _empty_sentinel(2, wp.bool, device),
+                cells_per_dimension,
+                _empty_sentinel(1, wp.vec3i, device),
+                wp_cutoff,
+                max_total_cells,
+            ),
+        )
 
     wp.launch(
         get_build_cell_list_kernel("count_atoms", wp_dtype),
@@ -1008,6 +1015,8 @@ def batch_build_cell_list(
     wp_dtype: type,
     device: str,
     min_cells_per_dimension: int = 4,
+    grid_is_prepared: bool = False,
+    cells_per_system_is_prepared: bool = False,
 ) -> None:
     """Core warp launcher for building batch spatial cell lists.
 
@@ -1052,6 +1061,11 @@ def batch_build_cell_list(
         Warp device string (e.g., 'cuda:0', 'cpu').
     min_cells_per_dimension : int, default 4
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
+    grid_is_prepared : bool, default False
+        Use the supplied grid dimensions. Framework sizing must provide matching
+        allocation sizes and search radii for the current cell and cutoff.
+    cells_per_system_is_prepared : bool, default False
+        Reuse cell counts already written for the supplied grid dimensions.
 
     Notes
     -----
@@ -1069,32 +1083,34 @@ def batch_build_cell_list(
     max_total_cells = atoms_per_cell_count.shape[0]
     wp_cutoff = wp_dtype(cutoff)
 
-    wp.launch(
-        get_build_cell_list_kernel(
-            "construct_bin_size",
-            wp_dtype,
-            batched=True,
-            min_cells_per_dimension=int(min_cells_per_dimension),
-        ),
-        dim=num_systems,
-        device=device,
-        inputs=(
-            cell,
-            _empty_sentinel(1, wp.bool, device),
-            pbc,
-            _empty_sentinel(1, wp.int32, device),
-            cells_per_dimension,
-            wp_cutoff,
-            max_total_cells,
-        ),
-    )
+    if not grid_is_prepared:
+        wp.launch(
+            get_build_cell_list_kernel(
+                "construct_bin_size",
+                wp_dtype,
+                batched=True,
+                min_cells_per_dimension=int(min_cells_per_dimension),
+            ),
+            dim=num_systems,
+            device=device,
+            inputs=(
+                cell,
+                _empty_sentinel(1, wp.bool, device),
+                pbc,
+                _empty_sentinel(1, wp.int32, device),
+                cells_per_dimension,
+                wp_cutoff,
+                max_total_cells,
+            ),
+        )
 
-    wp.launch(
-        _compute_cells_per_system,
-        dim=num_systems,
-        device=device,
-        inputs=(cells_per_dimension, cells_per_system),
-    )
+    if not cells_per_system_is_prepared:
+        wp.launch(
+            _compute_cells_per_system,
+            dim=num_systems,
+            device=device,
+            inputs=(cells_per_dimension, cells_per_system),
+        )
     wp.utils.array_scan(cells_per_system, cell_offsets, inclusive=False)
 
     wp.launch(
@@ -1165,7 +1181,7 @@ def batch_query_cell_list_pair_centric_sorted(
     n_outer: int,
     R_max: tuple[int, int, int],
     half_fill: bool = True,
-    block_dim: int = 64,
+    block_dim: int = _PAIR_CENTRIC_BLOCK_DIM,
     *,
     target_indices: wp.array | None = None,
     return_vectors: bool = False,
