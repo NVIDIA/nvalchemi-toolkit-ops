@@ -537,6 +537,7 @@ def neighbor_list(
                 cell,
                 pbc,
                 batch_idx,
+                batch_ptr=batch_ptr,
                 half_fill=half_fill,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,

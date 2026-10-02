@@ -5,12 +5,12 @@ orphan: true
 # Benchmark Results
 
 Pre-computed CSVs consumed by the Sphinx docs build. The shipped numbers
-under this directory were produced on an **NVIDIA H100 80 GB HBM3
-(Hopper)** and cover three modules (neighbor list, DFT-D3 dispersion,
+under this directory were produced on **NVIDIA H100 (Hopper)** GPUs
+and cover three modules (neighbor list, DFT-D3 dispersion,
 electrostatics) across two chemical systems (CsCl, NH₃) and three
 scaling modes.
 
-The current snapshot was collected on 8 July 2026 under run ID
+The original snapshot was collected on 8 July 2026 under run ID
 `b890cd6794884c1f9e9b143e104fa6da` and source fingerprint
 `695f537dbf4dc6b6e33911363250f629af2629f489a38c583a27c5370373b770`.
 Its 18 reportable CSVs contain all 3,504 planned rows: 3,404 successful
@@ -18,14 +18,16 @@ measurements and 100 explicit capacity-limit rows. The failures comprise 88
 `OutOfMemoryError` rows, 9 strict-PME `JaxRuntimeError` rows, and 3
 `SkippedAfterOOM` rows for JAX Ewald.
 
-Every CSV embeds the same fingerprint in ``software_context``. The measured
+That collection embeds its fingerprint in ``software_context``. The measured
 source tree was clean at Git head
 `66b2aa334a9f2d6b138bf0d1ee87da0e09055593`; later documentation-data edits do
 not alter a timed kernel, callable, grid, or CSV value. The software context was
 Python 3.13.9, Torch 2.12.0+cu126, JAX/JAXlib 0.9.0.1, Warp 1.13.0, CUDA 12.6,
 and ALCHEMI Toolkit-Ops 0.4.0. Collection used NVIDIA H100 80 GB HBM3 GPUs
 (compute capability 9.0) with driver 535.216.03. A future kernel, public API,
-timing-boundary, or grid change requires a complete replacement run.
+timing-boundary, or grid change requires a complete replacement run for the
+affected collection. For NL, each backend and method can be refreshed
+independently while retaining validated results for unchanged methods.
 
 See the per-module doc pages for how to read the plots and how to
 reproduce:
@@ -120,8 +122,8 @@ written directly into the main CSV with `success=False`; the plotter filters
 those rows out. The suite no longer writes separate failure files.
 
 The committed H100 CSVs use provenance schema version 2 and the current EL
-energy-autograd contract. All 18 files share the run ID shown above; start a
-fresh run directory and publish a complete replacement set for future reruns.
+energy-autograd contract. Each row records its collection in ``run_id``; start a
+fresh run directory for each collection.
 
 ## Reproducing
 

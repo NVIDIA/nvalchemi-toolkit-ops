@@ -356,20 +356,24 @@ _BATCH_NAIVE_TILE_SPECS = {
 def _register_batch_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register JaxCallableGraphMode.NONE tile callables for the batched naive eager path.
+    """Cache compiled tile calls inside the public eager batched path.
 
-    ``JaxCallableGraphMode.NONE`` (not WARP): the tile bodies assume the caller has
-    already pre-filled the output buffers, which the eager
-    ``batch_naive_neighbor_list`` path does before dispatch.
+    The public wrapper pre-fills output buffers for ``JaxCallableGraphMode.NONE``.
+    JIT reuses the inner FFI call with current arrays and static launch scalars.
     """
     registered: dict[tuple[bool, bool, jnp.dtype], object] = {}
     for (has_pbc, wrap_positions), spec in _BATCH_NAIVE_TILE_SPECS.items():
         for dtype in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)):
-            registered[(has_pbc, wrap_positions, dtype)] = jax_callable(
+            tile_callable = jax_callable(
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
                 graph_mode=JaxCallableGraphMode.NONE,
+            )
+            # Trailing scalars: cutoff, PBC shift/atom limits, half_fill.
+            registered[(has_pbc, wrap_positions, dtype)] = jax.jit(
+                tile_callable,
+                static_argnums=(-4, -3, -2, -1) if has_pbc else (-2, -1),
             )
     return registered
 
