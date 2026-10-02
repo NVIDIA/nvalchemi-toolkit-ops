@@ -15,6 +15,7 @@
 
 """Configuration and complete-case coverage for the EL benchmark runner."""
 
+import csv
 from collections import Counter
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from benchmarks.interactions.electrostatics.benchmark_electrostatics_suite impor
     _configured_pme_cutoff,
     _prepare_el_families,
     dry_run_from_config,
+    run_from_config,
 )
 from benchmarks.suite_orchestration import _benchmark_case_key
 from benchmarks.suite_systems import create_system
@@ -32,6 +34,35 @@ from benchmarks.suite_systems import create_system
 
 class TestElBenchmarkConfiguration:
     """Scientific setup settings come from the versioned benchmark config."""
+
+    @pytest.mark.parametrize("timing_batches", [None, 5])
+    def test_timing_batches_compatibility(self, tmp_path, timing_batches):
+        """Legacy configs retain one timing batch and explicit counts persist."""
+        parameters = {
+            "timing_runs": 1,
+            "warmup_runs": 0,
+            "max_real_space_cutoff": 9.0,
+            "max_total_atoms": 1,
+        }
+        if timing_batches is not None:
+            parameters["timing_batches"] = timing_batches
+        config = {
+            "parameters": parameters,
+            "systems": {"cscl": {"atom_counts": [128]}},
+            "scaling": {"system_size": {"batch_size": 1}},
+            "methods": [{"name": "pme", "spline_order": 5}],
+            "accuracies": [1e-6],
+        }
+
+        rows = run_from_config(config, output_dir=tmp_path)
+
+        expected = 1 if timing_batches is None else timing_batches
+        assert len(rows) == 1
+        assert rows[0]["timing_batches"] == expected
+        with (tmp_path / "el-cscl-system-size-scaling.csv").open(newline="") as stream:
+            saved = list(csv.DictReader(stream))
+        assert len(saved) == 1
+        assert int(saved[0]["timing_batches"]) == expected
 
     @pytest.mark.parametrize(
         "mode", ["system_size", "constant_workload", "batch_scaling"]

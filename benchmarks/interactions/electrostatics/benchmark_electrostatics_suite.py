@@ -2169,11 +2169,15 @@ def run_from_config(
         when None. Default is ``'torch'``.
     config_dir : Path or str, optional
         Retained for compatibility with the unified-suite runner.
+
+    Notes
+    -----
+    Configurations that omit ``parameters.timing_batches`` use one timing batch.
     """
     params = config["parameters"]
     num_runs = params["timing_runs"]
     warmup_runs = params["warmup_runs"]
-    timing_batches = int(params["timing_batches"])
+    timing_batches = int(params.get("timing_batches", 1))
     if timing_batches <= 0:
         raise ValueError("timing_batches must be positive")
     profile_components = bool(params.get("profile_components", False))
