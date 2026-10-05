@@ -39,6 +39,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _GraphRegistration,
 )
 from nvalchemiops.jax.neighbors._status import _build_cluster_status_tail
+from nvalchemiops.jax.neighbors.cluster_tile import _fixed_cluster_geometry_args
 from nvalchemiops.jax.neighbors.neighbor_utils import _validate_dual_cutoff_order
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -562,6 +563,11 @@ def _batch_build_cluster_tile_list_callback(
     group_ptr: wp.array(dtype=wp.int32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     group_ctr_x: wp.array(dtype=wp.float32),
     group_ctr_y: wp.array(dtype=wp.float32),
     group_ctr_z: wp.array(dtype=wp.float32),
@@ -573,6 +579,7 @@ def _batch_build_cluster_tile_list_callback(
     tile_col_group: wp.array(dtype=wp.int32),
     tile_system: wp.array(dtype=wp.int32),
     cutoff: wp.float32,
+    fixed_cell: wp.bool,
 ) -> None:
     _warp_batch_build_cluster_tile_list(
         sorted_pos_x=sorted_pos_x,
@@ -595,6 +602,12 @@ def _batch_build_cluster_tile_list_callback(
         group_ext_x_buffer=group_ext_x,
         group_ext_y_buffer=group_ext_y,
         group_ext_z_buffer=group_ext_z,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
     )
 
 
@@ -606,6 +619,11 @@ def _batch_build_cluster_tile_list_selective_callback(
     group_ptr: wp.array(dtype=wp.int32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     group_ctr_x: wp.array(dtype=wp.float32),
     group_ctr_y: wp.array(dtype=wp.float32),
     group_ctr_z: wp.array(dtype=wp.float32),
@@ -620,6 +638,7 @@ def _batch_build_cluster_tile_list_selective_callback(
     tile_col_group: wp.array(dtype=wp.int32),
     tile_system: wp.array(dtype=wp.int32),
     cutoff: wp.float32,
+    fixed_cell: wp.bool,
 ) -> None:
     """jax_callable callback for selective batched tile enumeration."""
     _warp_batch_build_cluster_tile_list(
@@ -646,6 +665,12 @@ def _batch_build_cluster_tile_list_selective_callback(
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
     )
 
 
@@ -656,6 +681,11 @@ def _batch_query_cluster_tile_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_row_group: wp.array(dtype=wp.int32),
     tile_col_group: wp.array(dtype=wp.int32),
@@ -665,6 +695,7 @@ def _batch_query_cluster_tile_callback(
     neighbor_matrix_shifts: wp.array(dtype=wp.int32, ndim=3),
     cutoff: wp.float32,
     natom: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     # No ``n_tiles`` scalar — kernel guards per-tile.
     _warp_batch_query_cluster_tile(
@@ -674,6 +705,12 @@ def _batch_query_cluster_tile_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -695,6 +732,11 @@ def _batch_query_cluster_tile_selective_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_offsets: wp.array(dtype=wp.int32),
     tile_counts: wp.array(dtype=wp.int32),
@@ -707,6 +749,7 @@ def _batch_query_cluster_tile_selective_callback(
     neighbor_matrix_shifts: wp.array(dtype=wp.int32, ndim=3),
     cutoff: wp.float32,
     natom: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     """jax_callable callback for selective batched tile-pair -> matrix conversion."""
     _warp_batch_query_cluster_tile(
@@ -716,6 +759,12 @@ def _batch_query_cluster_tile_selective_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -740,6 +789,11 @@ def _batch_query_cluster_tile_dual_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_row_group: wp.array(dtype=wp.int32),
     tile_col_group: wp.array(dtype=wp.int32),
@@ -753,6 +807,7 @@ def _batch_query_cluster_tile_dual_callback(
     cutoff: wp.float32,
     cutoff2: wp.float32,
     natom: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     """jax_callable callback for batched dual-cutoff matrix conversion."""
     _warp_batch_query_cluster_tile(
@@ -762,6 +817,12 @@ def _batch_query_cluster_tile_dual_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -787,6 +848,11 @@ def _batch_query_cluster_tile_dual_selective_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_offsets: wp.array(dtype=wp.int32),
     tile_counts: wp.array(dtype=wp.int32),
@@ -803,6 +869,7 @@ def _batch_query_cluster_tile_dual_selective_callback(
     cutoff: wp.float32,
     cutoff2: wp.float32,
     natom: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     """jax_callable callback for selective batched dual-cutoff conversion."""
     _warp_batch_query_cluster_tile(
@@ -812,6 +879,12 @@ def _batch_query_cluster_tile_dual_selective_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -840,6 +913,11 @@ def _batch_query_cluster_tile_pair_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_row_group: wp.array(dtype=wp.int32),
     tile_col_group: wp.array(dtype=wp.int32),
@@ -855,6 +933,7 @@ def _batch_query_cluster_tile_pair_callback(
     neighbor_distances: wp.array(dtype=wp.float32, ndim=2),
     cutoff: wp.float32,
     natom: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     # No ``n_tiles`` scalar — kernel guards per-tile.
     _warp_batch_query_cluster_tile(
@@ -864,6 +943,12 @@ def _batch_query_cluster_tile_pair_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -889,6 +974,11 @@ def _batch_query_cluster_tile_coo_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_row_group: wp.array(dtype=wp.int32),
     tile_col_group: wp.array(dtype=wp.int32),
@@ -899,6 +989,7 @@ def _batch_query_cluster_tile_coo_callback(
     cutoff: wp.float32,
     natom: wp.int32,
     max_pairs: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     # No ``n_tiles`` scalar — kernel guards per-tile.
     _warp_batch_query_cluster_tile_coo(
@@ -908,6 +999,12 @@ def _batch_query_cluster_tile_coo_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -930,6 +1027,11 @@ def _batch_query_cluster_tile_coo_segmented_callback(
     sorted_pos_z: wp.array(dtype=wp.float32),
     cell_batch: wp.array(dtype=wp.mat33f),
     inv_cell_batch: wp.array(dtype=wp.mat33f),
+    qr_values: wp.array(dtype=wp.float32, ndim=2),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
     num_tiles: wp.array(dtype=wp.int32),
     tile_offsets: wp.array(dtype=wp.int32),
     tile_counts: wp.array(dtype=wp.int32),
@@ -945,6 +1047,7 @@ def _batch_query_cluster_tile_coo_segmented_callback(
     cutoff: wp.float32,
     natom: wp.int32,
     max_pairs: wp.int32,
+    fixed_cell: wp.bool,
 ) -> None:
     """jax_callable callback for batched fixed-segment selective COO."""
     _warp_batch_query_cluster_tile_coo(
@@ -954,6 +1057,12 @@ def _batch_query_cluster_tile_coo_segmented_callback(
         sorted_pos_z=sorted_pos_z,
         cell_batch=cell_batch,
         inv_cell_batch=inv_cell_batch,
+        fixed_cell=bool(fixed_cell),
+        qr=qr_values,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
@@ -974,65 +1083,95 @@ def _batch_query_cluster_tile_coo_segmented_callback(
     )
 
 
-_BATCH_CLUSTER_TILE_BUILDS: dict[str, _GraphRegistration] = {
-    "full": _cluster_tile_build_registration(
-        _batch_build_cluster_tile_list_callback,
-        batched=True,
-        segmented=False,
-        selective=False,
-    ),
-    "selective": _cluster_tile_build_registration(
-        _batch_build_cluster_tile_list_selective_callback,
-        batched=True,
-        segmented=True,
-        selective=True,
-    ),
-}
+def _batch_cluster_tile_build_registrations(
+    *, fixed_cell: bool = False
+) -> dict[str, _GraphRegistration]:
+    """Register dynamic or fixed-cell batched tile-build variants."""
+    return {
+        "full": _cluster_tile_build_registration(
+            _batch_build_cluster_tile_list_callback,
+            batched=True,
+            segmented=False,
+            selective=False,
+            fixed_cell=fixed_cell,
+        ),
+        "selective": _cluster_tile_build_registration(
+            _batch_build_cluster_tile_list_selective_callback,
+            batched=True,
+            segmented=True,
+            selective=True,
+            fixed_cell=fixed_cell,
+        ),
+    }
 
-_BATCH_CLUSTER_TILE_QUERIES: dict[str, _GraphRegistration] = {
-    "matrix": _cluster_tile_matrix_registration(
-        _batch_query_cluster_tile_callback,
-        batched=True,
-    ),
-    "matrix_selective": _cluster_tile_matrix_registration(
-        _batch_query_cluster_tile_selective_callback,
-        batched=True,
-        tile_segmented=True,
-        selective=True,
-    ),
-    "matrix_dual": _cluster_tile_matrix_registration(
-        _batch_query_cluster_tile_dual_callback,
-        batched=True,
-        dual_cutoff=True,
-    ),
-    "matrix_dual_selective": _cluster_tile_matrix_registration(
-        _batch_query_cluster_tile_dual_selective_callback,
-        batched=True,
-        tile_segmented=True,
-        selective=True,
-        dual_cutoff=True,
-    ),
-    "matrix_geometry": _cluster_tile_matrix_registration(
-        _batch_query_cluster_tile_pair_callback,
-        batched=True,
-        geometry=True,
-    ),
-    "coo": _cluster_tile_coo_registration(
-        _batch_query_cluster_tile_coo_callback,
-        batched=True,
-    ),
-    "coo_segmented": _cluster_tile_coo_registration(
-        _batch_query_cluster_tile_coo_segmented_callback,
-        batched=True,
-        tile_segmented=True,
-        coo_segmented=True,
-        selective=True,
-    ),
-}
+
+def _batch_cluster_tile_query_registrations(
+    *, fixed_cell: bool = False
+) -> dict[str, _GraphRegistration]:
+    """Register dynamic or fixed-cell batched query variants."""
+    return {
+        "matrix": _cluster_tile_matrix_registration(
+            _batch_query_cluster_tile_callback,
+            batched=True,
+            fixed_cell=fixed_cell,
+        ),
+        "matrix_selective": _cluster_tile_matrix_registration(
+            _batch_query_cluster_tile_selective_callback,
+            batched=True,
+            tile_segmented=True,
+            selective=True,
+            fixed_cell=fixed_cell,
+        ),
+        "matrix_dual": _cluster_tile_matrix_registration(
+            _batch_query_cluster_tile_dual_callback,
+            batched=True,
+            dual_cutoff=True,
+            fixed_cell=fixed_cell,
+        ),
+        "matrix_dual_selective": _cluster_tile_matrix_registration(
+            _batch_query_cluster_tile_dual_selective_callback,
+            batched=True,
+            tile_segmented=True,
+            selective=True,
+            dual_cutoff=True,
+            fixed_cell=fixed_cell,
+        ),
+        "matrix_geometry": _cluster_tile_matrix_registration(
+            _batch_query_cluster_tile_pair_callback,
+            batched=True,
+            geometry=True,
+            fixed_cell=fixed_cell,
+        ),
+        "coo": _cluster_tile_coo_registration(
+            _batch_query_cluster_tile_coo_callback,
+            batched=True,
+            fixed_cell=fixed_cell,
+        ),
+        "coo_segmented": _cluster_tile_coo_registration(
+            _batch_query_cluster_tile_coo_segmented_callback,
+            batched=True,
+            tile_segmented=True,
+            coo_segmented=True,
+            selective=True,
+            fixed_cell=fixed_cell,
+        ),
+    }
+
+
+_BATCH_CLUSTER_TILE_BUILDS = _batch_cluster_tile_build_registrations()
+_FIXED_BATCH_CLUSTER_TILE_BUILDS = _batch_cluster_tile_build_registrations(
+    fixed_cell=True
+)
+_BATCH_CLUSTER_TILE_QUERIES = _batch_cluster_tile_query_registrations()
+_FIXED_BATCH_CLUSTER_TILE_QUERIES = _batch_cluster_tile_query_registrations(
+    fixed_cell=True
+)
 
 
 @functools.cache
-def _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn) -> _GraphRegistration:
+def _get_jax_batch_cluster_tile_pair_fn_registration(
+    pair_fn, *, fixed_cell: bool = False
+) -> _GraphRegistration:
     """Build (and cache) a batched graph registration closing over ``pair_fn``."""
 
     def _callback(
@@ -1042,6 +1181,11 @@ def _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn) -> _GraphRegistrat
         sorted_pos_z: wp.array(dtype=wp.float32),
         cell_batch: wp.array(dtype=wp.mat33f),
         inv_cell_batch: wp.array(dtype=wp.mat33f),
+        qr_values: wp.array(dtype=wp.float32, ndim=2),
+        axis_aligned: wp.array(dtype=wp.bool),
+        fractional_rounding_certified: wp.array(dtype=wp.bool),
+        qr_height_certified: wp.array(dtype=wp.bool),
+        bbox_cutoff_bounds: wp.array(dtype=wp.float32, ndim=2),
         num_tiles: wp.array(dtype=wp.int32),
         tile_row_group: wp.array(dtype=wp.int32),
         tile_col_group: wp.array(dtype=wp.int32),
@@ -1056,6 +1200,7 @@ def _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn) -> _GraphRegistrat
         pair_forces: wp.array(dtype=wp.vec3f, ndim=2),
         cutoff: wp.float32,
         natom: wp.int32,
+        fixed_cell: wp.bool,
     ) -> None:
         _warp_batch_query_cluster_tile(
             sorted_atom_index=sorted_atom_index,
@@ -1064,6 +1209,12 @@ def _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn) -> _GraphRegistrat
             sorted_pos_z=sorted_pos_z,
             cell_batch=cell_batch,
             inv_cell_batch=inv_cell_batch,
+            fixed_cell=bool(fixed_cell),
+            qr=qr_values,
+            axis_aligned=axis_aligned,
+            fractional_rounding_certified=fractional_rounding_certified,
+            qr_height_certified=qr_height_certified,
+            bbox_cutoff_bounds=bbox_cutoff_bounds,
             num_tiles=num_tiles,
             tile_row_group=tile_row_group,
             tile_col_group=tile_col_group,
@@ -1090,6 +1241,7 @@ def _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn) -> _GraphRegistrat
         batched=True,
         geometry=True,
         pair_fn=pair_fn,
+        fixed_cell=fixed_cell,
     )
 
 
@@ -1121,6 +1273,7 @@ def _batch_build_cluster_tile_list_bounded(
     tile_row_group: jax.Array | None = None,
     tile_col_group: jax.Array | None = None,
     tile_system: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Build the batched tile neighbor list state.
 
@@ -1245,7 +1398,14 @@ def _batch_build_cluster_tile_list_bounded(
         )
         max_tiles = 0
 
-    inv_cell_batch = jnp.linalg.inv(cell_batch)
+    geometry_args = _fixed_cluster_geometry_args(_fixed_cell_geometry)
+    fixed_cell = _fixed_cell_geometry is not None
+    build_registrations = (
+        _FIXED_BATCH_CLUSTER_TILE_BUILDS if fixed_cell else _BATCH_CLUSTER_TILE_BUILDS
+    )
+    inv_cell_batch = (
+        _fixed_cell_geometry[0] if fixed_cell else jnp.linalg.inv(cell_batch)
+    )
     batch_idx = _make_batch_idx(batch_ptr, positions.shape[0])
 
     (
@@ -1284,7 +1444,7 @@ def _batch_build_cluster_tile_list_bounded(
         tile_system = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
-        build_registration = _BATCH_CLUSTER_TILE_BUILDS["full"]
+        build_registration = build_registrations["full"]
         build_registration.preload(device_source=sorted_pos_x)
         (
             group_ctr_x,
@@ -1305,6 +1465,7 @@ def _batch_build_cluster_tile_list_bounded(
             group_ptr,
             cell_batch,
             inv_cell_batch,
+            *geometry_args[:5],
             group_ctr_x,
             group_ctr_y,
             group_ctr_z,
@@ -1316,6 +1477,7 @@ def _batch_build_cluster_tile_list_bounded(
             tile_col_group,
             tile_system,
             float(cutoff),
+            fixed_cell,
         )
     else:
         if tile_offsets is None or tile_counts is None:
@@ -1323,7 +1485,7 @@ def _batch_build_cluster_tile_list_bounded(
                 "rebuild_flags requires tile_offsets and tile_counts for "
                 "batched cluster_tile builds"
             )
-        build_registration = _BATCH_CLUSTER_TILE_BUILDS["selective"]
+        build_registration = build_registrations["selective"]
         build_registration.preload(device_source=sorted_pos_x)
         rf = rebuild_flags.astype(jnp.bool_)
         (
@@ -1346,6 +1508,7 @@ def _batch_build_cluster_tile_list_bounded(
             group_ptr,
             cell_batch,
             inv_cell_batch,
+            *geometry_args[:5],
             group_ctr_x,
             group_ctr_y,
             group_ctr_z,
@@ -1360,6 +1523,7 @@ def _batch_build_cluster_tile_list_bounded(
             tile_col_group,
             tile_system,
             float(cutoff),
+            fixed_cell,
         )
 
     del ngroup  # implicit in group_system.shape[0]
@@ -1403,6 +1567,7 @@ def batch_build_cluster_tile_list(
     tile_row_group: jax.Array | None = None,
     tile_col_group: jax.Array | None = None,
     tile_system: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Build a batched cluster tile list with eager overflow checks.
 
@@ -1478,6 +1643,7 @@ def batch_build_cluster_tile_list(
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
         tile_system=tile_system,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
     if rebuild_flags is None:
         _check_eager_tile_buffer_capacity(result[15], result[16])
@@ -1525,6 +1691,7 @@ def batch_query_cluster_tile(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Convert the batched tile pair list to dense neighbor-matrix form.
 
@@ -1646,22 +1813,33 @@ def batch_query_cluster_tile(
             )
         if batch_idx is None:
             raise ValueError("batch_idx is required when rebuild_flags is provided")
+    query_registrations = (
+        _FIXED_BATCH_CLUSTER_TILE_QUERIES
+        if _fixed_cell_geometry is not None
+        else _BATCH_CLUSTER_TILE_QUERIES
+    )
     if pair_fn is not None:
-        query_registration = _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn)
+        query_registration = _get_jax_batch_cluster_tile_pair_fn_registration(
+            pair_fn, fixed_cell=_fixed_cell_geometry is not None
+        )
     elif has_pair_outputs:
-        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_geometry"]
+        query_registration = query_registrations["matrix_geometry"]
     elif dual_cutoff and selective:
-        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_dual_selective"]
+        query_registration = query_registrations["matrix_dual_selective"]
     elif dual_cutoff:
-        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_dual"]
+        query_registration = query_registrations["matrix_dual"]
     elif selective:
-        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_selective"]
+        query_registration = query_registrations["matrix_selective"]
     else:
-        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix"]
+        query_registration = query_registrations["matrix"]
     query_registration.preload(device_source=sorted_pos_x)
     if fill_value is None:
         fill_value = natom
-    inv_cell_batch = jnp.linalg.inv(cell_batch)
+    geometry_args = _fixed_cluster_geometry_args(_fixed_cell_geometry)
+    fixed_cell = _fixed_cell_geometry is not None
+    inv_cell_batch = (
+        _fixed_cell_geometry[0] if fixed_cell else jnp.linalg.inv(cell_batch)
+    )
 
     if neighbor_matrix is None:
         neighbor_matrix = jnp.zeros((natom, max_neighbors), dtype=jnp.int32)
@@ -1734,6 +1912,7 @@ def batch_query_cluster_tile(
                 sorted_pos_z,
                 cell_batch,
                 inv_cell_batch,
+                *geometry_args[:5],
                 num_tiles,
                 tile_row_group,
                 tile_col_group,
@@ -1748,6 +1927,7 @@ def batch_query_cluster_tile(
                 pair_forces,
                 float(cutoff),
                 int(natom),
+                fixed_cell,
             )
             col_idx = jnp.arange(max_neighbors, dtype=jnp.int32)[jnp.newaxis, :]
             active = col_idx < num_neighbors[:, jnp.newaxis]
@@ -1774,6 +1954,7 @@ def batch_query_cluster_tile(
             sorted_pos_z,
             cell_batch,
             inv_cell_batch,
+            *geometry_args[:5],
             num_tiles,
             tile_row_group,
             tile_col_group,
@@ -1785,6 +1966,7 @@ def batch_query_cluster_tile(
             neighbor_distances,
             float(cutoff),
             int(natom),
+            fixed_cell,
         )
         col_idx = jnp.arange(max_neighbors, dtype=jnp.int32)[jnp.newaxis, :]
         active = col_idx < num_neighbors[:, jnp.newaxis]
@@ -1812,6 +1994,7 @@ def batch_query_cluster_tile(
             sorted_pos_z,
             cell_batch,
             inv_cell_batch,
+            *geometry_args[:5],
             num_tiles,
             tile_offsets.astype(jnp.int32),
             tile_counts.astype(jnp.int32),
@@ -1828,6 +2011,7 @@ def batch_query_cluster_tile(
             float(cutoff),
             float(cutoff2),
             int(natom),
+            fixed_cell,
         )
     elif dual_cutoff:
         (
@@ -1844,6 +2028,7 @@ def batch_query_cluster_tile(
             sorted_pos_z,
             cell_batch,
             inv_cell_batch,
+            *geometry_args[:5],
             num_tiles,
             tile_row_group,
             tile_col_group,
@@ -1857,6 +2042,7 @@ def batch_query_cluster_tile(
             float(cutoff),
             float(cutoff2),
             int(natom),
+            fixed_cell,
         )
     elif selective:
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = (
@@ -1867,6 +2053,7 @@ def batch_query_cluster_tile(
                 sorted_pos_z,
                 cell_batch,
                 inv_cell_batch,
+                *geometry_args[:5],
                 num_tiles,
                 tile_offsets.astype(jnp.int32),
                 tile_counts.astype(jnp.int32),
@@ -1879,6 +2066,7 @@ def batch_query_cluster_tile(
                 neighbor_matrix_shifts,
                 float(cutoff),
                 int(natom),
+                fixed_cell,
             )
         )
     else:
@@ -1890,6 +2078,7 @@ def batch_query_cluster_tile(
                 sorted_pos_z,
                 cell_batch,
                 inv_cell_batch,
+                *geometry_args[:5],
                 num_tiles,
                 tile_row_group,
                 tile_col_group,
@@ -1899,6 +2088,7 @@ def batch_query_cluster_tile(
                 neighbor_matrix_shifts,
                 float(cutoff),
                 int(natom),
+                fixed_cell,
             )
         )
 
@@ -1941,6 +2131,7 @@ def batch_query_cluster_tile_coo(
     neighbor_list: jax.Array | None = None,
     neighbor_list_shifts: jax.Array | None = None,
     _return_pair_counter: bool = False,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Convert the batched tile pair list to flat COO form.
 
@@ -2014,12 +2205,19 @@ def batch_query_cluster_tile_coo(
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
     if rebuild_flags is not None and (tile_offsets is None or tile_counts is None):
         raise ValueError("rebuild_flags requires tile_offsets and tile_counts")
-    coo_registration = _BATCH_CLUSTER_TILE_QUERIES[
-        "coo_segmented" if segmented else "coo"
-    ]
+    query_registrations = (
+        _FIXED_BATCH_CLUSTER_TILE_QUERIES
+        if _fixed_cell_geometry is not None
+        else _BATCH_CLUSTER_TILE_QUERIES
+    )
+    coo_registration = query_registrations["coo_segmented" if segmented else "coo"]
     coo_registration.preload(device_source=sorted_pos_x)
 
-    inv_cell_batch = jnp.linalg.inv(cell_batch)
+    geometry_args = _fixed_cluster_geometry_args(_fixed_cell_geometry)
+    fixed_cell = _fixed_cell_geometry is not None
+    inv_cell_batch = (
+        _fixed_cell_geometry[0] if fixed_cell else jnp.linalg.inv(cell_batch)
+    )
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
 
     if segmented:
@@ -2042,6 +2240,7 @@ def batch_query_cluster_tile_coo(
             sorted_pos_z,
             cell_batch,
             inv_cell_batch,
+            *geometry_args[:5],
             num_tiles,
             tile_offsets.astype(jnp.int32),
             tile_counts.astype(jnp.int32),
@@ -2057,6 +2256,7 @@ def batch_query_cluster_tile_coo(
             float(cutoff),
             int(natom),
             int(max_pairs),
+            fixed_cell,
         )
         result = (coo_list.T, pair_offsets, pair_counts, coo_shifts)
         return (*result, pair_counter) if _return_pair_counter else result
@@ -2070,6 +2270,7 @@ def batch_query_cluster_tile_coo(
         sorted_pos_z,
         cell_batch,
         inv_cell_batch,
+        *geometry_args[:5],
         num_tiles,
         tile_row_group,
         tile_col_group,
@@ -2080,6 +2281,7 @@ def batch_query_cluster_tile_coo(
         float(cutoff),
         int(natom),
         int(max_pairs),
+        fixed_cell,
     )
 
     if _return_pair_counter:
@@ -2138,6 +2340,7 @@ def batch_cluster_tile_neighbor_list(
     pair_forces: jax.Array | None = None,
     max_tiles_per_group: int | None = None,
     _return_status: bool = False,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call.
 
@@ -2573,6 +2776,7 @@ def batch_cluster_tile_neighbor_list(
                 c_det,
                 batch_ptr,
                 max_tiles_per_group=max_tiles_per_group,
+                _fixed_cell_geometry=_fixed_cell_geometry,
             )
             # A bounded build may report more required tiles than physical
             # storage.  Query only its stored prefix; raw count is retained by
@@ -2599,6 +2803,7 @@ def batch_cluster_tile_neighbor_list(
                 return_distances=True,
                 pair_fn=pair_fn,
                 pair_params=pair_params,
+                _fixed_cell_geometry=_fixed_cell_geometry,
             )
             if pair_fn is not None:
                 nm, nn, shifts, vec, dist, pe, pf = out
@@ -2675,6 +2880,7 @@ def batch_cluster_tile_neighbor_list(
                 jax.lax.stop_gradient(cell_batch),
                 batch_ptr,
                 max_tiles_per_group=max_tiles_per_group,
+                _fixed_cell_geometry=_fixed_cell_geometry,
             )
             tile_capacity = jnp.full(
                 (batch_ptr.shape[0] - 1,), status_build[16].shape[0], jnp.int32
@@ -2714,6 +2920,7 @@ def batch_cluster_tile_neighbor_list(
         tile_row_group=previous_tile_row_group,
         tile_col_group=previous_tile_col_group,
         tile_system=previous_tile_system,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
     if selective:
         (
@@ -2831,6 +3038,7 @@ def batch_cluster_tile_neighbor_list(
                 pair_counts=previous_pair_counts,
                 neighbor_list=previous_neighbor_list,
                 neighbor_list_shifts=previous_neighbor_list_shifts,
+                _fixed_cell_geometry=_fixed_cell_geometry,
             )
             result = (
                 *coo_out,
@@ -2858,6 +3066,7 @@ def batch_cluster_tile_neighbor_list(
             N,
             int(max_pairs),
             _return_pair_counter=_return_status,
+            _fixed_cell_geometry=_fixed_cell_geometry,
         )
         if _return_status:
             coo_prefix, pair_counter, coo_shifts, _ = coo_raw
@@ -2893,6 +3102,7 @@ def batch_cluster_tile_neighbor_list(
                 N,
                 int(max_neighbors),
                 fill_value=fill_value,
+                _fixed_cell_geometry=_fixed_cell_geometry,
             )
             atom_owners = _make_batch_idx(batch_ptr, N).astype(jnp.int32)
             raw_required = jax.ops.segment_sum(
@@ -2966,6 +3176,7 @@ def batch_cluster_tile_neighbor_list(
         neighbor_matrix2=previous_neighbor_matrix2,
         num_neighbors2=previous_num_neighbors2,
         neighbor_matrix_shifts2=previous_neighbor_matrix_shifts2,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
     if selective:
         return _with_status(

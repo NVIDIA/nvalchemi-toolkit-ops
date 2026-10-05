@@ -264,6 +264,8 @@ def _batch_naive_tile_pbc_wrapped_f32(
     max_shifts_per_system: wp.int32,
     max_atoms_per_system: wp.int32,
     half_fill: wp.bool,
+    inv_cell: wp.array(dtype=wp.mat33f),
+    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -285,6 +287,8 @@ def _batch_naive_tile_pbc_wrapped_f32(
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
+        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
+        reuse_inv_cell=bool(reuse_inv_cell),
     )
 
 
@@ -303,6 +307,8 @@ def _batch_naive_tile_pbc_wrapped_f64(
     max_shifts_per_system: wp.int32,
     max_atoms_per_system: wp.int32,
     half_fill: wp.bool,
+    inv_cell: wp.array(dtype=wp.mat33d),
+    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -324,6 +330,8 @@ def _batch_naive_tile_pbc_wrapped_f64(
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
+        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
+        reuse_inv_cell=bool(reuse_inv_cell),
     )
 
 
@@ -401,6 +409,8 @@ def _batch_naive_pair_outputs_forward(
     pair_params: jax.Array | None = None,
     target_indices: jax.Array | None = None,
     half_fill: bool = False,
+    wrap_positions: bool = True,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure for the batch_naive autograd path.
 
@@ -533,25 +543,38 @@ def _batch_naive_pair_outputs_forward(
             shift_range_per_dimension, num_shifts_per_system, _ = (
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
-        inv_cell = jnp.linalg.inv(cell)
-        positions_wrapped = jnp.zeros_like(positions)
         per_atom_cell_offsets = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
-        if f64:
-            _wrap_kernel = _jax_wrap_positions_batch_f64
+        # Before fixed-cell support this pair-output path always wrapped the
+        # incoming coordinates, even when the matrix route's
+        # ``wrap_positions=False`` option was requested. Preserve that default
+        # behavior; a fixed-cell state can skip wrapping when it has no cached
+        # inverse for that route.
+        should_wrap_positions = wrap_positions or _fixed_cell_geometry is None
+        if should_wrap_positions:
+            inv_cell = (
+                _fixed_cell_geometry[0]
+                if _fixed_cell_geometry is not None
+                else jnp.linalg.inv(cell)
+            )
+            positions_kernel = jnp.zeros_like(positions)
+            if f64:
+                _wrap_kernel = _jax_wrap_positions_batch_f64
+            else:
+                _wrap_kernel = _jax_wrap_positions_batch_f32
+            positions_kernel, per_atom_cell_offsets = _wrap_kernel(
+                positions,
+                cell,
+                inv_cell,
+                pbc,
+                batch_idx_i32,
+                positions_kernel,
+                per_atom_cell_offsets,
+                launch_dims=(total_atoms,),
+            )
         else:
-            _wrap_kernel = _jax_wrap_positions_batch_f32
-        positions_wrapped, per_atom_cell_offsets = _wrap_kernel(
-            positions,
-            cell,
-            inv_cell,
-            pbc,
-            batch_idx_i32,
-            positions_wrapped,
-            per_atom_cell_offsets,
-            launch_dims=(total_atoms,),
-        )
+            positions_kernel = positions
         outs = kernel(
-            positions_wrapped,
+            positions_kernel,
             per_atom_cell_offsets,
             cutoff_sq,
             0.0,
@@ -661,6 +684,7 @@ def batch_naive_neighbor_list(
     pair_params: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Compute neighbor list for batch of systems using naive O(N^2) algorithm.
 
@@ -1032,6 +1056,8 @@ def batch_naive_neighbor_list(
             "pair_params": pair_params,
             "target_indices": target_indices,
             "half_fill": bool(half_fill),
+            "wrap_positions": bool(wrap_positions),
+            "_fixed_cell_geometry": _fixed_cell_geometry,
         }
         route_out = _route_pair_outputs(
             positions,
@@ -1194,6 +1220,8 @@ def batch_naive_neighbor_list(
     positions = jax.lax.stop_gradient(positions)
     if cell is not None:
         cell = jax.lax.stop_gradient(cell)
+    if _fixed_cell_geometry is not None and _fixed_cell_geometry[0] is not None:
+        inv_cell_buffer = _fixed_cell_geometry[0]
     if inv_cell_buffer is not None:
         inv_cell_buffer = jax.lax.stop_gradient(inv_cell_buffer)
     if positions_wrapped_buffer is not None:
@@ -1263,6 +1291,14 @@ def batch_naive_neighbor_list(
                         "using jax.jit with strategy='tile'."
                     ) from None
             tile_callable = _BATCH_NAIVE_TILE_CALLABLES[(True, True, positions.dtype)]
+            reuse_inverse = (
+                _fixed_cell_geometry is not None and _fixed_cell_geometry[0] is not None
+            )
+            inverse_arg = (
+                _fixed_cell_geometry[0]
+                if reuse_inverse
+                else jnp.zeros((0, 3, 3), dtype=cell.dtype)
+            )
             neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
                 positions,
                 cell,
@@ -1278,6 +1314,8 @@ def batch_naive_neighbor_list(
                 int(max_shifts_per_system),
                 int(max_atoms_per_system),
                 half_fill,
+                inverse_arg,
+                reuse_inverse,
             )
     elif pbc is None:
         # No PBC case

@@ -44,6 +44,13 @@
   eligibility; JAX additionally provides sticky per-system validity and
   ``check_neighbor_list_state(...)``. Synthesized nonperiodic cell-list states
   accept a bounded, translation-invariant ``span_margin``.
+- Prepared Torch and JAX neighbor states accept ``fixed_cell=True`` to cache
+  cell-dependent search geometry, including inverse cells, cell-list grids,
+  and cluster-tile lattice factors and cutoff certificates. The option requires
+  an explicit cell and promises unchanged values until re-preparation; no
+  per-call cell-value comparison is performed. The default retains applicable
+  changing-cell execution, and pair geometry retains its existing position
+  and cell gradients.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was

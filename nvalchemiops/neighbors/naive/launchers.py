@@ -151,17 +151,22 @@ def _prepare_pbc_positions(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ):
     """Prepare wrapped or prewrapped positions and per-atom cell offsets.
 
-    Caller-supplied scratch buffers are used when provided.  If any are
-    absent the launcher allocates a fresh buffer for the call.
+    Caller-supplied scratch buffers are used when provided. If any are absent
+    the launcher allocates a fresh buffer for the call. ``inv_cell_buffer``
+    is recomputed by default; set ``reuse_inv_cell`` only when it contains a
+    valid inverse for an unchanged cell.
     """
     if not wrap_positions:
         return positions, _empty_sentinel(1, wp.vec3i, device)
 
     total_atoms = positions.shape[0]
     vec_dtype, mat_dtype = _DTYPE_INFO[wp_dtype]
+    if reuse_inv_cell and inv_cell_buffer is None:
+        raise ValueError("inv_cell_buffer is required when reuse_inv_cell=True")
     if inv_cell_buffer is None:
         inv_cell_buffer = wp.empty((cell.shape[0],), dtype=mat_dtype, device=device)
     if positions_wrapped_buffer is None:
@@ -172,7 +177,8 @@ def _prepare_pbc_positions(
         per_atom_cell_offsets_buffer = wp.empty(
             (total_atoms,), dtype=wp.vec3i, device=device
         )
-    compute_inv_cells(cell, inv_cell_buffer, wp_dtype, device)
+    if not reuse_inv_cell:
+        compute_inv_cells(cell, inv_cell_buffer, wp_dtype, device)
     _wrap_pbc_positions(
         positions,
         cell,
@@ -451,6 +457,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    reuse_inv_cell: bool = False,
     strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff PBC naive neighbor-matrix path."""
@@ -514,6 +521,7 @@ def _launch_naive_neighbor_matrix_pbc(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
     (
         _empty_offsets,
@@ -775,6 +783,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Launch dual-cutoff PBC kernels."""
     pbc_mode = _pbc_mode_from_wrap(wrap_positions)
@@ -790,6 +799,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
     kernel = get_naive_neighbor_matrix_dual_cutoff_kernel(
         wp_dtype,
@@ -1238,6 +1248,7 @@ def naive_neighbor_matrix_pbc(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for naive neighbor matrix construction with PBC.
 
@@ -1404,6 +1415,7 @@ def naive_neighbor_matrix_pbc(
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
             inv_cell_buffer=inv_cell_buffer,
+            reuse_inv_cell=reuse_inv_cell,
             strategy=strategy,
         )
         return
@@ -1435,6 +1447,7 @@ def naive_neighbor_matrix_pbc(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
         strategy=strategy,
     )
 
@@ -1475,6 +1488,7 @@ def batch_naive_neighbor_matrix_pbc(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for batched naive neighbor matrix construction with PBC.
 
@@ -1656,6 +1670,7 @@ def batch_naive_neighbor_matrix_pbc(
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
             inv_cell_buffer=inv_cell_buffer,
+            reuse_inv_cell=reuse_inv_cell,
             strategy=strategy,
         )
         return
@@ -1690,6 +1705,10 @@ def batch_naive_neighbor_matrix_pbc(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
         batched=True,
+        positions_wrapped_buffer=positions_wrapped_buffer,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+        inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -1807,6 +1826,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for naive dual cutoff neighbor matrix construction with PBC.
 
@@ -1935,6 +1955,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -2070,6 +2091,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for batched naive dual cutoff neighbor matrix construction with PBC.
 
@@ -2217,4 +2239,5 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )

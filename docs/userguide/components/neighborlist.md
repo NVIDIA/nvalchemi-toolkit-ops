@@ -1302,13 +1302,20 @@ Fixed during preparation:
 - Cutoffs and PBC pattern; target rows; wrapping and pair-function configuration
 - Output layout, capacities, and other route-specific launch metadata
 
-Runtime inputs are positions, applicable current cell values, selective
-`rebuild_flags`, and current `pair_params`.
+Runtime inputs are positions, applicable current cell values when
+`fixed_cell=False`, selective `rebuild_flags`, and current `pair_params`.
+With `fixed_cell=True`, any supplied cell must retain the prepared values.
 
 Recognized execution-time configuration does not override the state, and
 caller-owned output or scratch buffers cannot be combined with it. Omitting a
 runtime cell reuses the prepared cell. Prepare a new state when any fixed item
 changes; callers remain responsible for finite, physically valid geometry.
+
+With `fixed_cell=False`, prepared Torch cell-list execution accepts runtime
+cell changes only when the current cell and grid require no wider search radius
+than the prepared state provides. A smaller or more skewed cell may require
+re-preparation; insufficient coverage raises instead of returning an incomplete
+neighbor list.
 
 Torch cluster-tile COO uses `max_pairs`. JAX fixed COO uses `coo_capacity`; one
 value applies to both cutoff groups, while a two-value tuple sets them
@@ -1316,6 +1323,51 @@ independently. See the Torch or JAX
 {func}`~nvalchemiops.torch.neighbors.prepare_neighbor_list` and
 {func}`~nvalchemiops.jax.neighbors.prepare_neighbor_list` references for all
 capacity defaults and parameter interactions.
+
+##### Fixed-cell execution
+
+Use `prepare_neighbor_list(..., fixed_cell=True)` when an explicit cell stays
+unchanged for the state's lifetime. `fixed_cell` is a preparation-only option
+and is exposed as the read-only `state.fixed_cell` property. The default is
+`False`, which retains the existing behavior for applicable cell changes.
+
+```python
+state = prepare_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="cell_list",
+    fixed_cell=True,
+)
+```
+
+Torch executes with `neighbor_list(current_positions, state=state)`. JAX
+executes with `results, state = neighbor_list(current_positions, state=state)`.
+
+`fixed_cell=True` is a caller promise about cell values, not tensor identity.
+Omitting the execution cell uses the stored cell; an equal-valued replacement
+with matching shape, dtype, and device is also accepted. Execution does not
+compare cell values or detect in-place mutation. Prepare a new state before
+changing the cell. Violating the promise has no guaranteed result.
+
+An explicit cell is required, including for nonperiodic execution. Passing
+`fixed_cell=True` with `cell=None` raises instead of freezing a box synthesized
+from moving positions. The existing PBC and route restrictions still apply.
+
+Preparation caches the cell-dependent search geometry required by the chosen
+method: image ranges and counts for naive routes, inverse cells where needed,
+grid dimensions and search radii for cell-list routes, and lattice factors and
+cutoff certificates for cluster-tile routes. Atom wrapping and
+assignment, sorting, position-dependent bounds, and neighbor queries still
+follow current positions. A fixed grid does not imply fixed atom occupancy or
+unchanged neighbor topology.
+
+The caches serve topology calculations. Pair vectors and distances retain their
+existing differentiation with respect to current positions and the cell.
+Initialization, selective rebuilds, capacity checks, result lifetimes, and the
+route's compilation limits are unchanged. Cell-dependent reuse does not promise
+a particular speedup or allocation-free execution.
 
 ##### Bounded nonperiodic reuse
 

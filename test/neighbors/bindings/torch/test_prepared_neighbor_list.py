@@ -16,6 +16,7 @@
 """Public-contract tests for coherent Torch prepared neighbor-list routes."""
 
 import inspect
+from itertools import product
 
 import pytest
 import torch
@@ -65,8 +66,9 @@ def _assert_cluster_route_equal(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("format", ["matrix", "tile", "coo"])
 @pytest.mark.parametrize("cutoff2", [None, 1.25])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_single_cluster_route_matches_direct(
-    format: str, cutoff2: float | None
+    format: str, cutoff2: float | None, fixed_cell: bool
 ) -> None:
     """Supported single prepared cluster outputs match the direct route."""
     if cutoff2 is not None and format != "matrix":
@@ -82,7 +84,9 @@ def test_prepared_single_cluster_route_matches_direct(
         max_tiles_per_group=1,
         cutoff2=cutoff2,
     )
-    state = prepare_neighbor_list(positions, 1.0, cell=cell, pbc=pbc, **kwargs)
+    state = prepare_neighbor_list(
+        positions, 1.0, cell=cell, pbc=pbc, fixed_cell=fixed_cell, **kwargs
+    )
     prepared = neighbor_list(positions, cell=cell, state=state)
     direct = cluster_tile_neighbor_list(
         positions,
@@ -101,8 +105,9 @@ def test_prepared_single_cluster_route_matches_direct(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("format", ["matrix", "tile", "coo"])
 @pytest.mark.parametrize("cutoff2", [None, 1.25])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_batch_cluster_route_matches_direct(
-    format: str, cutoff2: float | None
+    format: str, cutoff2: float | None, fixed_cell: bool
 ) -> None:
     """Supported batched prepared cluster outputs match the direct route."""
     if cutoff2 is not None and format != "matrix":
@@ -122,7 +127,13 @@ def test_prepared_batch_cluster_route_matches_direct(
         cutoff2=cutoff2,
     )
     state = prepare_neighbor_list(
-        positions, 1.0, cell=cell, pbc=pbc, batch_ptr=batch_ptr, **kwargs
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        fixed_cell=fixed_cell,
+        **kwargs,
     )
     prepared = neighbor_list(positions, cell=cell, state=state)
     direct_kwargs = {
@@ -352,8 +363,9 @@ def test_prepared_matrix_pair_outputs_publish_state_buffers() -> None:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize("format", ["matrix", "coo"])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_cluster_callback_matches_direct_buffers(
-    batched: bool, format: str
+    batched: bool, format: str, fixed_cell: bool
 ) -> None:
     """Prepared eager cluster callbacks match direct state-owned pair outputs."""
     positions, _, _, single_cell = _inputs()
@@ -383,6 +395,7 @@ def test_prepared_cluster_callback_matches_direct_buffers(
         cell=cell,
         pbc=pbc,
         batch_ptr=batch_ptr,
+        fixed_cell=fixed_cell,
         method="batch_cluster_tile" if batched else "cluster_tile",
         return_neighbor_list=format == "coo",
         **{key: value for key, value in common.items() if key != "pair_params"},
@@ -565,9 +578,252 @@ def test_prepared_cell_list_reuses_topology_storage(batched: bool) -> None:
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("strategy", ["atom_centric", "pair_centric"])
+def test_prepared_cell_list_rejects_insufficient_runtime_radius(
+    batched: bool, strategy: str
+) -> None:
+    """Runtime grid radii cannot exceed the prepared search coverage."""
+    positions = torch.tensor(
+        [[0.05, 0.1, 0.1], [0.4, 0.1, 0.1], [0.05, 0.1, 0.1], [0.4, 0.1, 0.1]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    runtime_cell = cell.clone()
+    runtime_cell[0, 0] = 0.8
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs: dict[str, object] = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": "cell_list",
+        "strategy": strategy,
+        "max_neighbors": 32,
+    }
+    runtime_kwargs: dict[str, object] = {
+        "cell": runtime_cell,
+        "pbc": pbc,
+        "method": "naive",
+        "max_neighbors": 32,
+    }
+    if batched:
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+        kwargs.update(
+            cell=cell.repeat(2, 1, 1),
+            pbc=pbc.repeat(2, 1),
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+        )
+        runtime_kwargs.update(
+            cell=runtime_cell.repeat(2, 1, 1),
+            pbc=pbc.repeat(2, 1),
+            batch_ptr=batch_ptr,
+            method="batch_naive",
+        )
+
+    state = prepare_neighbor_list(positions, 1.0, **kwargs)
+
+    # A moderate cell shrink is still covered by the prepared radius and has
+    # the same public neighbor topology as a fresh naive build.
+    safe_cell = kwargs["cell"].clone()
+    safe_cell.mul_(0.5)
+    safe = neighbor_list(positions, cell=safe_cell, state=state)
+    safe_reference = neighbor_list(
+        positions,
+        1.0,
+        **{
+            **runtime_kwargs,
+            "cell": safe_cell,
+            "method": "batch_naive" if batched else "naive",
+        },
+    )
+    assert_neighbor_matrix_equal(safe[:3], safe_reference[:3])
+
+    # The state-free route finds cross-boundary images in the smaller runtime
+    # box; the prepared route must reject before it can return a partial matrix.
+    runtime = kwargs["cell"].clone()
+    runtime[..., 0, 0] = 0.8
+    reference = neighbor_list(
+        positions,
+        1.0,
+        **{**runtime_kwargs, "cell": runtime},
+    )
+    assert any(
+        bool(torch.any(reference[2][row, : int(reference[1][row]), 0] != 0).item())
+        for row in range(reference[1].shape[0])
+    )
+    with pytest.raises(ValueError, match="cell-list search coverage.*re-prepare"):
+        neighbor_list(positions, cell=runtime, state=state)
+    assert not state.initialized.any()
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_cell_list_rejects_cached_grid_policy_mismatch() -> None:
+    """Runtime grid minima cannot silently omit neighbors after a cell change."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [1.05, 0.1, 0.1]], dtype=torch.float32, device="cuda"
+    )
+    prepared_cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    runtime_cell = torch.eye(3, dtype=torch.float32, device="cuda") * 2.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    reference = neighbor_list(
+        positions,
+        1.0,
+        cell=runtime_cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=32,
+    )
+    torch.testing.assert_close(
+        reference[1], torch.ones(2, dtype=torch.int32, device="cuda")
+    )
+
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=prepared_cell,
+        pbc=pbc,
+        method="cell_list",
+        strategy="atom_centric",
+        max_neighbors=32,
+    )
+    with pytest.raises(ValueError, match="cell-list search coverage.*re-prepare"):
+        neighbor_list(positions, cell=runtime_cell, state=state)
+    assert not state.initialized.any()
+
+    refreshed = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=runtime_cell,
+        pbc=pbc,
+        method="cell_list",
+        strategy="atom_centric",
+        max_neighbors=32,
+    )
+    actual = neighbor_list(positions, cell=runtime_cell, state=refreshed)
+    assert_neighbor_matrix_equal(actual[:3], reference[:3])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_cell_list_radius_guard_uses_reciprocal_face_heights() -> None:
+    """Skew-cell reciprocal heights contribute to required grid radii."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.4, 0.1, 0.1]], dtype=torch.float32, device="cuda"
+    )
+    prepared_cell = torch.eye(3, dtype=torch.float32, device="cuda") * 10.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=prepared_cell,
+        pbc=pbc,
+        method="cell_list",
+        strategy="atom_centric",
+        max_neighbors=32,
+    )
+    skew_cell = torch.tensor(
+        [[10.0, 0.0, 0.0], [9.8, 0.4, 0.0], [0.0, 0.0, 10.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    with pytest.raises(ValueError, match="cell-list search coverage"):
+        neighbor_list(positions, cell=skew_cell, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_cell_list_radius_guard_supports_float64() -> None:
+    """The prepared coverage guard supports float64 cells and positions."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.4, 0.1, 0.1]], dtype=torch.float64, device="cuda"
+    )
+    cell = torch.eye(3, dtype=torch.float64, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        method="cell_list",
+        strategy="atom_centric",
+        max_neighbors=8,
+    )
+    safe_cell = cell * 0.5
+    prepared = neighbor_list(positions, cell=safe_cell, state=state)
+    reference = neighbor_list(
+        positions,
+        1.0,
+        cell=safe_cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=8,
+    )
+    assert_neighbor_matrix_equal(prepared[:3], reference[:3])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("strategy", ["atom_centric", "pair_centric"])
+def test_prepared_batch_cell_list_radius_guard_checks_selected_systems_only(
+    strategy: str,
+) -> None:
+    """An unselected system may use a wider runtime radius without rebuilding."""
+    positions = torch.tensor(
+        [[0.05, 0.1, 0.1], [0.4, 0.1, 0.1], [0.05, 0.1, 0.1], [0.4, 0.1, 0.1]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1) * 8.0
+    pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_cell_list",
+        strategy=strategy,
+        max_neighbors=32,
+        selective=True,
+    )
+    first = neighbor_list(
+        positions,
+        cell=cell,
+        state=state,
+        rebuild_flags=torch.ones(2, dtype=torch.bool, device="cuda"),
+    )
+    preserved_rows = tuple(value[2:].clone() for value in first[:3])
+    runtime_cell = cell.clone()
+    runtime_cell[1, 0, 0] = 0.8
+    selected_first_only = neighbor_list(
+        positions,
+        cell=runtime_cell,
+        state=state,
+        rebuild_flags=torch.tensor([True, False], dtype=torch.bool, device="cuda"),
+    )
+    for actual, expected in zip(
+        (value[2:] for value in selected_first_only[:3]), preserved_rows, strict=True
+    ):
+        torch.testing.assert_close(actual, expected)
+    with pytest.raises(ValueError, match="cell-list search coverage.*system 1"):
+        neighbor_list(
+            positions,
+            cell=runtime_cell,
+            state=state,
+            rebuild_flags=torch.tensor([False, True], dtype=torch.bool, device="cuda"),
+        )
+    assert not state.initialized.any()
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize("format", ["matrix", "coo"])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_cell_list_partial_rows_match_direct(
-    batched: bool, format: str
+    batched: bool, format: str, fixed_cell: bool
 ) -> None:
     """Prepared cell lists keep the direct compact target-row contract."""
     positions = torch.tensor(
@@ -612,7 +868,7 @@ def test_prepared_cell_list_partial_rows_match_direct(
             batch_ptr=batch_ptr,
             method="batch_cell_list",
         )
-    state = prepare_neighbor_list(positions, 0.8, **kwargs)
+    state = prepare_neighbor_list(positions, 0.8, fixed_cell=fixed_cell, **kwargs)
     prepared = neighbor_list(positions, cell=kwargs["cell"], state=state)
     direct = neighbor_list(positions, 0.8, **direct_kwargs)
     assert prepared[1].shape == (
@@ -632,8 +888,9 @@ def test_prepared_cell_list_partial_rows_match_direct(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize(("cutoff", "cutoff2"), [(0.75, 1.25), (1.25, 0.75)])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_cluster_dual_omitted_capacity_uses_larger_cutoff(
-    batched: bool, cutoff: float, cutoff2: float
+    batched: bool, cutoff: float, cutoff2: float, fixed_cell: bool
 ) -> None:
     """Automatic cluster matrix capacity covers either cutoff ordering."""
     positions, _, _, single_cell = _inputs()
@@ -661,7 +918,7 @@ def test_prepared_cluster_dual_omitted_capacity_uses_larger_cutoff(
         )
         direct = batch_cluster_tile_neighbor_list
         direct_args = (positions, cutoff, cell, batch_ptr)
-    state = prepare_neighbor_list(positions, cutoff, **kwargs)
+    state = prepare_neighbor_list(positions, cutoff, fixed_cell=fixed_cell, **kwargs)
     prepared = neighbor_list(positions, cell=cell, state=state)
     expected = direct(
         *direct_args,
@@ -1179,8 +1436,9 @@ def test_prepared_batched_span_margin_checks_selected_systems_only() -> None:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize("format", ["matrix"])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_selective_storage_and_failure_invalidation(
-    batched: bool, format: str
+    batched: bool, format: str, fixed_cell: bool
 ) -> None:
     """Selective routes retain untouched systems and clear state after overflow."""
     positions = torch.rand((32, 3), dtype=torch.float32, device="cuda") * 4.0
@@ -1205,7 +1463,7 @@ def test_prepared_selective_storage_and_failure_invalidation(
     else:
         kwargs.update(cell=cell, pbc=pbc)
         flags = torch.ones(1, dtype=torch.bool, device="cuda")
-    state = prepare_neighbor_list(positions, 1.0, **kwargs)
+    state = prepare_neighbor_list(positions, 1.0, fixed_cell=fixed_cell, **kwargs)
     if format == "coo":
         assert state.neighbor_list is not None and state.neighbor_ptr is None
         assert state.pair_offsets is not None and state.pair_counts is not None
@@ -1218,7 +1476,7 @@ def test_prepared_selective_storage_and_failure_invalidation(
         match="prepared Torch neighbor-list state is invalid; call prepare_neighbor_list again",
     ):
         neighbor_list(positions, cell=kwargs["cell"], state=state, rebuild_flags=flags)
-    state = prepare_neighbor_list(positions, 1.0, **kwargs)
+    state = prepare_neighbor_list(positions, 1.0, fixed_cell=fixed_cell, **kwargs)
     first = neighbor_list(
         positions, cell=kwargs["cell"], state=state, rebuild_flags=flags
     )
@@ -1246,7 +1504,7 @@ def test_prepared_selective_storage_and_failure_invalidation(
         match="prepared Torch neighbor-list state is invalid; call prepare_neighbor_list again",
     ):
         neighbor_list(positions, cell=kwargs["cell"], state=state, rebuild_flags=flags)
-    replacement = prepare_neighbor_list(positions, 1.0, **kwargs)
+    replacement = prepare_neighbor_list(positions, 1.0, fixed_cell=fixed_cell, **kwargs)
     assert neighbor_list(
         positions, cell=kwargs["cell"], state=replacement, rebuild_flags=flags
     )
@@ -1486,3 +1744,618 @@ def test_prepared_tile_output_and_format_contradictions() -> None:
             max_neighbors=8,
             max_tiles_per_group=1,
         )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cell_list"])
+def test_fixed_cell_noncluster_routes_match_dynamic(method: str) -> None:
+    """Fixed-cell naive and cell-list routes match their dynamic behavior."""
+    positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [0.6, 0.2, 0.3], [2.0, 2.0, 2.0], [2.4, 2.0, 2.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs = dict(method=method, max_neighbors=8)
+    fixed_state = prepare_neighbor_list(
+        positions, 1.0, cell=cell, pbc=pbc, fixed_cell=True, **kwargs
+    )
+    dynamic_state = prepare_neighbor_list(positions, 1.0, cell=cell, pbc=pbc, **kwargs)
+
+    assert fixed_state.fixed_cell is True
+    with pytest.raises(AttributeError):
+        fixed_state.fixed_cell = False
+    fixed = neighbor_list(positions, cell=cell.clone(), state=fixed_state)
+    dynamic = neighbor_list(positions, cell=cell.clone(), state=dynamic_state)
+    assert_neighbor_matrix_equal(fixed[:3], dynamic[:3])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_fixed_cell_public_validation_and_execution_keyword() -> None:
+    """The fixed-cell option is prepare-only and validates explicit cells."""
+    positions = torch.zeros((2, 3), dtype=torch.float32, device="cuda")
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 6.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    parameter = inspect.signature(prepare_neighbor_list).parameters["fixed_cell"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    with pytest.raises(ValueError, match="Boolean"):
+        prepare_neighbor_list(positions, 1.0, cell=cell, fixed_cell=1)
+    with pytest.raises(ValueError, match="explicit cell"):
+        prepare_neighbor_list(positions, 1.0, method="naive", fixed_cell=True)
+    with pytest.raises(ValueError, match="explicit cell"):
+        prepare_neighbor_list(positions, 1.0, method="cell_list", fixed_cell=True)
+    state = prepare_neighbor_list(
+        positions, 1.0, cell=cell, pbc=pbc, method="naive", fixed_cell=True
+    )
+    with pytest.raises(TypeError):
+        neighbor_list(positions, cell=cell, state=state, fixed_cell=True)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_fixed_cell_cluster_matrix_reuses_topology_and_keeps_cell_gradient() -> None:
+    """Fixed cluster matrix geometry uses cached topology and live cell values."""
+    positions = torch.tensor(
+        [[0.2, 1.0, 1.0], [9.8, 1.0, 1.0]],
+        dtype=torch.float32,
+        device="cuda",
+        requires_grad=True,
+    )
+    cell = (torch.eye(3, dtype=torch.float32, device="cuda") * 10.0).requires_grad_()
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        fixed_cell=True,
+        max_neighbors=4,
+        max_tiles_per_group=1,
+        return_vectors=True,
+        return_distances=True,
+    )
+    runtime_cell = cell.detach().clone().requires_grad_()
+    result = neighbor_list(positions, cell=runtime_cell, state=state)
+    assert result[1].tolist() == [1, 1]
+    assert torch.count_nonzero(result[2]) > 0
+    torch.testing.assert_close(result[3][:, 0], torch.full((2,), 0.4, device="cuda"))
+    for source in range(2):
+        target = int(result[0][source, 0])
+        reconstructed = positions.detach()[target] - positions.detach()[source]
+        reconstructed = (
+            reconstructed
+            + result[2][source, 0].to(torch.float32) @ runtime_cell.detach()
+        )
+        torch.testing.assert_close(result[4][source, 0], reconstructed)
+    result[3].sum().backward()
+    assert runtime_cell.grad is not None
+    assert runtime_cell.grad.abs().sum() > 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_fixed_cell_batch_cluster_shared_cell_keeps_live_gradient() -> None:
+    """Shared batched cluster geometry uses detached topology and live cell input."""
+    positions = torch.tensor(
+        [[0.2, 1.0, 1.0], [9.8, 1.0, 1.0], [0.2, 1.0, 1.0], [9.8, 1.0, 1.0]],
+        dtype=torch.float32,
+        device="cuda",
+        requires_grad=True,
+    )
+    cell = (torch.eye(3, dtype=torch.float32, device="cuda") * 10.0).requires_grad_()
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_cluster_tile",
+        fixed_cell=True,
+        max_neighbors=4,
+        max_tiles_per_group=1,
+        return_vectors=True,
+        return_distances=True,
+    )
+    runtime_cell = cell.detach().clone().requires_grad_()
+    result = neighbor_list(positions, cell=runtime_cell, state=state)
+    assert result[1].tolist() == [1, 1, 1, 1]
+    torch.testing.assert_close(result[3][:, 0], torch.full((4,), 0.4, device="cuda"))
+    assert torch.count_nonzero(result[2]) > 0
+    result[3].sum().backward()
+    assert runtime_cell.grad is not None
+    assert runtime_cell.grad.abs().sum() > 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_fixed_cell_cluster_coo_direct_csr_matches_dynamic() -> None:
+    """Prepared cluster COO uses cached geometry in both CSR passes."""
+    positions, _, _, cell = _inputs()
+    positions = positions[:2]
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs = dict(
+        method="cluster_tile",
+        format="coo",
+        return_neighbor_list=True,
+        max_neighbors=4,
+        max_pairs=8,
+        max_tiles_per_group=1,
+    )
+    fixed = prepare_neighbor_list(
+        positions, 1.0, cell=cell, pbc=pbc, fixed_cell=True, **kwargs
+    )
+    dynamic = prepare_neighbor_list(positions, 1.0, cell=cell, pbc=pbc, **kwargs)
+    got = neighbor_list(positions, cell=cell.clone(), state=fixed)
+    expected = neighbor_list(positions, cell=cell.clone(), state=dynamic)
+    torch.testing.assert_close(got[1], expected[1])
+    active = int(got[1][-1])
+    torch.testing.assert_close(got[0][:, :active], expected[0][:, :active])
+    torch.testing.assert_close(got[2][:active], expected[2][:active])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("strategy", "wrap_positions", "partial"),
+    [
+        ("scalar", True, False),
+        ("tile", True, False),
+        ("scalar", False, False),
+        ("scalar", True, True),
+    ],
+)
+def test_fixed_cell_naive_scalar_tile_partial_and_wrap(
+    strategy: str, wrap_positions: bool, partial: bool
+) -> None:
+    """Fixed naive scalar, tile, partial, and wrapping paths retain parity."""
+    positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [7.9, 0.2, 0.3], [3.0, 3.0, 3.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    target_indices = (
+        torch.tensor([1, 2], dtype=torch.int32, device="cuda") if partial else None
+    )
+    kwargs = dict(
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        strategy=strategy,
+        target_indices=target_indices,
+        wrap_positions=wrap_positions,
+        max_neighbors=8,
+    )
+    fixed = prepare_neighbor_list(positions, 0.5, fixed_cell=True, **kwargs)
+    got = neighbor_list(positions, cell=cell.clone(), state=fixed)
+    direct_kwargs = {key: value for key, value in kwargs.items() if key != "strategy"}
+    direct_kwargs["method"] = f"naive_{strategy}"
+    expected = neighbor_list(positions, 0.5, **direct_kwargs)
+    assert_neighbor_matrix_equal(got, expected)
+    if not partial:
+        assert torch.count_nonzero(got[2]) > 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("dual_cutoff", [False, True])
+def test_fixed_cell_naive_batch_and_dual_cutoff(
+    batched: bool, dual_cutoff: bool
+) -> None:
+    """Fixed single and batch naive routes cache periodic inverse geometry."""
+    positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [7.9, 0.2, 0.3]], dtype=torch.float32, device="cuda"
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        positions = torch.cat((positions, positions + 2.0))
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+    kwargs = dict(
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_naive" if batched else "naive",
+        max_neighbors=8,
+        cutoff2=0.9 if dual_cutoff else None,
+        max_neighbors2=8 if dual_cutoff else None,
+    )
+    fixed = prepare_neighbor_list(positions, 0.5, fixed_cell=True, **kwargs)
+    got = neighbor_list(positions, cell=cell.clone(), state=fixed)
+    direct_kwargs = dict(kwargs)
+    if dual_cutoff:
+        direct_kwargs["method"] = (
+            "batch_naive_dual_cutoff" if batched else "naive_dual_cutoff"
+        )
+        direct_kwargs["max_neighbors1"] = direct_kwargs.pop("max_neighbors")
+    else:
+        direct_kwargs.pop("max_neighbors2")
+    expected = neighbor_list(positions, 0.5, **direct_kwargs)
+    for start in range(0, len(got), 3):
+        assert_neighbor_matrix_equal(
+            got[start : start + 3], expected[start : start + 3]
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("strategy", ["scalar", "tile"])
+def test_fixed_cell_batch_naive_explicit_strategies(strategy: str) -> None:
+    """Fixed batched naive forwards both supported execution strategies."""
+    positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [7.9, 0.2, 0.3], [1.1, 0.2, 0.3], [6.9, 0.2, 0.3]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1) * 8.0
+    pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    kwargs = dict(
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        strategy=strategy,
+        max_neighbors=8,
+    )
+    state = prepare_neighbor_list(positions, 0.5, fixed_cell=True, **kwargs)
+    actual = neighbor_list(positions, cell=cell.clone(), state=state)
+    direct_kwargs = {key: value for key, value in kwargs.items() if key != "strategy"}
+    direct_kwargs["method"] = f"batch_naive_{strategy}"
+    expected = neighbor_list(positions, 0.5, **direct_kwargs)
+    assert_neighbor_matrix_equal(actual, expected)
+    assert torch.count_nonzero(actual[2]) > 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("strategy", ["atom_centric", "pair_centric"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_fixed_cell_cell_list_grid_reuse_rebuilds_occupancy(
+    batched: bool, strategy: str, dtype: torch.dtype
+) -> None:
+    """Cached cell-list grids remain fixed while atom occupancy is rebuilt."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.5, 0.1, 0.1], [2.1, 0.1, 0.1], [2.5, 0.1, 0.1]],
+        dtype=dtype,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=dtype, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        positions = torch.cat((positions, positions + 4.0))
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+        batch_ptr = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
+    kwargs = dict(
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_cell_list" if batched else "cell_list",
+        strategy=strategy,
+        max_neighbors=8,
+    )
+    fixed = prepare_neighbor_list(positions, 0.8, fixed_cell=True, **kwargs)
+    direct_kwargs = {key: value for key, value in kwargs.items() if key != "strategy"}
+    route_prefix = "batch_cell_list" if batched else "cell_list"
+    direct_kwargs["method"] = f"{route_prefix}_{strategy}"
+    moved = positions.clone()
+    moved[1::4, 0] += 1.5
+    moved[3::4, 0] += 1.5
+    first = neighbor_list(positions, cell=cell.clone(), state=fixed)
+    first_counts = first[1].clone()
+    rebuilt = neighbor_list(moved, cell=cell.clone(), state=fixed)
+    expected = neighbor_list(moved, 0.8, **direct_kwargs)
+    assert_neighbor_matrix_equal(rebuilt[:3], expected[:3])
+    assert not torch.equal(first_counts, rebuilt[1])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("method", "batched", "dual_cutoff"),
+    [
+        ("naive", False, False),
+        ("batch_naive", True, False),
+        ("naive", False, True),
+        ("batch_naive", True, True),
+    ],
+)
+def test_fixed_cell_nonperiodic_naive_accepts_explicit_cell_without_pbc(
+    method: str, batched: bool, dual_cutoff: bool
+) -> None:
+    """Explicit unused cells pass runtime validation across nonperiodic naive routes."""
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 6.0
+    batch_ptr = None
+    if batched:
+        positions = torch.cat((positions, positions + 3.0))
+        cell = cell.repeat(2, 1, 1)
+        batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
+    options = dict(
+        cell=cell,
+        batch_ptr=batch_ptr,
+        method=method,
+        max_neighbors=4,
+        cutoff2=1.25 if dual_cutoff else None,
+        max_neighbors2=4 if dual_cutoff else None,
+    )
+    with pytest.raises(ValueError, match="pbc is required when cell is provided"):
+        prepare_neighbor_list(positions, 0.75, **options)
+    fixed = prepare_neighbor_list(positions, 0.75, fixed_cell=True, **options)
+    expected_options = dict(options)
+    expected_options.pop("cell")
+    if dual_cutoff:
+        expected_options["method"] = (
+            "batch_naive_dual_cutoff" if batched else "naive_dual_cutoff"
+        )
+        expected_options["max_neighbors1"] = expected_options.pop("max_neighbors")
+    else:
+        expected_options.pop("max_neighbors2")
+    expected = neighbor_list(positions, 0.75, **expected_options)
+    actual = neighbor_list(positions, cell=cell.clone(), state=fixed)
+    if dual_cutoff:
+        for start in (0, 2):
+            torch.testing.assert_close(actual[start], expected[start])
+            torch.testing.assert_close(actual[start + 1], expected[start + 1])
+    else:
+        assert_neighbor_matrix_equal(actual[:3], expected[:3])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cell_list"])
+def test_fixed_cell_periodic_geometry_keeps_position_and_cell_gradients(
+    method: str,
+) -> None:
+    """Cached inverse geometry does not detach differentiable live pair geometry."""
+    positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [7.8, 0.2, 0.3]],
+        dtype=torch.float32,
+        device="cuda",
+        requires_grad=True,
+    )
+    cell = (torch.eye(3, dtype=torch.float32, device="cuda") * 8.0).requires_grad_()
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        positions.detach(),
+        0.5,
+        cell=cell.detach(),
+        pbc=pbc,
+        method=method,
+        fixed_cell=True,
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+    )
+    runtime_cell = cell.detach().clone().requires_grad_()
+    result = neighbor_list(positions, cell=runtime_cell, state=state)
+    assert torch.count_nonzero(result[2]) > 0
+    result[-2][0, 0].backward()
+    assert positions.grad is not None and positions.grad.abs().sum() > 0
+    assert runtime_cell.grad is not None and runtime_cell.grad.abs().sum() > 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("method", "batched", "strategy"),
+    [
+        ("naive", False, "scalar"),
+        ("batch_naive", True, "scalar"),
+        ("cell_list", False, "atom_centric"),
+        ("batch_cell_list", True, "atom_centric"),
+        ("cell_list", False, "pair_centric"),
+    ],
+)
+def test_fixed_cell_pair_callbacks_match_periodic_geometry(
+    method: str, batched: bool, strategy: str
+) -> None:
+    """Fixed naive and cell-list callbacks preserve periodic pair geometry."""
+    system_positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [7.8, 0.2, 0.3]], dtype=torch.float32, device="cuda"
+    )
+    positions = (
+        torch.cat((system_positions, system_positions + 2.0))
+        if batched
+        else system_positions
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    cell_batch = cell if cell.ndim == 3 else cell.unsqueeze(0)
+    pair_params = torch.arange(
+        positions.shape[0], dtype=torch.float32, device="cuda"
+    ).reshape(-1, 1)
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        strategy=strategy,
+        fixed_cell=True,
+        max_neighbors=4,
+        pair_fn=_prepared_sum_pair_fn,
+    )
+    result = neighbor_list(
+        positions,
+        cell=cell.clone(),
+        state=state,
+        pair_params=pair_params,
+    )
+    assert result[1].tolist() == [1] * positions.shape[0]
+    assert state.pair_energies is not None and state.pair_forces is not None
+    assert state.neighbor_matrix_shifts is not None
+    for source in range(positions.shape[0]):
+        target = int(result[0][source, 0].item())
+        shift = state.neighbor_matrix_shifts[source, 0].to(positions.dtype)
+        system = source // 2 if batched else 0
+        vector = positions[target] - positions[source] + shift @ cell_batch[system]
+        distance = vector.norm()
+        expected_energy = pair_params[source, 0] + pair_params[target, 0] + distance
+        torch.testing.assert_close(state.pair_energies[source, 0], expected_energy)
+        torch.testing.assert_close(state.pair_forces[source, 0], -vector)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("rotated", [False, True])
+def test_fixed_cell_cluster_skew_geometry_matches_lattice_oracle(rotated: bool) -> None:
+    """Skew triclinic shifts and vectors match a small independent lattice oracle."""
+    base_cell = torch.tensor(
+        [[5.0, 0.0, 0.0], [4.7, 1.0, 0.0], [0.0, 0.0, 5.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    positions = torch.tensor(
+        [[0.3, 0.1, 1.0], [0.5, 1.0, 1.0]], dtype=torch.float32, device="cuda"
+    )
+    if rotated:
+        angle = torch.tensor(0.63, device="cuda")
+        rotation = torch.stack(
+            (
+                torch.stack((angle.cos(), -angle.sin(), angle.new_zeros(()))),
+                torch.stack((angle.sin(), angle.cos(), angle.new_zeros(()))),
+                torch.tensor([0.0, 0.0, 1.0], device="cuda"),
+            )
+        )
+        base_cell = base_cell @ rotation
+        positions = positions @ rotation
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.6,
+        cell=base_cell,
+        pbc=pbc,
+        method="cluster_tile",
+        fixed_cell=True,
+        max_neighbors=4,
+        max_tiles_per_group=1,
+        return_vectors=True,
+        return_distances=True,
+    )
+    result = neighbor_list(positions, cell=base_cell.clone(), state=state)
+    shifts = result[2]
+    distances = result[3]
+    vectors = result[4]
+    lattice_shifts = torch.tensor(
+        list(product(range(-1, 2), repeat=3)), dtype=base_cell.dtype, device="cuda"
+    )
+    oracle_vectors = positions[1] - positions[0] + lattice_shifts @ base_cell
+    oracle_mask = oracle_vectors.norm(dim=1) < 0.6
+    assert int(oracle_mask.sum()) == 1
+    oracle_shift = lattice_shifts[oracle_mask][0].to(torch.int32)
+    oracle_vector = oracle_vectors[oracle_mask][0]
+    assert result[1].tolist() == [1, 1]
+    torch.testing.assert_close(shifts[:, 0], torch.stack((oracle_shift, -oracle_shift)))
+    torch.testing.assert_close(vectors[0, 0], oracle_vector)
+    torch.testing.assert_close(vectors[1, 0], -oracle_vector)
+    torch.testing.assert_close(
+        distances[:, 0], oracle_vector.norm().expand(2), atol=1e-5, rtol=1e-5
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cell_list", "cluster_tile"])
+def test_fixed_cell_fullgraph_accepts_fixed_and_dynamic_states(method: str) -> None:
+    """One fullgraph wrapper accepts fixed and dynamic states for every route."""
+    positions, cell, fixed_state, dynamic_state = _fixed_cell_compile_inputs(method)
+
+    @torch.compile(fullgraph=True)
+    def run(
+        values: torch.Tensor, box: torch.Tensor, prepared_state: NeighborListState
+    ) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, cell=box, state=prepared_state)
+
+    fixed = run(positions, cell, fixed_state)
+    dynamic = run(positions, cell, dynamic_state)
+    assert_neighbor_matrix_equal(fixed, dynamic)
+    assert fixed[1].tolist() == [1, 1]
+    positions[1, 0] = 4.0
+    rebuilt_fixed = run(positions, cell, fixed_state)
+    rebuilt_dynamic = run(positions, cell, dynamic_state)
+    assert_neighbor_matrix_equal(rebuilt_fixed, rebuilt_dynamic)
+    assert rebuilt_fixed[1].tolist() == [0, 0]
+
+
+def _fixed_cell_compile_inputs(
+    method: str,
+) -> tuple[torch.Tensor, torch.Tensor, NeighborListState, NeighborListState]:
+    """Build shared inputs for prepared fixed/dynamic compiler tests."""
+    positions = torch.tensor(
+        [[0.1, 0.2, 0.3], [7.9, 0.2, 0.3]], dtype=torch.float32, device="cuda"
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    route_options = {"max_tiles_per_group": 1} if method == "cluster_tile" else {}
+    fixed_state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        fixed_cell=True,
+        max_neighbors=8,
+        **route_options,
+    )
+    dynamic_state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        max_neighbors=8,
+        **route_options,
+    )
+    return positions, cell, fixed_state, dynamic_state
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cluster_tile"])
+def test_fixed_cell_cuda_graph_replay_rebuilds_positions(method: str) -> None:
+    """Supported fixed routes replay with changed positions and cached topology."""
+    positions, cell, fixed_state, _ = _fixed_cell_compile_inputs(method)
+
+    @torch.compile(fullgraph=True)
+    def run(
+        values: torch.Tensor, box: torch.Tensor, prepared_state: NeighborListState
+    ) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, cell=box, state=prepared_state)
+
+    first = run(positions, cell, fixed_state)
+    assert first[1].tolist() == [1, 1]
+    torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = run(positions, cell, fixed_state)
+    positions[1, 0] = 4.0
+    graph.replay()
+    torch.cuda.synchronize()
+    assert captured[1].tolist() == [0, 0]

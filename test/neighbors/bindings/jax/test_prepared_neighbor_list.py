@@ -27,11 +27,20 @@ import pytest
 import warp as wp
 
 from nvalchemiops.jax.neighbors import neighbor_list
+from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     batch_cluster_tile_neighbor_list,
 )
+from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+from nvalchemiops.jax.neighbors.batch_naive_dual_cutoff import (
+    batch_naive_neighbor_list_dual_cutoff,
+)
 from nvalchemiops.jax.neighbors.cell_list import cell_list
 from nvalchemiops.jax.neighbors.cluster_tile import cluster_tile_neighbor_list
+from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+from nvalchemiops.jax.neighbors.naive_dual_cutoff import (
+    naive_neighbor_list_dual_cutoff,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     NeighborOverflowError,
     TileBufferOverflow,
@@ -43,6 +52,7 @@ from nvalchemiops.jax.neighbors.prepared_neighbor_list import (
 )
 
 from .conftest import requires_gpu
+from .test_cluster_tile import _brute_force_pairs_full, _matrix_to_pair_set_full
 
 pytestmark = requires_gpu
 
@@ -181,9 +191,13 @@ def test_prepared_selective_fixed_coo_fit_then_atomic_rollback() -> None:
     changed = jnp.concatenate((close, close), axis=0)
     batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
     batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 4)
+    cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32) * 64.0, (2, 3, 3))
+    pbc = jnp.ones((2, 3), dtype=jnp.bool_)
     state = prepare_neighbor_list(
         initial,
         1.0,
+        cell=cell,
+        pbc=pbc,
         batch_idx=batch_idx,
         batch_ptr=batch_ptr,
         method="batch_naive",
@@ -191,6 +205,7 @@ def test_prepared_selective_fixed_coo_fit_then_atomic_rollback() -> None:
         coo_capacity=16,
         max_neighbors=8,
         selective=True,
+        fixed_cell=True,
     )
     previous, state1 = neighbor_list(
         initial,
@@ -922,11 +937,17 @@ def test_prepared_batch_cluster_compact_coo_names_its_pointer_layout() -> None:
 
 @pytest.mark.parametrize("method", ["cluster_tile", "batch_cluster_tile"])
 @pytest.mark.parametrize("format", ["matrix", "coo"])
+@pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_cluster_geometry_and_callback_outputs_are_stateful(
-    method: str, format: str
+    method: str, format: str, fixed_cell: bool
 ) -> None:
     """Prepared cluster geometry/callback tails survive successor threading."""
-    positions, cell, pbc = _cell_inputs(4)
+    positions = jnp.array(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [4.0, 0.0, 0.0], [4.4, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.ones((3,), dtype=jnp.bool_)
     kwargs: dict[str, Any] = {
         "cell": cell if method == "cluster_tile" else jnp.broadcast_to(cell, (1, 3, 3)),
         "pbc": pbc if method == "cluster_tile" else jnp.broadcast_to(pbc, (1, 3)),
@@ -936,6 +957,7 @@ def test_prepared_cluster_geometry_and_callback_outputs_are_stateful(
         "return_distances": True,
         "return_vectors": True,
         "pair_fn": _prepared_pair_fn,
+        "fixed_cell": fixed_cell,
     }
     if method == "batch_cluster_tile":
         kwargs["batch_ptr"] = jnp.array([0, positions.shape[0]], dtype=jnp.int32)
@@ -951,6 +973,59 @@ def test_prepared_cluster_geometry_and_callback_outputs_are_stateful(
     assert successor.neighbor_vectors is not None
     assert successor.pair_energies is not None
     assert successor.pair_forces is not None
+
+    direct_kwargs: dict[str, Any] = {
+        "max_neighbors": 8,
+        "max_tiles_per_group": 1,
+        "return_distances": True,
+        "return_vectors": True,
+        "pair_fn": _prepared_pair_fn,
+        "pair_params": params,
+        "format": "matrix" if format == "matrix" else "coo",
+    }
+    if format == "coo":
+        direct_kwargs["max_pairs"] = 32
+    if method == "batch_cluster_tile":
+        direct = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            jnp.broadcast_to(cell, (1, 3, 3)),
+            jnp.array([0, positions.shape[0]], dtype=jnp.int32),
+            **direct_kwargs,
+        )
+    else:
+        direct = cluster_tile_neighbor_list(positions, 2.0, cell, **direct_kwargs)
+
+    if format == "matrix":
+        assert _matrix_to_pair_set_full(*result[:3], len(positions)) == (
+            _matrix_to_pair_set_full(*direct[:3], len(positions))
+        )
+        counts = np.asarray(result[1])
+        np.testing.assert_array_equal(counts, np.asarray(direct[1]))
+        for row, count in enumerate(counts):
+            active = int(count)
+            for index in (3, 4, 5, 6):
+                np.testing.assert_allclose(
+                    np.asarray(result[index])[row, :active],
+                    np.asarray(direct[index])[row, :active],
+                    atol=3e-5,
+                )
+    else:
+        np.testing.assert_array_equal(np.asarray(result[1]), np.asarray(direct[1]))
+        active_pairs = int(np.asarray(result[1])[-1])
+        np.testing.assert_array_equal(
+            np.asarray(result[0])[:, :active_pairs],
+            np.asarray(direct[0])[:, :active_pairs],
+        )
+        np.testing.assert_array_equal(
+            np.asarray(result[2])[:active_pairs], np.asarray(direct[2])[:active_pairs]
+        )
+        for index in (3, 4, 5, 6):
+            np.testing.assert_allclose(
+                np.asarray(result[index])[:active_pairs],
+                np.asarray(direct[index])[:active_pairs],
+                atol=3e-5,
+            )
 
 
 @pytest.mark.parametrize("method", ["cluster_tile", "batch_cluster_tile"])
@@ -983,7 +1058,10 @@ def test_prepared_empty_cluster_routes_keep_public_prefix_and_status(
 
 
 @pytest.mark.parametrize("method", ["cluster_tile", "batch_cluster_tile"])
-def test_prepared_pair_output_cluster_tile_overflow_is_sticky(method: str) -> None:
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_prepared_pair_output_cluster_tile_overflow_is_sticky(
+    method: str, fixed_cell: bool
+) -> None:
     """Pair-output cluster routes latch bounded tile overflow in their successor."""
     positions = jnp.zeros((64, 3), dtype=jnp.float32)
     cell = jnp.eye(3, dtype=jnp.float32) * 8.0
@@ -996,6 +1074,7 @@ def test_prepared_pair_output_cluster_tile_overflow_is_sticky(method: str) -> No
         "max_neighbors": 64,
         "max_tiles_per_group": 1,
         "pair_fn": _prepared_pair_fn,
+        "fixed_cell": fixed_cell,
     }
     if method == "batch_cluster_tile":
         kwargs["batch_ptr"] = jnp.array([0, 64], dtype=jnp.int32)
@@ -1037,14 +1116,18 @@ def test_cluster_pair_output_status_preserves_direct_prefix(batched: bool) -> No
 def test_prepared_selective_fixed_coo_initialized_false_fast_path() -> None:
     """Initialized all-false selective fixed COO preserves published state under jit."""
     positions = jnp.array([[0.0, 0.0, 0.0], [0.4, 0.0, 0.0]], dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
     state = prepare_neighbor_list(
         positions,
         1.0,
+        cell=cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
         method="naive",
         selective=True,
         return_neighbor_list=True,
         coo_capacity=8,
         max_neighbors=8,
+        fixed_cell=True,
     )
     false = jnp.zeros((1,), dtype=jnp.bool_)
     _, fresh_preserve = neighbor_list(positions, state=state, rebuild_flags=false)
@@ -1154,3 +1237,1051 @@ def test_prepared_selective_fixed_coo_compiled_branch_transitions() -> None:
     np.testing.assert_array_equal(np.asarray(state4.num_neighbors2), rebuilt_counts2)
     assert state4.initialized.tolist() == [True, True]
     assert state4.valid.tolist() == [True, True]
+
+
+def test_prepared_fixed_cell_api_cache_leaf_and_tree_round_trip() -> None:
+    """Fixed geometry is a read-only state option and a dynamic cache child."""
+    positions, cell, pbc = _cell_inputs(4)
+    with pytest.raises(ValueError, match="fixed_cell=True requires an explicit cell"):
+        prepare_neighbor_list(positions, 2.0, fixed_cell=True, method="naive")
+    for value in (1, np.bool_(True), "yes"):
+        with pytest.raises(ValueError, match="fixed_cell must be a Python bool"):
+            prepare_neighbor_list(
+                positions,
+                2.0,
+                cell=cell,
+                pbc=pbc,
+                fixed_cell=value,
+                method="naive",
+            )
+
+    dynamic = prepare_neighbor_list(
+        positions, 2.0, cell=cell, pbc=pbc, method="naive", max_neighbors=8
+    )
+    assert dynamic.fixed_cell is False
+    state = prepare_neighbor_list(
+        positions,
+        2.0,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=8,
+        fixed_cell=True,
+    )
+    assert state.fixed_cell is True
+    with pytest.raises(AttributeError, match="read-only"):
+        state.fixed_cell = False
+    with pytest.raises(TypeError, match="unexpected prepared neighbor-list option"):
+        neighbor_list(positions, state=state, fixed_cell=True)
+
+    leaves, treedef = jax.tree_util.tree_flatten(state)
+    rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+    assert rebuilt.fixed_cell is True
+    original_result, _ = neighbor_list(positions, state=state)
+    round_trip_result, _ = neighbor_list(positions, state=rebuilt)
+    replacement_result, replacement_state = neighbor_list(
+        positions, cell=jnp.array(cell), state=state
+    )
+    original_pairs = _matrix_to_pair_set_full(*original_result[:3], len(positions))
+    assert original_pairs == _matrix_to_pair_set_full(
+        *round_trip_result[:3], len(positions)
+    )
+    np.testing.assert_array_equal(original_result[1], round_trip_result[1])
+    assert original_pairs == _matrix_to_pair_set_full(
+        *replacement_result[:3], len(positions)
+    )
+    np.testing.assert_array_equal(original_result[1], replacement_result[1])
+    assert replacement_state.fixed_cell
+
+    alternate_cell = cell * 0.5
+    alternate_state = prepare_neighbor_list(
+        jnp.array([[0.1, 0.0, 0.0], [7.9, 0.0, 0.0]], dtype=jnp.float32),
+        0.5,
+        cell=alternate_cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=8,
+        fixed_cell=True,
+    )
+    same_config_positions = jnp.array(
+        [[0.1, 0.0, 0.0], [7.9, 0.0, 0.0]], dtype=jnp.float32
+    )
+    first_cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    first_state = prepare_neighbor_list(
+        same_config_positions,
+        0.5,
+        cell=first_cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=8,
+        fixed_cell=True,
+    )
+    compiled = jax.jit(lambda values, prepared: neighbor_list(values, state=prepared))
+    first_result, _ = compiled(same_config_positions, first_state)
+    alternate_result, _ = compiled(same_config_positions, alternate_state)
+    assert _matrix_to_pair_set_full(*first_result[:3], 2) != _matrix_to_pair_set_full(
+        *alternate_result[:3], 2
+    )
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "naive",
+        "batch_naive",
+        "naive_dual_cutoff",
+        "batch_naive_dual_cutoff",
+    ],
+)
+def test_prepared_fixed_naive_nonperiodic_explicit_cell_executes(method: str) -> None:
+    """An explicit fixed cell is retained while nonperiodic naive routes omit it."""
+    batched = method.startswith("batch_")
+    dual = method.endswith("dual_cutoff")
+    positions = jnp.array([[0.1, 0.0, 0.0], [0.4, 0.0, 0.0]], dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    if batched:
+        cell = cell[None]
+    batch_ptr = jnp.array([0, 2], dtype=jnp.int32)
+    options: dict[str, Any] = {
+        "cell": cell,
+        "pbc": None,
+        "method": method,
+    }
+    direct_options: dict[str, Any] = {}
+    if dual:
+        options.update(max_neighbors1=4, max_neighbors2=4)
+        direct_options.update(max_neighbors1=4, max_neighbors2=4)
+    else:
+        options["max_neighbors"] = 4
+        direct_options["max_neighbors"] = 4
+    if batched:
+        options["batch_ptr"] = batch_ptr
+        direct_options["batch_ptr"] = batch_ptr
+
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cutoff2=1.0 if dual else None,
+        fixed_cell=True,
+        **options,
+    )
+    actual, successor = neighbor_list(positions, state=state)
+    assert successor.fixed_cell
+    if method == "naive":
+        direct = naive_neighbor_list(positions, 0.5, **direct_options)
+    elif method == "batch_naive":
+        direct = batch_naive_neighbor_list(positions, 0.5, **direct_options)
+    elif method == "naive_dual_cutoff":
+        direct = naive_neighbor_list_dual_cutoff(positions, 0.5, 1.0, **direct_options)
+    else:
+        direct = batch_naive_neighbor_list_dual_cutoff(
+            positions, 0.5, 1.0, **direct_options
+        )
+
+    for offset in (0, 2) if dual else (0,):
+        np.testing.assert_array_equal(
+            np.asarray(actual[offset + 1]), np.asarray(direct[offset + 1])
+        )
+        for row, count in enumerate(np.asarray(actual[offset + 1])):
+            active = int(count)
+            np.testing.assert_array_equal(
+                np.sort(np.asarray(actual[offset])[row, :active]),
+                np.sort(np.asarray(direct[offset])[row, :active]),
+            )
+
+
+@pytest.mark.parametrize(
+    ("method", "strategy", "wrap_positions"),
+    [
+        ("naive", "scalar", True),
+        ("naive", "tile", False),
+        ("naive", "tile", True),
+        ("naive_dual_cutoff", "scalar", True),
+        ("batch_naive", "scalar", True),
+        ("batch_naive", "tile", True),
+        ("batch_naive_dual_cutoff", "scalar", True),
+    ],
+)
+def test_prepared_fixed_naive_routes_match_direct_partial_pbc(
+    method: str, strategy: str, wrap_positions: bool
+) -> None:
+    """Fixed naive scalar, tiled, dual, and batched routes preserve PBC results."""
+    batched = method.startswith("batch_")
+    positions = jnp.array(
+        [
+            [0.2, 0.0, 0.0],
+            [7.8, 0.0, 0.0],
+            [0.2, 0.0, 0.0],
+            [0.6, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+    one_cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    one_pbc = jnp.array([True, False, True], dtype=jnp.bool_)
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+    call_cell = jnp.broadcast_to(one_cell, (2, 3, 3)) if batched else one_cell
+    call_pbc = (
+        jnp.array([[True, False, True], [False, False, False]], dtype=jnp.bool_)
+        if batched
+        else one_pbc
+    )
+    kwargs: dict[str, Any] = {
+        "cell": call_cell,
+        "pbc": call_pbc,
+        "method": method,
+        "strategy": strategy,
+        "wrap_positions": wrap_positions,
+        "max_neighbors": 16,
+    }
+    if batched:
+        kwargs["batch_ptr"] = batch_ptr
+    if method.endswith("dual_cutoff"):
+        kwargs.update(cutoff2=1.5, max_neighbors1=16, max_neighbors2=16)
+
+    state = prepare_neighbor_list(positions, 0.75, fixed_cell=True, **kwargs)
+    if method == "naive":
+        expected = naive_neighbor_list(
+            positions,
+            0.75,
+            cell=call_cell,
+            pbc=call_pbc,
+            max_neighbors=16,
+            strategy=strategy,
+            wrap_positions=wrap_positions,
+        )
+    elif method == "batch_naive":
+        expected = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            cell=call_cell,
+            pbc=call_pbc,
+            batch_ptr=batch_ptr,
+            max_neighbors=16,
+            strategy=strategy,
+            wrap_positions=wrap_positions,
+        )
+    elif method == "naive_dual_cutoff":
+        expected = naive_neighbor_list_dual_cutoff(
+            positions,
+            0.75,
+            1.5,
+            cell=call_cell,
+            pbc=call_pbc,
+            max_neighbors1=16,
+            max_neighbors2=16,
+            wrap_positions=wrap_positions,
+        )
+    else:
+        expected = batch_naive_neighbor_list_dual_cutoff(
+            positions,
+            0.75,
+            1.5,
+            cell=call_cell,
+            pbc=call_pbc,
+            batch_ptr=batch_ptr,
+            max_neighbors1=16,
+            max_neighbors2=16,
+            wrap_positions=wrap_positions,
+        )
+    actual, successor = neighbor_list(positions, state=state)
+    assert successor.fixed_cell
+    if method.endswith("dual_cutoff"):
+        for offset in (0, 3):
+            assert _matrix_to_pair_set_full(
+                *actual[offset : offset + 3], len(positions)
+            ) == _matrix_to_pair_set_full(
+                *expected[offset : offset + 3], len(positions)
+            )
+            np.testing.assert_array_equal(
+                np.asarray(actual[offset + 1]), np.asarray(expected[offset + 1])
+            )
+    else:
+        assert _matrix_to_pair_set_full(*actual[:3], len(positions)) == (
+            _matrix_to_pair_set_full(*expected[:3], len(positions))
+        )
+        np.testing.assert_array_equal(np.asarray(actual[1]), np.asarray(expected[1]))
+
+
+@pytest.mark.parametrize("method", ["naive", "batch_naive"])
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_prepared_tiled_wrapped_pbc_default_and_fixed_modes(
+    method: str, fixed_cell: bool
+) -> None:
+    """Wrapped tile callbacks preserve default scratch and fixed-cache modes."""
+    positions_np = np.array([[8.1, 1.0, 1.0], [7.8, 1.0, 1.0]], dtype=np.float32)
+    positions = jnp.asarray(positions_np)
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.ones((3,), dtype=jnp.bool_)
+    kwargs: dict[str, Any] = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": method,
+        "strategy": "tile",
+        "wrap_positions": True,
+        "max_neighbors": 4,
+    }
+    direct_kwargs: dict[str, Any] = {
+        "cell": cell,
+        "pbc": pbc,
+        "strategy": "tile",
+        "wrap_positions": True,
+        "max_neighbors": 4,
+    }
+    if method == "batch_naive":
+        batch_ptr = jnp.array([0, 2], dtype=jnp.int32)
+        kwargs["batch_ptr"] = batch_ptr
+        direct_kwargs["batch_ptr"] = batch_ptr
+        direct = batch_naive_neighbor_list(positions, 0.6, **direct_kwargs)
+    else:
+        direct = naive_neighbor_list(positions, 0.6, **direct_kwargs)
+    state = prepare_neighbor_list(positions, 0.6, fixed_cell=fixed_cell, **kwargs)
+    result, successor = neighbor_list(positions, state=state)
+    assert successor.fixed_cell is fixed_cell
+    expected = _brute_force_pairs_full(positions_np, np.asarray(cell), 0.6, pbc=True)
+    assert _matrix_to_pair_set_full(*result[:3], len(positions_np)) == expected
+    assert _matrix_to_pair_set_full(*direct[:3], len(positions_np)) == expected
+
+
+def _matrix_geometry_by_pair(
+    result: tuple[jax.Array, ...],
+) -> dict[tuple[int, int, int, int, int], tuple[np.ndarray, float]]:
+    """Map active matrix entries to their output vector and distance."""
+    matrix, counts, shifts, distances, vectors = map(np.asarray, result[:5])
+    pairs = {}
+    for i in range(len(counts)):
+        for slot in range(int(counts[i])):
+            shift = tuple(int(value) for value in shifts[i, slot])
+            pairs[(i, int(matrix[i, slot]), *shift)] = (
+                vectors[i, slot].copy(),
+                float(distances[i, slot]),
+            )
+    return pairs
+
+
+@pytest.mark.parametrize(
+    ("method", "strategy"),
+    [
+        ("naive", "scalar"),
+        ("batch_naive", "scalar"),
+        ("cell_list", "atom_centric"),
+        ("cell_list", "pair_centric"),
+        ("batch_cell_list", "atom_centric"),
+    ],
+)
+def test_prepared_fixed_pair_callbacks_match_direct(method: str, strategy: str) -> None:
+    """Fixed single-cutoff supported naive/cell routes forward pair callbacks."""
+    batched = method.startswith("batch_")
+    positions = jnp.array(
+        [
+            [0.2, 1.0, 1.0],
+            [7.8, 1.0, 1.0],
+            [3.0, 1.0, 1.0],
+            [3.4, 1.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+    one_cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    one_pbc = jnp.ones((3,), dtype=jnp.bool_)
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+    cell = jnp.broadcast_to(one_cell, (2, 3, 3)) if batched else one_cell
+    pbc = jnp.broadcast_to(one_pbc, (2, 3)) if batched else one_pbc
+    params = jnp.array([[0.1], [0.2], [0.3], [0.4]], dtype=jnp.float32)
+    options: dict[str, Any] = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": method,
+        "strategy": strategy,
+        "max_neighbors": 8,
+        "return_distances": True,
+        "return_vectors": True,
+        "pair_fn": _prepared_pair_fn,
+    }
+    direct_options: dict[str, Any] = {
+        "max_neighbors": 8,
+        "return_distances": True,
+        "return_vectors": True,
+        "pair_fn": _prepared_pair_fn,
+        "pair_params": params,
+        "strategy": strategy,
+    }
+    if method in {"cell_list", "batch_cell_list"}:
+        options["max_total_cells"] = 512
+        direct_options["max_total_cells"] = 512
+    if batched:
+        options["batch_ptr"] = batch_ptr
+        direct_options["batch_ptr"] = batch_ptr
+
+    state = prepare_neighbor_list(positions, 0.7, fixed_cell=True, **options)
+    actual, successor = neighbor_list(positions, state=state, pair_params=params)
+    assert successor.fixed_cell
+    if method == "batch_naive":
+        direct = batch_naive_neighbor_list(
+            positions, 0.7, cell=cell, pbc=pbc, **direct_options
+        )
+    elif method == "batch_cell_list":
+        direct = batch_cell_list(positions, 0.7, cell=cell, pbc=pbc, **direct_options)
+    elif method == "naive":
+        direct = naive_neighbor_list(
+            positions, 0.7, cell=cell, pbc=pbc, **direct_options
+        )
+    else:
+        direct = cell_list(positions, 0.7, cell=cell, pbc=pbc, **direct_options)
+
+    actual_counts = np.asarray(actual[1])
+    direct_counts = np.asarray(direct[1])
+    np.testing.assert_array_equal(actual_counts, direct_counts)
+    assert _matrix_to_pair_set_full(*actual[:3], len(positions)) == (
+        _matrix_to_pair_set_full(*direct[:3], len(positions))
+    )
+    for row, count in enumerate(actual_counts):
+        active = int(count)
+        for output_index in (3, 4, 5, 6):
+            np.testing.assert_allclose(
+                np.asarray(actual[output_index])[row, :active],
+                np.asarray(direct[output_index])[row, :active],
+            )
+
+
+def test_prepared_fixed_naive_wrapped_pairs_track_moving_positions_and_gradients() -> (
+    None
+):
+    """Wrapped fixed-naive pairs retain image offsets and live geometry gradients."""
+    positions = jnp.array([[0.2, 1.0, 1.0], [7.8, 1.0, 1.0]], dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.array([True, False, False], dtype=jnp.bool_)
+    options = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": "naive",
+        "strategy": "scalar",
+        "max_neighbors": 4,
+        "return_vectors": True,
+        "return_distances": True,
+    }
+    state = prepare_neighbor_list(positions, 0.6, fixed_cell=True, **options)
+    for current_positions in (
+        positions,
+        positions.at[0, 0].set(8.1),
+    ):
+        actual, state = neighbor_list(current_positions, state=state)
+        direct = naive_neighbor_list(
+            current_positions,
+            0.6,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            strategy="scalar",
+            return_vectors=True,
+            return_distances=True,
+        )
+        actual_geometry = _matrix_geometry_by_pair(actual)
+        direct_geometry = _matrix_geometry_by_pair(direct)
+        assert set(actual_geometry) == set(direct_geometry)
+        expected_keys = _brute_force_pairs_full(
+            np.asarray(current_positions), np.asarray(cell), 0.6, pbc=True
+        )
+        assert set(actual_geometry) == expected_keys
+        for key in actual_geometry:
+            np.testing.assert_allclose(actual_geometry[key][0], direct_geometry[key][0])
+            np.testing.assert_allclose(actual_geometry[key][1], direct_geometry[key][1])
+
+    def first_vector_x(current_positions: jax.Array, current_cell: jax.Array):
+        result, _ = neighbor_list(
+            current_positions,
+            cell=current_cell,
+            state=state,
+        )
+        return result[4][0, 0, 0]
+
+    vector = first_vector_x(positions, cell)
+    assert float(vector) == pytest.approx(-0.4, abs=2e-5)
+    position_grad = jax.grad(lambda current: first_vector_x(current, cell))(positions)
+    cell_grad = jax.grad(lambda current: first_vector_x(positions, current))(cell)
+    np.testing.assert_allclose(np.asarray(position_grad[:, 0]), [-1.0, 1.0])
+    np.testing.assert_allclose(np.asarray(cell_grad[:, 0]), [-1.0, 0.0, 0.0])
+
+
+def test_prepared_fixed_naive_partial_rows_match_direct() -> None:
+    """Fixed-cell inverse reuse preserves compact partial source rows."""
+    positions = jnp.array(
+        [
+            [0.2, 1.0, 1.0],
+            [7.8, 1.0, 1.0],
+            [4.0, 1.0, 1.0],
+            [4.3, 1.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.array([True, False, False], dtype=jnp.bool_)
+    targets = jnp.array([3, 0], dtype=jnp.int32)
+    options = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": "naive",
+        "strategy": "scalar",
+        "target_indices": targets,
+        "max_neighbors": 4,
+    }
+    state = prepare_neighbor_list(positions, 0.6, fixed_cell=True, **options)
+    actual, _ = neighbor_list(positions, state=state)
+    direct = naive_neighbor_list(
+        positions,
+        0.6,
+        cell=cell,
+        pbc=pbc,
+        target_indices=targets,
+        max_neighbors=4,
+        strategy="scalar",
+    )
+
+    def compact_pairs(result):
+        matrix, counts, shifts = map(np.asarray, result[:3])
+        pairs = set()
+        for row, source in enumerate(np.asarray(targets)):
+            for slot in range(int(counts[row])):
+                sx, sy, sz = (int(value) for value in shifts[row, slot])
+                pairs.add((int(source), int(matrix[row, slot]), sx, sy, sz))
+        return pairs
+
+    assert actual[0].shape == (2, 4)
+    assert compact_pairs(actual) == compact_pairs(direct)
+    np.testing.assert_array_equal(np.asarray(actual[1]), np.asarray(direct[1]))
+
+
+def test_prepared_fixed_cell_list_pair_geometry_tracks_live_gradients() -> None:
+    """Cached cell-list inverses do not detach live pair vectors from inputs."""
+    positions = jnp.array([[0.2, 1.0, 1.0], [7.8, 1.0, 1.0]], dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.array([True, False, False], dtype=jnp.bool_)
+    state = prepare_neighbor_list(
+        positions,
+        0.6,
+        cell=cell,
+        pbc=pbc,
+        method="cell_list",
+        strategy="atom_centric",
+        max_neighbors=4,
+        max_total_cells=512,
+        return_vectors=True,
+        return_distances=True,
+        fixed_cell=True,
+    )
+
+    def first_vector_x(current_positions: jax.Array, current_cell: jax.Array):
+        result, _ = neighbor_list(
+            current_positions,
+            cell=current_cell,
+            state=state,
+        )
+        return result[4][0, 0, 0]
+
+    np.testing.assert_allclose(float(first_vector_x(positions, cell)), -0.4, atol=2e-5)
+    position_grad = jax.grad(lambda current: first_vector_x(current, cell))(positions)
+    cell_grad = jax.grad(lambda current: first_vector_x(positions, current))(cell)
+    np.testing.assert_allclose(np.asarray(position_grad[:, 0]), [-1.0, 1.0])
+    np.testing.assert_allclose(np.asarray(cell_grad[:, 0]), [-1.0, 0.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    ("method", "strategy", "dtype"),
+    [
+        ("cell_list", "atom_centric", jnp.float32),
+        ("cell_list", "pair_centric", jnp.float64),
+        ("batch_cell_list", "atom_centric", jnp.float64),
+        ("batch_cell_list", "pair_centric", jnp.float32),
+    ],
+)
+def test_prepared_fixed_cell_list_routes_match_direct(
+    method: str, strategy: str, dtype: Any
+) -> None:
+    """Fixed cell-list 32/64-bit atom/pair routes reuse the prepared grid."""
+    batched = method == "batch_cell_list"
+    positions = jnp.array(
+        [
+            [0.2, 0.0, 0.0],
+            [7.8, 0.0, 0.0],
+            [0.2, 0.0, 0.0],
+            [0.6, 0.0, 0.0],
+        ],
+        dtype=dtype,
+    )
+    one_cell = jnp.eye(3, dtype=dtype) * 8.0
+    one_pbc = jnp.array([True, False, True], dtype=jnp.bool_)
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+    kwargs: dict[str, Any] = {
+        "cell": jnp.broadcast_to(one_cell, (2, 3, 3)) if batched else one_cell,
+        "pbc": (
+            jnp.array([[True, False, True], [False, False, False]], dtype=jnp.bool_)
+            if batched
+            else one_pbc
+        ),
+        "method": method,
+        "strategy": strategy,
+        "max_neighbors": 16,
+        "max_total_cells": 512,
+    }
+    if batched:
+        kwargs["batch_ptr"] = batch_ptr
+    state = prepare_neighbor_list(positions, 1.0, fixed_cell=True, **kwargs)
+    if batched:
+        expected = batch_cell_list(
+            positions,
+            1.0,
+            kwargs["cell"],
+            kwargs["pbc"],
+            batch_ptr=batch_ptr,
+            max_neighbors=16,
+            max_total_cells=512,
+            strategy=strategy,
+        )
+    else:
+        expected = cell_list(
+            positions,
+            1.0,
+            kwargs["cell"],
+            kwargs["pbc"],
+            max_neighbors=16,
+            max_total_cells=512,
+            strategy=strategy,
+        )
+    actual, successor = neighbor_list(positions, state=state)
+    assert successor.fixed_cell
+    if method == "batch_cell_list":
+        assert _matrix_to_pair_set_full(*actual[:3], len(positions)) == (
+            _matrix_to_pair_set_full(*expected[:3], len(positions))
+        )
+        np.testing.assert_array_equal(np.asarray(actual[1]), np.asarray(expected[1]))
+    else:
+        assert _matrix_to_pair_set_full(*actual[:3], len(positions)) == (
+            _matrix_to_pair_set_full(*expected[:3], len(positions))
+        )
+        np.testing.assert_array_equal(np.asarray(actual[1]), np.asarray(expected[1]))
+
+
+def test_prepared_fixed_cell_list_rebuilds_occupancy_under_jit_and_default_mode() -> (
+    None
+):
+    """Cached cell geometry still bins moved atoms and both cell modes jit."""
+    positions = jnp.array([[0.1, 0.1, 0.1], [4.1, 4.1, 4.1]], dtype=jnp.float32)
+    moved = positions.at[1].set(jnp.array([0.3, 0.1, 0.1], dtype=jnp.float32))
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.ones((3,), dtype=jnp.bool_)
+    options = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": "cell_list",
+        "strategy": "atom_centric",
+        "max_neighbors": 4,
+        "max_total_cells": 512,
+    }
+    fixed = prepare_neighbor_list(positions, 1.0, fixed_cell=True, **options)
+    dynamic = prepare_neighbor_list(positions, 1.0, **options)
+    compiled = jax.jit(lambda values, prepared: neighbor_list(values, state=prepared))
+
+    fixed_initial, fixed = compiled(positions, fixed)
+    dynamic_initial, dynamic = compiled(positions, dynamic)
+    assert int(np.asarray(fixed_initial[1]).sum()) == 0
+    assert int(np.asarray(dynamic_initial[1]).sum()) == 0
+
+    fixed_result, fixed = compiled(moved, fixed)
+    dynamic_result, dynamic = compiled(moved, dynamic)
+    direct = cell_list(
+        moved,
+        1.0,
+        cell,
+        pbc,
+        max_neighbors=4,
+        max_total_cells=512,
+        strategy="atom_centric",
+    )
+    assert int(np.asarray(fixed_result[1]).sum()) == 2
+    assert _matrix_to_pair_set_full(*fixed_result[:3], len(positions)) == (
+        _matrix_to_pair_set_full(*direct[:3], len(positions))
+    )
+    assert _matrix_to_pair_set_full(*dynamic_result[:3], len(positions)) == (
+        _matrix_to_pair_set_full(*direct[:3], len(positions))
+    )
+    assert fixed.fixed_cell is True
+    assert dynamic.fixed_cell is False
+
+
+@pytest.mark.parametrize("method", ["cluster_tile", "batch_cluster_tile"])
+def test_prepared_fixed_cluster_tile_format_matches_direct(method: str) -> None:
+    """Fixed cluster tile output keeps the public single and batch tile layouts."""
+    positions_np, cell_np, cutoff = _fixed_cluster_geometry_case("strong_skew")
+    positions = jnp.asarray(positions_np)
+    cell = jnp.asarray(cell_np)
+    pbc = jnp.ones((3,), dtype=jnp.bool_)
+    if method == "batch_cluster_tile":
+        batch_ptr = jnp.array([0, len(positions_np)], dtype=jnp.int32)
+        kwargs = {
+            "cell": cell[None],
+            "pbc": pbc[None],
+            "batch_ptr": batch_ptr,
+            "method": method,
+        }
+        direct = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell[None],
+            batch_ptr,
+            max_tiles_per_group=1,
+            format="tile",
+        )
+    else:
+        kwargs = {"cell": cell, "pbc": pbc, "method": method}
+        direct = cluster_tile_neighbor_list(
+            positions, cutoff, cell, max_tiles_per_group=1, format="tile"
+        )
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        fixed_cell=True,
+        format="tile",
+        max_tiles_per_group=1,
+        **kwargs,
+    )
+    actual, successor = neighbor_list(positions, state=state)
+    assert successor.fixed_cell
+    assert len(actual) == len(direct)
+    active_tiles = int(np.asarray(actual[0])[0])
+    for index in (1, 2):
+        np.testing.assert_array_equal(
+            np.asarray(actual[index])[:active_tiles],
+            np.asarray(direct[index])[:active_tiles],
+        )
+    for index in range(3, len(actual)):
+        np.testing.assert_array_equal(
+            np.asarray(actual[index]), np.asarray(direct[index])
+        )
+
+
+def _fixed_cluster_expected_geometry(
+    positions: np.ndarray, cell: np.ndarray, cutoff: float
+) -> dict[tuple[int, int, int, int, int], tuple[np.ndarray, float]]:
+    """Attach expected vector geometry to the independent cluster pair oracle."""
+    pairs = _brute_force_pairs_full(positions, cell, cutoff, pbc=True)
+    result = {}
+    for i, j, sx, sy, sz in pairs:
+        shift = np.array([sx, sy, sz], dtype=np.int32)
+        vector = positions[j] - positions[i] + shift @ cell
+        result[(i, j, sx, sy, sz)] = (vector, float(np.linalg.norm(vector)))
+    return result
+
+
+def _fixed_cluster_result_geometry(
+    result: tuple[jax.Array, ...], num_atoms: int
+) -> dict[tuple[int, int, int, int, int], tuple[np.ndarray, float]]:
+    """Map prepared matrix output to directed pair shifts and live geometry."""
+    matrix, counts, shifts, distances, vectors = map(np.asarray, result[:5])
+    found = {}
+    for i in range(num_atoms):
+        for slot in range(int(counts[i])):
+            shift = tuple(int(value) for value in shifts[i, slot])
+            key = (i, int(matrix[i, slot]), *shift)
+            found[key] = (vectors[i, slot].copy(), float(distances[i, slot]))
+    return found
+
+
+def _fixed_cluster_geometry_case(name: str) -> tuple[np.ndarray, np.ndarray, float]:
+    """Build discriminating skew, QR-height, translated, and orthogonal cases."""
+    if name == "strong_skew":
+        cell = np.array(
+            [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            dtype=np.float32,
+        )
+        positions = np.array([[4.0, 5.0, 0.0], [8.3, 3.0, 0.0]], dtype=np.float32)
+        return positions, cell, 4.8
+    if name == "uncertified_qr_height":
+        cell = np.array(
+            [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            dtype=np.float32,
+        )
+        positions = np.array([[0.0, 0.0, 0.0], [4.0, 4.9, 0.0]], dtype=np.float32)
+        return positions, cell, 5.11
+    if name in {"translated_skew", "rotated_translated_skew"}:
+        cell = np.array(
+            [[20.0, 0.0, 0.0], [8.0, 20.0, 0.0], [2.0, 4.0, 20.0]],
+            dtype=np.float32,
+        )
+        p0 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        delta = cell[0] - cell[1] + np.array([4.5, 0.0, 0.0], dtype=np.float32)
+        positions = np.stack((p0, p0 + delta))
+        if name == "rotated_translated_skew":
+            rotation = np.array(
+                [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+                dtype=np.float32,
+            )
+            cell = cell @ rotation.T
+            positions = positions @ rotation.T
+        return positions, cell, 4.8
+    if name == "orthogonal_nonzero_image":
+        cell = np.eye(3, dtype=np.float32) * 10.0
+        positions = np.array([[0.1, 1.0, 1.0], [9.9, 1.0, 1.0]], dtype=np.float32)
+        return positions, cell, 0.5
+    raise AssertionError(f"unexpected cluster fixture {name!r}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "strong_skew",
+        "uncertified_qr_height",
+        "translated_skew",
+        "rotated_translated_skew",
+        "orthogonal_nonzero_image",
+    ],
+)
+def test_prepared_fixed_cluster_matches_lattice_oracle(case: str) -> None:
+    """Cached QR geometry preserves exact pairs, images, vectors, and distances."""
+    positions_np, cell_np, cutoff = _fixed_cluster_geometry_case(case)
+    positions, cell = jnp.asarray(positions_np), jnp.asarray(cell_np)
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
+        method="cluster_tile",
+        max_neighbors=8,
+        max_tiles_per_group=1,
+        return_vectors=True,
+        return_distances=True,
+        fixed_cell=True,
+    )
+    expected = _fixed_cluster_expected_geometry(positions_np, cell_np, cutoff)
+    result, successor = neighbor_list(
+        positions, cell=cell + jnp.zeros_like(cell), state=state
+    )
+    actual = _fixed_cluster_result_geometry(result, len(positions_np))
+    assert actual.keys() == expected.keys()
+    for key, (expected_vector, expected_distance) in expected.items():
+        actual_vector, actual_distance = actual[key]
+        np.testing.assert_allclose(actual_vector, expected_vector, atol=3e-5)
+        np.testing.assert_allclose(actual_distance, expected_distance, atol=3e-5)
+    assert successor.fixed_cell
+    repeated, repeated_state = neighbor_list(positions, state=successor)
+    assert repeated_state.fixed_cell
+    assert _fixed_cluster_result_geometry(repeated, len(positions_np)).keys() == (
+        expected.keys()
+    )
+
+
+def test_prepared_fixed_cluster_outer_cutoff_and_live_geometry_gradients() -> None:
+    """Dual cutoff caches the outer geometry and pair gradients use the live cell."""
+    positions_np, cell_np, outer_cutoff = _fixed_cluster_geometry_case("strong_skew")
+    positions, cell = jnp.asarray(positions_np), jnp.asarray(cell_np)
+    for primary_cutoff in (2.0, outer_cutoff):
+        dual = prepare_neighbor_list(
+            positions,
+            primary_cutoff,
+            cutoff2=outer_cutoff,
+            cell=cell,
+            pbc=jnp.ones((3,), dtype=jnp.bool_),
+            method="cluster_tile",
+            max_neighbors=8,
+            max_tiles_per_group=1,
+            fixed_cell=True,
+        )
+        dual_result, _ = neighbor_list(positions, state=dual)
+        assert _matrix_to_pair_set_full(*dual_result[:3], len(positions_np)) == (
+            _brute_force_pairs_full(positions_np, cell_np, primary_cutoff, pbc=True)
+        )
+        assert _matrix_to_pair_set_full(*dual_result[3:6], len(positions_np)) == (
+            _brute_force_pairs_full(positions_np, cell_np, outer_cutoff, pbc=True)
+        )
+
+    positions_np, cell_np, cutoff = _fixed_cluster_geometry_case("translated_skew")
+    positions, cell = jnp.asarray(positions_np), jnp.asarray(cell_np)
+    pbc = jnp.ones((3,), dtype=jnp.bool_)
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        max_neighbors=4,
+        max_tiles_per_group=1,
+        return_vectors=True,
+        return_distances=True,
+        fixed_cell=True,
+    )
+
+    def first_vector_x(current_cell: jax.Array) -> jax.Array:
+        current, _ = neighbor_list(positions, cell=current_cell, state=state)
+        return current[4][0, 0, 0]
+
+    def rebuilt_first_vector_x(current_cell: jax.Array) -> jax.Array:
+        perturbed_state = prepare_neighbor_list(
+            positions,
+            cutoff,
+            cell=current_cell,
+            pbc=pbc,
+            method="cluster_tile",
+            max_neighbors=4,
+            max_tiles_per_group=1,
+            return_vectors=True,
+            return_distances=True,
+            fixed_cell=True,
+        )
+        current, _ = neighbor_list(positions, cell=current_cell, state=perturbed_state)
+        return current[4][0, 0, 0]
+
+    vector_cell_grad = jax.grad(first_vector_x)(cell)
+    vector_pos_grad = jax.grad(
+        lambda current_positions: neighbor_list(
+            current_positions, cell=cell, state=state
+        )[0][4][0, 0, 0]
+    )(positions)
+    distance_cell_grad = jax.grad(
+        lambda current_cell: neighbor_list(positions, cell=current_cell, state=state)[
+            0
+        ][3][0, 0]
+    )(cell)
+    np.testing.assert_allclose(np.asarray(vector_cell_grad[:, 0]), [-1.0, 1.0, 0.0])
+    np.testing.assert_allclose(np.asarray(vector_pos_grad[:, 0]), [-1.0, 1.0])
+    np.testing.assert_allclose(np.asarray(distance_cell_grad[:, 0]), [-1.0, 1.0, 0.0])
+
+    epsilon = jnp.float32(1e-2)
+    for row, expected in ((0, -1.0), (1, 1.0)):
+        plus = rebuilt_first_vector_x(cell.at[row, 0].add(epsilon))
+        minus = rebuilt_first_vector_x(cell.at[row, 0].add(-epsilon))
+        finite_difference = (plus - minus) / (2.0 * epsilon)
+        np.testing.assert_allclose(float(finite_difference), expected, atol=2e-4)
+
+
+def test_prepared_fixed_cluster_jit_donation_successor_and_callback() -> None:
+    """Fixed cluster modules work in JIT and retain caches through donated reuse."""
+    positions_np, cell_np, cutoff = _fixed_cluster_geometry_case(
+        "uncertified_qr_height"
+    )
+    positions, cell = jnp.asarray(positions_np), jnp.asarray(cell_np)
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
+        method="cluster_tile",
+        max_neighbors=8,
+        max_tiles_per_group=1,
+        fixed_cell=True,
+    )
+    expected = _brute_force_pairs_full(positions_np, cell_np, cutoff, pbc=True)
+    compiled = jax.jit(
+        lambda current_positions, prepared: neighbor_list(
+            current_positions, state=prepared
+        ),
+        donate_argnums=(1,),
+    )
+    first, state1 = compiled(positions, state)
+    first_expected = _matrix_to_pair_set_full(*first[:3], len(positions_np))
+    assert first_expected == expected
+    second, state2 = compiled(positions, state1)
+    assert _matrix_to_pair_set_full(*second[:3], len(positions_np)) == expected
+    assert state2.fixed_cell
+
+    callback_cell = jnp.asarray(np.array(cell_np, copy=True))
+    callback_state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cell=callback_cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
+        method="cluster_tile",
+        max_neighbors=8,
+        max_tiles_per_group=1,
+        pair_fn=_prepared_pair_fn,
+        fixed_cell=True,
+    )
+    pair_params = jnp.arange(len(positions_np), dtype=jnp.float32)[:, None]
+    callback_result, _ = neighbor_list(
+        positions, state=callback_state, pair_params=pair_params
+    )
+    direct_result = cluster_tile_neighbor_list(
+        positions,
+        cutoff,
+        callback_cell,
+        max_neighbors=8,
+        max_tiles_per_group=1,
+        pair_fn=_prepared_pair_fn,
+        pair_params=pair_params,
+    )
+    assert _matrix_to_pair_set_full(
+        *direct_result[:3], len(positions_np)
+    ) == _matrix_to_pair_set_full(*callback_result[:3], len(positions_np))
+    np.testing.assert_array_equal(callback_result[1], direct_result[1])
+    for row, count in enumerate(np.asarray(callback_result[1])):
+        active = int(count)
+        for output_index in (3, 4):
+            np.testing.assert_allclose(
+                np.asarray(callback_result[output_index])[row, :active],
+                np.asarray(direct_result[output_index])[row, :active],
+                atol=3e-5,
+            )
+
+
+def test_prepared_fixed_cell_overflow_remains_sticky_after_reuse() -> None:
+    """Fixed geometry retains capacity failures across a later successful call."""
+    positions = jnp.array(
+        [[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [0.4, 0.0, 0.0]], dtype=jnp.float32
+    )
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
+        method="naive",
+        max_neighbors=1,
+        fixed_cell=True,
+    )
+    _overflow_result, failed = neighbor_list(positions, state=state)
+    assert not bool(jnp.all(failed.valid))
+    with pytest.raises(NeighborOverflowError):
+        check_neighbor_list_state(failed)
+    separated = jnp.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]], dtype=jnp.float32
+    )
+    _successful_result, still_failed = neighbor_list(separated, state=failed)
+    assert not bool(jnp.all(still_failed.valid))
+    with pytest.raises(NeighborOverflowError):
+        check_neighbor_list_state(still_failed)
+
+
+def test_prepared_fixed_cell_selective_all_false_survives_donated_jit() -> None:
+    """An all-false selective call carries fixed caches through donation."""
+    positions = jnp.array(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [3.0, 0.0, 0.0], [3.4, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
+        method="naive",
+        selective=True,
+        return_neighbor_list=True,
+        coo_capacity=16,
+        max_neighbors=8,
+        fixed_cell=True,
+    )
+    initial_result, initialized = neighbor_list(
+        positions,
+        state=state,
+        rebuild_flags=jnp.ones((1,), dtype=jnp.bool_),
+    )
+    assert initialized.fixed_cell
+    preserve = jnp.zeros((1,), dtype=jnp.bool_)
+    execute = jax.jit(
+        lambda values, prepared, flags: neighbor_list(
+            values, state=prepared, rebuild_flags=flags
+        ),
+        donate_argnums=(1,),
+    )
+    preserved_result, successor = execute(positions, initialized, preserve)
+    for expected, actual in zip(initial_result, preserved_result, strict=True):
+        np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+    assert successor.fixed_cell
+    assert bool(jnp.all(successor.initialized))
+    assert bool(jnp.all(successor.valid))

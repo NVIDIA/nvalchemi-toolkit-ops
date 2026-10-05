@@ -26,6 +26,13 @@ immutable PyTree threaded between calls. See the
 :ref:`prepared neighbor-list guide <prepared_neighbor_lists>` for route
 selection, lifecycle, and performance guidance.
 
+Set ``fixed_cell=True`` during preparation to reuse cell-dependent search
+geometry for an unchanged explicit cell. This is a caller promise: execution
+does not compare cell values, and changing them requires a new state. The
+read-only ``state.fixed_cell`` records the mode. Thread successor states as
+usual; positions may still change, and pair geometry retains its existing
+position and cell gradients.
+
 .. autoclass:: nvalchemiops.jax.neighbors.NeighborListState()
    :members:
    :exclude-members: tree_flatten, tree_unflatten

@@ -42,6 +42,7 @@ __all__ = [
     "get_batch_query_cluster_tile_kernel",
     "get_query_cluster_tile_coo_kernel",
     "get_query_cluster_tile_kernel",
+    "get_prepare_cluster_tile_geometry_kernel",
 ]
 
 
@@ -218,6 +219,119 @@ def _triclinic_qr_height_is_certified(
     if qr.r22 < min_height:
         min_height = qr.r22
     return outer_cutoff < (0.5 - 1.0e-4) * min_height
+
+
+@wp.func
+def _load_prepared_triclinic_qr(
+    qr_values: wp.array2d(dtype=wp.float32),
+    axis_aligned: wp.array(dtype=wp.bool),
+    system_idx: wp.int32,
+) -> _TriclinicQR:
+    """Load one row of cached QR factors into the kernel-local struct."""
+    qr = _TriclinicQR()
+    qr.axis_aligned = axis_aligned[system_idx]
+    qr.q0 = wp.vec3f(
+        qr_values[system_idx, 0],
+        qr_values[system_idx, 1],
+        qr_values[system_idx, 2],
+    )
+    qr.q1 = wp.vec3f(
+        qr_values[system_idx, 3],
+        qr_values[system_idx, 4],
+        qr_values[system_idx, 5],
+    )
+    qr.q2 = wp.vec3f(
+        qr_values[system_idx, 6],
+        qr_values[system_idx, 7],
+        qr_values[system_idx, 8],
+    )
+    qr.r00 = qr_values[system_idx, 9]
+    qr.r01 = qr_values[system_idx, 10]
+    qr.r02 = qr_values[system_idx, 11]
+    qr.r11 = qr_values[system_idx, 12]
+    qr.r12 = qr_values[system_idx, 13]
+    qr.r22 = qr_values[system_idx, 14]
+    return qr
+
+
+@wp.kernel(enable_backward=False)
+def _prepare_cluster_tile_geometry_kernel(
+    cell: wp.array(dtype=wp.mat33f),
+    inv_cell: wp.array(dtype=wp.mat33f),
+    outer_cutoff_sq: wp.float32,
+    qr_values: wp.array2d(dtype=wp.float32),
+    axis_aligned: wp.array(dtype=wp.bool),
+    fractional_rounding_certified: wp.array(dtype=wp.bool),
+    qr_height_certified: wp.array(dtype=wp.bool),
+    bbox_cutoff_bounds: wp.array2d(dtype=wp.float32),
+) -> None:
+    """Prepare cluster-tile geometry terms once for each fixed cell.
+
+    Parameters
+    ----------
+    cell, inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33f
+        Cell and READONLY inverse-cell matrices supplied by the backend.
+    outer_cutoff_sq : wp.float32
+        Effective squared outer cutoff used by the cluster build/query route.
+    qr_values : wp.array, shape (num_systems, 15), dtype=wp.float32
+        OUTPUT: q0 xyz, q1 xyz, q2 xyz, then R entries r00, r01, r02, r11,
+        r12, r22.
+    axis_aligned, fractional_rounding_certified, qr_height_certified : wp.array,
+        shape (num_systems,), dtype=wp.bool
+        OUTPUT: Per-system geometry flags.
+    bbox_cutoff_bounds : wp.array, shape (num_systems, 3), dtype=wp.float32
+        OUTPUT: Outer cutoff times each reciprocal-vector norm.
+
+    Returns
+    -------
+    None
+        This kernel writes prepared geometry arrays in place.
+
+    Notes
+    -----
+    - Thread launch: One thread per system.
+    - Modifies: ``qr_values``, the three flags, and ``bbox_cutoff_bounds``.
+    """
+    system_idx = wp.tid()
+    cell_mat = cell[system_idx]
+    inv_cell_mat = inv_cell[system_idx]
+    qr = _prepare_triclinic_qr(cell_mat)
+    outer_cutoff = wp.sqrt(outer_cutoff_sq)
+    fractional_certified = _triclinic_cutoff_is_certified(inv_cell_mat, outer_cutoff)
+    height_certified = wp.bool(False)
+    if not fractional_certified:
+        height_certified = _triclinic_qr_height_is_certified(qr, outer_cutoff)
+
+    axis_aligned[system_idx] = qr.axis_aligned
+    fractional_rounding_certified[system_idx] = fractional_certified
+    qr_height_certified[system_idx] = height_certified
+    qr_values[system_idx, 0] = qr.q0[0]
+    qr_values[system_idx, 1] = qr.q0[1]
+    qr_values[system_idx, 2] = qr.q0[2]
+    qr_values[system_idx, 3] = qr.q1[0]
+    qr_values[system_idx, 4] = qr.q1[1]
+    qr_values[system_idx, 5] = qr.q1[2]
+    qr_values[system_idx, 6] = qr.q2[0]
+    qr_values[system_idx, 7] = qr.q2[1]
+    qr_values[system_idx, 8] = qr.q2[2]
+    qr_values[system_idx, 9] = qr.r00
+    qr_values[system_idx, 10] = qr.r01
+    qr_values[system_idx, 11] = qr.r02
+    qr_values[system_idx, 12] = qr.r11
+    qr_values[system_idx, 13] = qr.r12
+    qr_values[system_idx, 14] = qr.r22
+
+    reciprocal_a = wp.vec3f(inv_cell_mat[0, 0], inv_cell_mat[1, 0], inv_cell_mat[2, 0])
+    reciprocal_b = wp.vec3f(inv_cell_mat[0, 1], inv_cell_mat[1, 1], inv_cell_mat[2, 1])
+    reciprocal_c = wp.vec3f(inv_cell_mat[0, 2], inv_cell_mat[1, 2], inv_cell_mat[2, 2])
+    bbox_cutoff_bounds[system_idx, 0] = outer_cutoff * wp.length(reciprocal_a)
+    bbox_cutoff_bounds[system_idx, 1] = outer_cutoff * wp.length(reciprocal_b)
+    bbox_cutoff_bounds[system_idx, 2] = outer_cutoff * wp.length(reciprocal_c)
+
+
+def get_prepare_cluster_tile_geometry_kernel() -> wp.Kernel:
+    """Return the per-system cluster-tile geometry preparation kernel."""
+    return _prepare_cluster_tile_geometry_kernel
 
 
 @wp.func
@@ -779,6 +893,7 @@ def _bbox_valid(
     cg_ext: wp.vec3f,
     cell: wp.mat33f,
     inv_cell: wp.mat33f,
+    cutoff_reciprocal_norms: wp.vec3f,
     qr: _TriclinicQR,
     cutoff_sq: wp.float32,
 ) -> wp.int32:
@@ -804,6 +919,8 @@ def _bbox_valid(
         Cell matrix.
     inv_cell : wp.mat33f
         Inverse cell matrix.
+    cutoff_reciprocal_norms : wp.vec3f
+        Squared-cutoff route's outer cutoff times reciprocal-vector norms.
     cutoff_sq : wp.float32
         Squared cutoff distance.
 
@@ -846,7 +963,6 @@ def _bbox_valid(
     # necessary interval for each image coordinate. In exact arithmetic, the
     # inclusive integer bounds are ceil(lower) through floor(upper). The
     # nearest-center image above is a cheap common-case check.
-    cutoff = wp.sqrt(cutoff_sq)
     box_extent = rg_ext + cg_ext
     # Bounds are relative to the nearest-center image tested above, so the
     # integer coordinates below are corrections to d_wrapped.
@@ -858,19 +974,19 @@ def _bbox_valid(
         wp.abs(reciprocal_a[0]) * box_extent[0]
         + wp.abs(reciprocal_a[1]) * box_extent[1]
         + wp.abs(reciprocal_a[2]) * box_extent[2]
-        + cutoff * wp.length(reciprocal_a)
+        + cutoff_reciprocal_norms[0]
     )
     bound_b = (
         wp.abs(reciprocal_b[0]) * box_extent[0]
         + wp.abs(reciprocal_b[1]) * box_extent[1]
         + wp.abs(reciprocal_b[2]) * box_extent[2]
-        + cutoff * wp.length(reciprocal_b)
+        + cutoff_reciprocal_norms[1]
     )
     bound_c = (
         wp.abs(reciprocal_c[0]) * box_extent[0]
         + wp.abs(reciprocal_c[1]) * box_extent[1]
         + wp.abs(reciprocal_c[2]) * box_extent[2]
-        + cutoff * wp.length(reciprocal_c)
+        + cutoff_reciprocal_norms[2]
     )
     # A scale-aware float32 margin keeps near-integer endpoints from rounding
     # inward and excluding a possible image. Float32 inverse/fractional error
@@ -991,12 +1107,17 @@ def _get_reset_cluster_tile_counts_kernel(*, selective: bool) -> wp.Kernel:
 
 @lru_cache(maxsize=None)
 def _get_build_cluster_tiles_kernel(
-    *, batched: bool, segmented: bool = False, selective: bool = False
+    *,
+    batched: bool,
+    segmented: bool = False,
+    selective: bool = False,
+    fixed_cell: bool = False,
 ) -> wp.Kernel:
     """Build the single/batched group-to-tile enumeration kernel."""
     BATCHED = wp.constant(bool(batched))
     SEGMENTED = wp.constant(bool(segmented))
     SELECTIVE = wp.constant(bool(selective))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
 
     @wp.kernel(enable_backward=False)
     def _kernel(
@@ -1010,6 +1131,11 @@ def _get_build_cluster_tiles_kernel(
         group_ptr: wp.array(dtype=wp.int32),
         cell: wp.array(dtype=wp.mat33f),
         inv_cell: wp.array(dtype=wp.mat33f),
+        qr_values: wp.array2d(dtype=wp.float32),
+        axis_aligned: wp.array(dtype=wp.bool),
+        fractional_rounding_certified: wp.array(dtype=wp.bool),
+        qr_height_certified: wp.array(dtype=wp.bool),
+        bbox_cutoff_bounds: wp.array2d(dtype=wp.float32),
         cutoff_sq: wp.float32,
         ngroup: wp.int32,
         num_tiles: wp.array(dtype=wp.int32),
@@ -1034,7 +1160,14 @@ def _get_build_cluster_tiles_kernel(
         group_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
             Group prefix offsets per system for batched mode.
         cell, inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33f
-            Cell and inverse-cell matrices.
+            Cell and READONLY inverse-cell matrices.
+        qr_values : wp.array, shape (num_systems, 15), dtype=wp.float32
+            READONLY cached QR factors when ``fixed_cell`` is enabled.
+        axis_aligned, fractional_rounding_certified, qr_height_certified : wp.array,
+            shape (num_systems,), dtype=wp.bool
+            READONLY cached geometry flags when ``fixed_cell`` is enabled.
+        bbox_cutoff_bounds : wp.array, shape (num_systems, 3), dtype=wp.float32
+            READONLY cached cutoff times reciprocal-vector norms when fixed.
         cutoff_sq : wp.float32
             Squared cutoff distance.
         ngroup : wp.int32
@@ -1088,7 +1221,33 @@ def _get_build_cluster_tiles_kernel(
 
         cell_mat = cell[system_idx]
         inv_cell_mat = inv_cell[system_idx]
-        triclinic_qr = _prepare_triclinic_qr(cell_mat)
+        cutoff_reciprocal_norms = wp.vec3f()
+        if FIXED_CELL:
+            triclinic_qr = _load_prepared_triclinic_qr(
+                qr_values, axis_aligned, system_idx
+            )
+            cutoff_reciprocal_norms = wp.vec3f(
+                bbox_cutoff_bounds[system_idx, 0],
+                bbox_cutoff_bounds[system_idx, 1],
+                bbox_cutoff_bounds[system_idx, 2],
+            )
+        else:
+            triclinic_qr = _prepare_triclinic_qr(cell_mat)
+            cutoff = wp.sqrt(cutoff_sq)
+            reciprocal_a = wp.vec3f(
+                inv_cell_mat[0, 0], inv_cell_mat[1, 0], inv_cell_mat[2, 0]
+            )
+            reciprocal_b = wp.vec3f(
+                inv_cell_mat[0, 1], inv_cell_mat[1, 1], inv_cell_mat[2, 1]
+            )
+            reciprocal_c = wp.vec3f(
+                inv_cell_mat[0, 2], inv_cell_mat[1, 2], inv_cell_mat[2, 2]
+            )
+            cutoff_reciprocal_norms = wp.vec3f(
+                cutoff * wp.length(reciprocal_a),
+                cutoff * wp.length(reciprocal_b),
+                cutoff * wp.length(reciprocal_c),
+            )
 
         rg_ctr = wp.vec3f(
             group_ctr_x[row_group],
@@ -1132,6 +1291,7 @@ def _get_build_cluster_tiles_kernel(
                 cg_ext,
                 cell_mat,
                 inv_cell_mat,
+                cutoff_reciprocal_norms,
                 triclinic_qr,
                 cutoff_sq,
             )
@@ -1176,6 +1336,7 @@ def _get_build_cluster_tiles_kernel(
             "batched" if batched else "",
             "segmented" if segmented else "",
             "selective" if selective else "",
+            "fixed_cell" if fixed_cell else "",
         ),
     )
     return set_fn_doc(
@@ -1188,6 +1349,7 @@ def _get_build_cluster_tiles_kernel(
                 ("batched", bool(batched)),
                 ("segmented", bool(segmented)),
                 ("selective", bool(selective)),
+                ("fixed_cell", bool(fixed_cell)),
             ),
         ),
     )
@@ -1199,6 +1361,7 @@ def _make_query_cluster_tile_kernel(
     batched: bool,
     tile_segmented: bool,
     selective: bool,
+    fixed_cell: bool,
     dual_cutoff: bool,
     return_vectors: bool,
     return_distances: bool,
@@ -1208,6 +1371,7 @@ def _make_query_cluster_tile_kernel(
     BATCHED = wp.constant(bool(batched))
     TILE_SEGMENTED = wp.constant(bool(tile_segmented))
     SELECTIVE = wp.constant(bool(selective))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
     DUAL_CUTOFF = wp.constant(bool(dual_cutoff))
     RETURN_VECTORS = wp.constant(bool(return_vectors))
     RETURN_DISTANCES = wp.constant(bool(return_distances))
@@ -1221,6 +1385,11 @@ def _make_query_cluster_tile_kernel(
         sorted_atom_index: wp.array(dtype=wp.int32),
         cell: wp.array(dtype=wp.mat33f),
         inv_cell: wp.array(dtype=wp.mat33f),
+        qr_values: wp.array2d(dtype=wp.float32),
+        axis_aligned: wp.array(dtype=wp.bool),
+        fractional_rounding_certified_cache: wp.array(dtype=wp.bool),
+        qr_height_certified_cache: wp.array(dtype=wp.bool),
+        bbox_cutoff_bounds: wp.array2d(dtype=wp.float32),
         cutoff_sq: wp.float32,
         cutoff_sq2: wp.float32,
         natom: wp.int32,
@@ -1347,17 +1516,26 @@ def _make_query_cluster_tile_kernel(
         outer_cutoff_sq = cutoff_sq
         if DUAL_CUTOFF and cutoff_sq2 > outer_cutoff_sq:
             outer_cutoff_sq = cutoff_sq2
-        fractional_rounding_certified = _triclinic_cutoff_is_certified(
-            inv_cell_mat, wp.sqrt(outer_cutoff_sq)
-        )
-        triclinic_qr = _prepare_triclinic_qr_if_needed(
-            cell_mat, fractional_rounding_certified
-        )
-        qr_height_certified = wp.bool(False)
-        if not fractional_rounding_certified:
-            qr_height_certified = _triclinic_qr_height_is_certified(
-                triclinic_qr, wp.sqrt(outer_cutoff_sq)
+        if FIXED_CELL:
+            triclinic_qr = _load_prepared_triclinic_qr(
+                qr_values, axis_aligned, system_idx
             )
+            fractional_rounding_certified = fractional_rounding_certified_cache[
+                system_idx
+            ]
+            qr_height_certified = qr_height_certified_cache[system_idx]
+        else:
+            fractional_rounding_certified = _triclinic_cutoff_is_certified(
+                inv_cell_mat, wp.sqrt(outer_cutoff_sq)
+            )
+            triclinic_qr = _prepare_triclinic_qr_if_needed(
+                cell_mat, fractional_rounding_certified
+            )
+            qr_height_certified = wp.bool(False)
+            if not fractional_rounding_certified:
+                qr_height_certified = _triclinic_qr_height_is_certified(
+                    triclinic_qr, wp.sqrt(outer_cutoff_sq)
+                )
 
         j_sorted = col_group * TILE + lane
         j_orig_t = sorted_atom_index[j_sorted]
@@ -1518,6 +1696,7 @@ def _make_query_cluster_tile_kernel(
         features=(
             "batched" if batched else "",
             "tile_segmented" if tile_segmented else "",
+            "fixed_cell" if fixed_cell else "",
             *_pair_output_features(
                 selective=selective,
                 dual_cutoff=dual_cutoff,
@@ -1538,6 +1717,7 @@ def _make_query_cluster_tile_kernel(
                 ("batched", bool(batched)),
                 ("tile_segmented", bool(tile_segmented)),
                 ("selective", bool(selective)),
+                ("fixed_cell", bool(fixed_cell)),
                 ("dual_cutoff", bool(dual_cutoff)),
                 ("return_vectors", bool(return_vectors)),
                 ("return_distances", bool(return_distances)),
@@ -1551,6 +1731,7 @@ def get_query_cluster_tile_kernel(
     *,
     tile_segmented: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
     dual_cutoff: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
@@ -1565,6 +1746,7 @@ def get_query_cluster_tile_kernel(
         batched=False,
         tile_segmented=bool(tile_segmented),
         selective=bool(selective),
+        fixed_cell=bool(fixed_cell),
         dual_cutoff=bool(dual_cutoff),
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
@@ -1576,6 +1758,7 @@ def get_batch_query_cluster_tile_kernel(
     *,
     tile_segmented: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
     dual_cutoff: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
@@ -1586,6 +1769,7 @@ def get_batch_query_cluster_tile_kernel(
         batched=True,
         tile_segmented=bool(tile_segmented),
         selective=bool(selective),
+        fixed_cell=bool(fixed_cell),
         dual_cutoff=bool(dual_cutoff),
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
@@ -1594,9 +1778,12 @@ def get_batch_query_cluster_tile_kernel(
 
 
 @lru_cache(maxsize=None)
-def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kernel:
+def _get_query_cluster_tile_direct_csr_count_kernel(
+    *, batched: bool, fixed_cell: bool = False
+) -> wp.Kernel:
     """Build the count pass for compact, source-owned exact COO."""
     BATCHED = wp.constant(bool(batched))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
 
     @wp.kernel(enable_backward=False, module="unique")
     def _kernel(
@@ -1606,6 +1793,11 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
         sorted_atom_index: wp.array(dtype=wp.int32),
         cell: wp.array(dtype=wp.mat33f),
         inv_cell: wp.array(dtype=wp.mat33f),
+        qr_values: wp.array2d(dtype=wp.float32),
+        axis_aligned: wp.array(dtype=wp.bool),
+        fractional_rounding_certified_cache: wp.array(dtype=wp.bool),
+        qr_height_certified_cache: wp.array(dtype=wp.bool),
+        bbox_cutoff_bounds: wp.array2d(dtype=wp.float32),
         cutoff_sq: wp.float32,
         natom: wp.int32,
         num_tiles: wp.array(dtype=wp.int32),
@@ -1677,17 +1869,26 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
         )
         cell_mat = cell[system_idx]
         inv_cell_mat = inv_cell[system_idx]
-        fractional_rounding_certified = _triclinic_cutoff_is_certified(
-            inv_cell_mat, wp.sqrt(cutoff_sq)
-        )
-        triclinic_qr = _prepare_triclinic_qr_if_needed(
-            cell_mat, fractional_rounding_certified
-        )
-        qr_height_certified = wp.bool(False)
-        if not fractional_rounding_certified:
-            qr_height_certified = _triclinic_qr_height_is_certified(
-                triclinic_qr, wp.sqrt(cutoff_sq)
+        if FIXED_CELL:
+            triclinic_qr = _load_prepared_triclinic_qr(
+                qr_values, axis_aligned, system_idx
             )
+            fractional_rounding_certified = fractional_rounding_certified_cache[
+                system_idx
+            ]
+            qr_height_certified = qr_height_certified_cache[system_idx]
+        else:
+            fractional_rounding_certified = _triclinic_cutoff_is_certified(
+                inv_cell_mat, wp.sqrt(cutoff_sq)
+            )
+            triclinic_qr = _prepare_triclinic_qr_if_needed(
+                cell_mat, fractional_rounding_certified
+            )
+            qr_height_certified = wp.bool(False)
+            if not fractional_rounding_certified:
+                qr_height_certified = _triclinic_qr_height_is_certified(
+                    triclinic_qr, wp.sqrt(cutoff_sq)
+                )
         reverse_count = wp.int32(0)
         for i_local in range(TILE_GROUP_SIZE):
             i_sorted = row_group * TILE + i_local
@@ -1729,12 +1930,14 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
 def _get_query_cluster_tile_direct_csr_fill_kernel(
     *,
     batched: bool,
+    fixed_cell: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
 ) -> wp.Kernel:
     """Build the fill pass for compact, source-owned exact COO."""
     BATCHED = wp.constant(bool(batched))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
     RETURN_VECTORS = wp.constant(bool(return_vectors))
     RETURN_DISTANCES = wp.constant(bool(return_distances))
     HAS_PAIR_FN = wp.constant(pair_fn is not None)
@@ -1747,6 +1950,11 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
         sorted_atom_index: wp.array(dtype=wp.int32),
         cell: wp.array(dtype=wp.mat33f),
         inv_cell: wp.array(dtype=wp.mat33f),
+        qr_values: wp.array2d(dtype=wp.float32),
+        axis_aligned: wp.array(dtype=wp.bool),
+        fractional_rounding_certified_cache: wp.array(dtype=wp.bool),
+        qr_height_certified_cache: wp.array(dtype=wp.bool),
+        bbox_cutoff_bounds: wp.array2d(dtype=wp.float32),
         cutoff_sq: wp.float32,
         natom: wp.int32,
         physical_capacity: wp.int32,
@@ -1849,17 +2057,26 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
         )
         cell_mat = cell[system_idx]
         inv_cell_mat = inv_cell[system_idx]
-        fractional_rounding_certified = _triclinic_cutoff_is_certified(
-            inv_cell_mat, wp.sqrt(cutoff_sq)
-        )
-        triclinic_qr = _prepare_triclinic_qr_if_needed(
-            cell_mat, fractional_rounding_certified
-        )
-        qr_height_certified = wp.bool(False)
-        if not fractional_rounding_certified:
-            qr_height_certified = _triclinic_qr_height_is_certified(
-                triclinic_qr, wp.sqrt(cutoff_sq)
+        if FIXED_CELL:
+            triclinic_qr = _load_prepared_triclinic_qr(
+                qr_values, axis_aligned, system_idx
             )
+            fractional_rounding_certified = fractional_rounding_certified_cache[
+                system_idx
+            ]
+            qr_height_certified = qr_height_certified_cache[system_idx]
+        else:
+            fractional_rounding_certified = _triclinic_cutoff_is_certified(
+                inv_cell_mat, wp.sqrt(cutoff_sq)
+            )
+            triclinic_qr = _prepare_triclinic_qr_if_needed(
+                cell_mat, fractional_rounding_certified
+            )
+            qr_height_certified = wp.bool(False)
+            if not fractional_rounding_certified:
+                qr_height_certified = _triclinic_qr_height_is_certified(
+                    triclinic_qr, wp.sqrt(cutoff_sq)
+                )
         reverse_count = wp.int32(0)
         for i_local in range(TILE_GROUP_SIZE):
             i_sorted = row_group * TILE + i_local
@@ -1990,6 +2207,7 @@ def _make_query_cluster_tile_coo_kernel(
     tile_segmented: bool = False,
     coo_segmented: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
@@ -1999,6 +2217,7 @@ def _make_query_cluster_tile_coo_kernel(
     TILE_SEGMENTED = wp.constant(bool(tile_segmented))
     COO_SEGMENTED = wp.constant(bool(coo_segmented))
     SELECTIVE = wp.constant(bool(selective))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
     RETURN_VECTORS = wp.constant(bool(return_vectors))
     RETURN_DISTANCES = wp.constant(bool(return_distances))
     HAS_PAIR_FN = wp.constant(pair_fn is not None)
@@ -2011,6 +2230,11 @@ def _make_query_cluster_tile_coo_kernel(
         sorted_atom_index: wp.array(dtype=wp.int32),
         cell: wp.array(dtype=wp.mat33f),
         inv_cell: wp.array(dtype=wp.mat33f),
+        qr_values: wp.array2d(dtype=wp.float32),
+        axis_aligned: wp.array(dtype=wp.bool),
+        fractional_rounding_certified_cache: wp.array(dtype=wp.bool),
+        qr_height_certified_cache: wp.array(dtype=wp.bool),
+        bbox_cutoff_bounds: wp.array2d(dtype=wp.float32),
         cutoff_sq: wp.float32,
         natom: wp.int32,
         max_pairs: wp.int32,
@@ -2137,17 +2361,26 @@ def _make_query_cluster_tile_coo_kernel(
 
         cell_mat = cell[system_idx]
         inv_cell_mat = inv_cell[system_idx]
-        fractional_rounding_certified = _triclinic_cutoff_is_certified(
-            inv_cell_mat, wp.sqrt(cutoff_sq)
-        )
-        triclinic_qr = _prepare_triclinic_qr_if_needed(
-            cell_mat, fractional_rounding_certified
-        )
-        qr_height_certified = wp.bool(False)
-        if not fractional_rounding_certified:
-            qr_height_certified = _triclinic_qr_height_is_certified(
-                triclinic_qr, wp.sqrt(cutoff_sq)
+        if FIXED_CELL:
+            triclinic_qr = _load_prepared_triclinic_qr(
+                qr_values, axis_aligned, system_idx
             )
+            fractional_rounding_certified = fractional_rounding_certified_cache[
+                system_idx
+            ]
+            qr_height_certified = qr_height_certified_cache[system_idx]
+        else:
+            fractional_rounding_certified = _triclinic_cutoff_is_certified(
+                inv_cell_mat, wp.sqrt(cutoff_sq)
+            )
+            triclinic_qr = _prepare_triclinic_qr_if_needed(
+                cell_mat, fractional_rounding_certified
+            )
+            qr_height_certified = wp.bool(False)
+            if not fractional_rounding_certified:
+                qr_height_certified = _triclinic_qr_height_is_certified(
+                    triclinic_qr, wp.sqrt(cutoff_sq)
+                )
 
         j_sorted = col_group * TILE + lane
         j_orig_t = sorted_atom_index[j_sorted]
@@ -2319,6 +2552,7 @@ def _make_query_cluster_tile_coo_kernel(
         features=(
             "batched" if batched else "",
             "tile_segmented" if tile_segmented else "",
+            "fixed_cell" if fixed_cell else "",
             *_pair_output_features(
                 selective=selective,
                 coo_segmented=coo_segmented,
@@ -2340,6 +2574,7 @@ def _make_query_cluster_tile_coo_kernel(
                 ("tile_segmented", bool(tile_segmented)),
                 ("coo_segmented", bool(coo_segmented)),
                 ("selective", bool(selective)),
+                ("fixed_cell", bool(fixed_cell)),
                 ("return_vectors", bool(return_vectors)),
                 ("return_distances", bool(return_distances)),
                 ("pair_fn", pair_fn is not None),
@@ -2353,6 +2588,7 @@ def get_query_cluster_tile_coo_kernel(
     tile_segmented: bool = False,
     coo_segmented: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
@@ -2363,6 +2599,7 @@ def get_query_cluster_tile_coo_kernel(
         tile_segmented=bool(tile_segmented),
         coo_segmented=bool(coo_segmented),
         selective=bool(selective),
+        fixed_cell=bool(fixed_cell),
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
         pair_fn=pair_fn,
@@ -2374,6 +2611,7 @@ def get_batch_query_cluster_tile_coo_kernel(
     tile_segmented: bool = False,
     coo_segmented: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
@@ -2384,6 +2622,7 @@ def get_batch_query_cluster_tile_coo_kernel(
         tile_segmented=bool(tile_segmented),
         coo_segmented=bool(coo_segmented),
         selective=bool(selective),
+        fixed_cell=bool(fixed_cell),
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
         pair_fn=pair_fn,

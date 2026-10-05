@@ -24,6 +24,11 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from nvalchemiops.jax.neighbors._registration import (
+    _lazy_cell_inverse_kernel,
+    _lazy_cluster_geometry_kernel,
+)
+
 __all__ = [
     "NeighborListState",
     "check_neighbor_list_state",
@@ -119,7 +124,8 @@ _CELL_LEAF = 0
 _PBC_LEAF = 1
 _BATCH_IDX_LEAF = 2
 _BATCH_PTR_LEAF = 3
-_RESULT_LEAF_OFFSET = 4
+_FIXED_CELL_GEOMETRY_LEAF = 4
+_RESULT_LEAF_OFFSET = 5
 _RESULT_LEAF_COUNT = 12
 _SHIFT_RANGE_LEAF = -18
 _NUM_SHIFTS_LEAF = -17
@@ -139,6 +145,8 @@ _PRIVATE_SHIFT1_LEAF = -4
 _PRIVATE_MATRIX2_LEAF = -3
 _PRIVATE_NUM2_LEAF = -2
 _PRIVATE_SHIFT2_LEAF = -1
+_FIXED_CELL_INVERSE_REGISTRATION = _lazy_cell_inverse_kernel()
+_FIXED_CLUSTER_GEOMETRY_REGISTRATION = _lazy_cluster_geometry_kernel()
 _CUTOFF_GROUP_RESULT_NAMES = frozenset(
     {
         "neighbor_matrix",
@@ -235,6 +243,7 @@ class _StateLeaves:
         pbc: Any,
         batch_idx: Any,
         batch_ptr: Any,
+        fixed_cell_geometry: Any,
         result: tuple[Any, ...] | list[Any],
         shift_range_per_dimension: Any,
         num_shifts_per_system: Any,
@@ -270,6 +279,7 @@ class _StateLeaves:
             pbc,
             batch_idx,
             batch_ptr,
+            fixed_cell_geometry,
             *result,
             shift_range_per_dimension,
             num_shifts_per_system,
@@ -314,6 +324,7 @@ class _StateLeaves:
             pbc=self.pbc,
             batch_idx=self.batch_idx,
             batch_ptr=self.batch_ptr,
+            fixed_cell_geometry=self.fixed_cell_geometry,
             result=result,
             shift_range_per_dimension=self.values[_SHIFT_RANGE_LEAF],
             num_shifts_per_system=self.values[_NUM_SHIFTS_LEAF],
@@ -350,6 +361,10 @@ class _StateLeaves:
     @property
     def batch_ptr(self) -> Any:
         return self.values[_BATCH_PTR_LEAF]
+
+    @property
+    def fixed_cell_geometry(self) -> Any:
+        return self.values[_FIXED_CELL_GEOMETRY_LEAF]
 
     @property
     def initialized(self) -> Any:
@@ -472,6 +487,7 @@ class _Spec:
     return_distances: bool
     span_margin: float
     synthesized_cell: bool
+    fixed_cell: bool
     supports_compilation: bool
     compilation_blocker: str | None
     pair_fn: Any = None
@@ -606,6 +622,11 @@ class NeighborListState:
     def wrap_positions(self) -> bool:
         """Return whether applicable routes wrap positions before enumeration."""
         return self._spec.wrap_positions
+
+    @property
+    def fixed_cell(self) -> bool:
+        """Return whether repeated execution reuses prepared cell geometry."""
+        return self._spec.fixed_cell
 
     @property
     def selective(self) -> bool:
@@ -805,6 +826,40 @@ def _batch_indices(
     return jnp.zeros((num_atoms,), dtype=jnp.int32)
 
 
+def _fixed_cell_inverse(
+    cell: jax.Array,
+    positions: jax.Array,
+    *,
+    method: str,
+    strategy: str,
+    num_systems: int,
+) -> jax.Array:
+    """Prepare the route-precision inverse carried by a fixed-cell state.
+
+    Cell-list count/binning and tile-cooperative naive launchers use Warp's
+    ``wp.inverse`` implementation. Scalar JAX paths, including cluster
+    geometry and pair-output wrappers, use ``jnp.linalg.inv``.
+    """
+    dtype = positions.dtype if positions.dtype == jnp.float64 else jnp.float32
+    cell_batch = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
+    if method.startswith("batch_") and cell_batch.shape[0] == 1 and num_systems > 1:
+        cell_batch = jnp.broadcast_to(cell_batch, (num_systems, 3, 3))
+    cell_batch = cell_batch.astype(dtype)
+    uses_warp_inverse = "cell_list" in method or (
+        method in {"naive", "batch_naive"} and strategy == "tile"
+    )
+    if uses_warp_inverse:
+        inverse = jnp.zeros_like(cell_batch)
+        (inverse,) = _FIXED_CELL_INVERSE_REGISTRATION[dtype](
+            cell_batch,
+            inverse,
+            launch_dims=(num_systems,),
+        )
+    else:
+        inverse = jnp.linalg.inv(cell_batch)
+    return jax.lax.stop_gradient(inverse)
+
+
 def _synthetic_geometry(
     positions: jax.Array,
     batch_idx: jax.Array,
@@ -853,6 +908,7 @@ def _prepare_cluster_state(
     half_fill: bool,
     wrap_positions: bool,
     span_margin: float,
+    fixed_cell: bool,
     format: str,
     selective: bool,
     fill_value: int,
@@ -1077,6 +1133,54 @@ def _prepare_cluster_state(
     prepared_cell = (
         jnp.broadcast_to(cell, (systems, 3, 3)) if shared_batch_cell else cell
     )
+    fixed_cell_geometry = None
+    if fixed_cell:
+        from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+            _preload_cluster_tile_build_kernel,
+        )
+
+        cell_batch = prepared_cell if prepared_cell.ndim == 3 else prepared_cell[None]
+        cell_batch = jax.lax.stop_gradient(cell_batch.astype(jnp.float32))
+        inverse = jax.lax.stop_gradient(jnp.linalg.inv(cell_batch))
+        _preload_cluster_tile_build_kernel(device_source=cell_batch, fixed_cell=True)
+        qr_values = jnp.zeros((systems, 15), dtype=jnp.float32)
+        axis_aligned = jnp.zeros((systems,), dtype=jnp.bool_)
+        fractional_certified = jnp.zeros((systems,), dtype=jnp.bool_)
+        height_certified = jnp.zeros((systems,), dtype=jnp.bool_)
+        bbox_cutoff_bounds = jnp.zeros((systems, 3), dtype=jnp.float32)
+        build_cutoff = cutoff if cutoff2 is None else max(cutoff, cutoff2)
+        outer_cutoff_sq = float(
+            jnp.asarray(build_cutoff * build_cutoff, dtype=jnp.float32)
+        )
+        (
+            qr_values,
+            axis_aligned,
+            fractional_certified,
+            height_certified,
+            bbox_cutoff_bounds,
+        ) = _FIXED_CLUSTER_GEOMETRY_REGISTRATION[jnp.float32](
+            cell_batch,
+            inverse,
+            outer_cutoff_sq,
+            qr_values,
+            axis_aligned,
+            fractional_certified,
+            height_certified,
+            bbox_cutoff_bounds,
+            launch_dims=(systems,),
+        )
+        fixed_cell_geometry = (
+            inverse,
+            None,
+            None,
+            None,
+            None,
+            jax.lax.stop_gradient(qr_values),
+            jax.lax.stop_gradient(axis_aligned),
+            jax.lax.stop_gradient(fractional_certified),
+            jax.lax.stop_gradient(height_certified),
+            jax.lax.stop_gradient(bbox_cutoff_bounds),
+        )
     spec = _Spec(
         method=method,
         strategy="auto",
@@ -1099,6 +1203,7 @@ def _prepare_cluster_state(
         return_distances=bool(kwargs.get("return_distances", False)),
         span_margin=float(span_margin),
         synthesized_cell=False,
+        fixed_cell=fixed_cell,
         supports_compilation=(
             method != "batch_cluster_tile" and not (format == "coo" and not selective)
         ),
@@ -1135,6 +1240,7 @@ def _prepare_cluster_state(
             else batch_idx
         ),
         batch_ptr=batch_ptr,
+        fixed_cell_geometry=fixed_cell_geometry,
         result=outputs,
         shift_range_per_dimension=jnp.empty((0, 3), dtype=jnp.int32),
         num_shifts_per_system=jnp.empty((0,), dtype=jnp.int32),
@@ -1551,6 +1657,7 @@ def prepare_neighbor_list(
     target_indices: jax.Array | None = None,
     strategy: str = "auto",
     atom_centric_path: str = "auto",
+    fixed_cell: bool = False,
     **kwargs: Any,
 ) -> NeighborListState:
     """Resolve and allocate a reusable JAX neighbor-list route.
@@ -1623,6 +1730,10 @@ def prepare_neighbor_list(
         span plus this value; equality is allowed. A nonzero value requires
         ``cell=None`` and a resolved cell-list route. This is not a
         neighbor-list skin.
+    fixed_cell : bool, default=False
+        Reuse cell-dependent topology geometry prepared from ``cell``. When
+        true, the caller promises that runtime cell values remain unchanged;
+        this promise is not checked by comparing cell values.
     target_indices : jax.Array, shape (num_rows,), dtype=int32, optional
         Fixed compact source-row selection for routes that support partial
         rows.
@@ -1668,6 +1779,10 @@ def prepare_neighbor_list(
     NeighborListState : Inspect resolved configuration, results, and status.
     check_neighbor_list_state : Convert sticky device status to an exception.
     """
+    if not isinstance(fixed_cell, bool):
+        raise ValueError("fixed_cell must be a Python bool")
+    if fixed_cell and cell is None:
+        raise ValueError("fixed_cell=True requires an explicit cell")
     explicit_options = {
         "format": format,
         "max_neighbors": max_neighbors,
@@ -1735,6 +1850,7 @@ def prepare_neighbor_list(
             half_fill=bool(half_fill),
             wrap_positions=bool(wrap_positions),
             span_margin=span_margin,
+            fixed_cell=fixed_cell,
             format=fmt,
             selective=selective,
             fill_value=fv,
@@ -1753,6 +1869,7 @@ def prepare_neighbor_list(
         wrap_positions,
         selective,
         span_margin,
+        fixed_cell,
         kwargs,
         resolution,
     )
@@ -1770,6 +1887,7 @@ def _build_noncluster_state(
     wrap_positions: bool,
     selective: bool,
     span_margin: float,
+    fixed_cell: bool,
     kwargs: dict[str, Any],
     resolution: _PreparedResolution,
 ) -> NeighborListState:
@@ -1899,6 +2017,35 @@ def _build_noncluster_state(
     resolved_batch_idx = _batch_indices(batch_idx, batch_ptr, systems, n)
     span_capacity = jnp.zeros((systems, 3), dtype=positions.dtype)
     route_options = ()
+    fixed_cell_geometry = None
+    needs_fixed_inverse = fixed_cell and (
+        method in {"cell_list", "batch_cell_list"}
+        or (pbc is not None and wrap_positions)
+    )
+    fixed_inverse = (
+        _fixed_cell_inverse(
+            cell,
+            positions,
+            method=method,
+            strategy=str(kwargs.get("strategy", "auto")),
+            num_systems=systems,
+        )
+        if needs_fixed_inverse
+        else None
+    )
+    if fixed_cell:
+        fixed_cell_geometry = (
+            fixed_inverse,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     if method in {"cell_list", "batch_cell_list"}:
         if synthesized:
             shifted_positions, cell, spans = _synthetic_geometry(
@@ -1955,6 +2102,26 @@ def _build_noncluster_state(
             )
             cells_dim = build_result[0]
             search_radius = build_result[6]
+            if fixed_cell:
+                cells_per_system = jnp.prod(cells_dim, axis=1, dtype=jnp.int32)
+                cell_offsets = jnp.concatenate(
+                    (
+                        jnp.zeros((1,), dtype=jnp.int32),
+                        jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+                    )
+                )
+                fixed_cell_geometry = (
+                    fixed_inverse,
+                    jax.lax.stop_gradient(cells_dim),
+                    jax.lax.stop_gradient(search_radius),
+                    jax.lax.stop_gradient(cells_per_system),
+                    jax.lax.stop_gradient(cell_offsets),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             total_cells = int(jnp.sum(jnp.prod(cells_dim, axis=1)))
             radius_max = tuple(
                 int(value) for value in jnp.max(search_radius, axis=0).tolist()
@@ -1987,6 +2154,19 @@ def _build_noncluster_state(
             )
             cells_dim = build_result[0]
             search_radius = build_result[6]
+            if fixed_cell:
+                fixed_cell_geometry = (
+                    fixed_inverse,
+                    jax.lax.stop_gradient(cells_dim.reshape((1, 3))),
+                    jax.lax.stop_gradient(search_radius.reshape((1, 3))),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             radius = tuple(int(value) for value in search_radius.tolist())
             n_outer = compute_batch_pair_centric_n_outer(radius, bool(half_fill))
             route_options = (
@@ -2045,6 +2225,7 @@ def _build_noncluster_state(
         return_distances=bool(kwargs.get("return_distances", False)),
         span_margin=span_margin,
         synthesized_cell=synthesized,
+        fixed_cell=fixed_cell,
         supports_compilation=not eager_only,
         compilation_blocker=(
             "pair-centric cell geometry and pair outputs are eager-only"
@@ -2092,6 +2273,7 @@ def _build_noncluster_state(
         pbc=pbc,
         batch_idx=resolved_batch_idx if method.startswith("batch_") else batch_idx,
         batch_ptr=batch_ptr,
+        fixed_cell_geometry=fixed_cell_geometry,
         result=outputs,
         shift_range_per_dimension=shift_range_per_dimension,
         num_shifts_per_system=num_shifts_per_system,
@@ -2140,6 +2322,8 @@ def _execute_prepared_cluster_route(
         "cutoff2": state.cutoff2,
         "_return_status": True,
     }
+    if state.fixed_cell:
+        call["_fixed_cell_geometry"] = leaf_view.fixed_cell_geometry
 
     if state.selective:
         if "rebuild_flags" not in kwargs:
@@ -2392,6 +2576,22 @@ def _prepare_noncluster_route_execution(
         "fill_value": state.fill_value,
         "return_neighbor_list": state.format == "coo" and not selective_fixed_naive,
     }
+    if (
+        state.fixed_cell
+        and state.method
+        in {
+            "naive",
+            "batch_naive",
+            "naive_dual_cutoff",
+            "batch_naive_dual_cutoff",
+        }
+        and leaf_view.pbc is None
+    ):
+        # The explicit fixed cell remains stored and validated, but nonperiodic
+        # naive kernels do not consume it and reject cell without PBC.
+        call["cell"] = None
+    if state.fixed_cell:
+        call["_fixed_cell_geometry"] = leaf_view.fixed_cell_geometry
     if not dual:
         call.update(
             return_vectors=state.return_vectors,
@@ -2463,6 +2663,7 @@ def _prepare_noncluster_route_execution(
             "batch_naive_dual_cutoff",
         }
         and leaf_view.pbc is not None
+        and not state.fixed_cell
     ):
         runtime_cell = call["cell"]
         if runtime_cell.ndim == 2:

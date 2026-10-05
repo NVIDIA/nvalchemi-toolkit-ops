@@ -234,6 +234,111 @@ torch.cuda.synchronize()
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_cell_list_compiled_coverage_failure_isolated_process() -> None:
+    """Compiled insufficient cell-list radius fails in a fresh process."""
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            """
+import torch
+from nvalchemiops.torch.neighbors import neighbor_list, prepare_neighbor_list
+
+positions = torch.tensor([[0.1, 0.1, 0.1], [1.05, 0.1, 0.1]], device='cuda')
+prepared_cell = torch.eye(3, device='cuda') * 8.0
+runtime_cell = torch.eye(3, device='cuda') * 2.0
+pbc = torch.ones(3, dtype=torch.bool, device='cuda')
+state = prepare_neighbor_list(
+    positions, 1.0, cell=prepared_cell, pbc=pbc,
+    method='cell_list', strategy='atom_centric', max_neighbors=32,
+)
+
+@torch.compile(fullgraph=True)
+def run(values, box):
+    return neighbor_list(values, cell=box, state=state)
+
+run(positions, prepared_cell)
+run(positions, runtime_cell)
+torch.cuda.synchronize()
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "cell-list search coverage" in result.stderr
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_batch_cell_list_fullgraph_guards_selected_systems() -> None:
+    """Compiled selected rebuilds accept covered changes and preserve others."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.4, 0.1, 0.1], [0.1, 0.1, 0.1], [0.4, 0.1, 0.1]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1) * 8.0
+    pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_cell_list",
+        strategy="atom_centric",
+        max_neighbors=32,
+        selective=True,
+    )
+    flags = torch.ones(2, dtype=torch.bool, device="cuda")
+
+    @torch.compile(fullgraph=True)
+    def run(
+        values: torch.Tensor, boxes: torch.Tensor, rebuild: torch.Tensor
+    ) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, cell=boxes, state=state, rebuild_flags=rebuild)
+
+    initial = run(positions, cell, flags)
+    preserved_rows = tuple(value[2:].clone() for value in initial[:3])
+    runtime_cell = cell.clone()
+    runtime_cell[0].mul_(0.5)
+    runtime_cell[1, 0, 0] = 0.8
+    selected = run(
+        positions,
+        runtime_cell,
+        torch.tensor([True, False], dtype=torch.bool, device="cuda"),
+    )
+    direct = neighbor_list(
+        positions,
+        1.0,
+        cell=runtime_cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        max_neighbors=32,
+        fill_value=state.fill_value,
+    )
+    selected_matrix = selected[0][:2].clone()
+    direct_matrix = direct[0][:2].clone()
+    for row, count in enumerate(selected[1][:2].tolist()):
+        selected_matrix[row, count:] = state.fill_value
+        direct_matrix[row, count:] = state.fill_value
+    assert_neighbor_matrix_equal(
+        (selected_matrix, selected[1][:2], selected[2][:2]),
+        (direct_matrix, direct[1][:2], direct[2][:2]),
+    )
+    for actual, expected in zip(
+        (value[2:] for value in selected[:3]), preserved_rows, strict=True
+    ):
+        torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_guard_preserves_geometry_backward() -> None:
     """The periodic coverage guard preserves eager coordinate gradients."""
     positions = torch.tensor(

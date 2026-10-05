@@ -21,10 +21,15 @@ import math
 from dataclasses import dataclass
 
 import torch
+import warp as wp
 
 from nvalchemiops.neighbors.base_dispatch import neighbor_list_strategy_run_args
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
-from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.neighbors.neighbor_utils import (
+    compute_inv_cells,
+    estimate_max_neighbors,
+)
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 from nvalchemiops.torch.neighbors._cluster_tile_state import (
     _ClusterTileStorage,
     _execute_cluster_tile_storage,
@@ -34,6 +39,7 @@ from nvalchemiops.torch.neighbors._dispatch import (
     _auto_method_from_geometry,
     _reject_unsupported_cluster_tile_combo,
 )
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors._naive_prepared_guard import (
     check_prepared_naive_shift_coverage,
 )
@@ -42,7 +48,10 @@ from nvalchemiops.torch.neighbors.batch_cell_list import estimate_batch_cell_lis
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     estimate_batch_max_tiles_per_group,
 )
-from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
+from nvalchemiops.torch.neighbors.cell_list import (
+    _check_prepared_cell_list_radius_coverage,
+    estimate_cell_list_sizes,
+)
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
     compute_naive_num_shifts,
@@ -50,6 +59,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
 )
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype
 
 __all__ = ["NeighborListState", "prepare_neighbor_list"]
 
@@ -72,6 +82,7 @@ _CONFIGURATION_FIELDS = frozenset(
         "return_vectors",
         "return_distances",
         "span_margin",
+        "fixed_cell",
         "supports_compilation",
         "compilation_blocker",
     }
@@ -233,6 +244,7 @@ class _PreparedRouteConfig:
     return_vectors: bool
     return_distances: bool
     span_margin: float
+    fixed_cell: bool
     supports_compilation: bool
     compilation_blocker: str | None
     route: str
@@ -269,6 +281,7 @@ class _PreparedStorage:
     geometry_buffers: dict[str, torch.Tensor]
     span_capacity: torch.Tensor | None
     synthesized_cell: bool
+    fixed_cell_geometry: _FixedCellGeometry | None
     exemplar_positions: torch.Tensor
     initialized: torch.Tensor
 
@@ -299,6 +312,7 @@ def _build_prepared_state(
         return_vectors=config.return_vectors,
         return_distances=config.return_distances,
         span_margin=config.span_margin,
+        fixed_cell=config.fixed_cell,
         supports_compilation=config.supports_compilation,
         compilation_blocker=config.compilation_blocker,
         device=metadata.device,
@@ -323,6 +337,7 @@ def _build_prepared_state(
         geometry_buffers=storage.geometry_buffers,
         span_capacity=storage.span_capacity,
         synthesized_cell=storage.synthesized_cell,
+        fixed_cell_geometry=storage.fixed_cell_geometry,
         exemplar_positions=storage.exemplar_positions,
         initialized=storage.initialized,
         cluster_storage=cluster_storage,
@@ -512,6 +527,7 @@ class NeighborListState:
         "_geometry_buffers",
         "_span_capacity",
         "_synthesized_cell",
+        "_fixed_cell_geometry",
         "_exemplar_positions",
         "_initialized",
         "_latest",
@@ -541,6 +557,7 @@ class NeighborListState:
         return_vectors: bool,
         return_distances: bool,
         span_margin: float,
+        fixed_cell: bool,
         supports_compilation: bool,
         compilation_blocker: str | None,
         device: torch.device,
@@ -565,6 +582,7 @@ class NeighborListState:
         geometry_buffers: dict[str, torch.Tensor],
         span_capacity: torch.Tensor | None,
         synthesized_cell: bool,
+        fixed_cell_geometry: _FixedCellGeometry | None,
         exemplar_positions: torch.Tensor,
         initialized: torch.Tensor,
         cluster_storage: _ClusterTileStorage | None,
@@ -590,6 +608,7 @@ class NeighborListState:
         self.return_vectors = return_vectors
         self.return_distances = return_distances
         self.span_margin = span_margin
+        self.fixed_cell = fixed_cell
         self.supports_compilation = supports_compilation
         self.compilation_blocker = compilation_blocker
         self._device = device
@@ -619,6 +638,7 @@ class NeighborListState:
         self._geometry_buffers = geometry_buffers
         self._span_capacity = span_capacity
         self._synthesized_cell = synthesized_cell
+        self._fixed_cell_geometry = fixed_cell_geometry
         self._exemplar_positions = exemplar_positions
         self._initialized = initialized
         initial = {name: None for name in _RESULT_NAMES}
@@ -626,7 +646,7 @@ class NeighborListState:
         # storage inspectable before first execution, while exact COO remains
         # absent until its first dynamically-sized result is returned.
         if format != "coo" or coo_layout == "segmented":
-            visible = set(name for name in output_names if name is not None)
+            visible = {name for name in output_names if name is not None}
             if _is_cluster_route(route):
                 visible.update(
                     {
@@ -911,7 +931,7 @@ def _validate_cell_runtime(cell: torch.Tensor | None, state: NeighborListState) 
         if cell is not None:
             raise ValueError("prepared nonperiodic state requires cell=None")
         return
-    if state._cell is None:
+    if state._cell_shape is None:
         if cell is not None:
             raise ValueError("prepared state does not accept a runtime cell")
         return
@@ -923,6 +943,71 @@ def _validate_cell_runtime(cell: torch.Tensor | None, state: NeighborListState) 
         raise ValueError("cell dtype does not match prepared state")
     if cell.device != state._device:
         raise ValueError("cell device does not match prepared state")
+
+
+def _prepare_fixed_cell_inverse(
+    cell: torch.Tensor, output: torch.Tensor | None = None
+) -> torch.Tensor:
+    """Compute a detached inverse cache with the existing Warp implementation."""
+    cell_batch = (cell if cell.ndim == 3 else cell.unsqueeze(0)).detach().contiguous()
+    inv_cell = torch.empty_like(cell_batch) if output is None else output
+    wp_cell = wp.from_torch(
+        cell_batch,
+        dtype=get_wp_mat_dtype(cell.dtype),
+        requires_grad=False,
+        return_ctype=True,
+    )
+    wp_inv_cell = wp.from_torch(
+        inv_cell,
+        dtype=get_wp_mat_dtype(cell.dtype),
+        requires_grad=False,
+        return_ctype=True,
+    )
+    with scoped_warp_stream(str(cell.device)):
+        compute_inv_cells(
+            wp_cell,
+            wp_inv_cell,
+            get_wp_dtype(cell.dtype),
+            str(cell.device),
+        )
+    return inv_cell
+
+
+def _initialize_prepared_cell_list_grid(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    buffers: dict[str, torch.Tensor],
+    *,
+    cutoff: float,
+    route: str,
+    num_systems: int,
+) -> None:
+    """Populate fixed cell-grid metadata without building neighbor results."""
+    cell_batch = (cell if cell.ndim == 3 else cell.unsqueeze(0)).detach()
+    pbc_batch = (pbc if pbc.ndim == 2 else pbc.unsqueeze(0)).detach()
+    _check_prepared_cell_list_radius_coverage(
+        cell_batch,
+        # The guard uses the builder's static grid rule and checks that the
+        # prepared query radii cover the resulting grid.
+        cutoff,
+        pbc_batch,
+        buffers["cells_per_dimension"],
+        buffers["neighbor_search_radius"],
+        torch.ones(num_systems, dtype=torch.bool, device=positions.device),
+        torch.empty(num_systems, dtype=torch.int32, device=positions.device),
+        route == "batch_cell_list",
+        buffers["atoms_per_cell_count"].numel(),
+        4,
+    )
+    if route == "batch_cell_list":
+        cells_per_system = buffers["cells_per_dimension"].prod(dim=1, dtype=torch.int32)
+        buffers["cells_per_system"] = cells_per_system
+        buffers["cell_offsets"].zero_()
+        if num_systems > 1:
+            buffers["cell_offsets"][1:].copy_(
+                torch.cumsum(cells_per_system[:-1], dim=0, dtype=torch.int32)
+            )
 
 
 def _prepared_synthetic_geometry(
@@ -998,6 +1083,7 @@ def _prepare_buffers(
     target_indices: torch.Tensor | None,
     cell_strategy: str,
     num_systems: int,
+    fixed_cell: bool = False,
     cluster_storage: _ClusterTileStorage | None = None,
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     device = positions.device
@@ -1064,7 +1150,7 @@ def _prepare_buffers(
     elif route in ("cell_list", "batch_cell_list"):
         if cell is None or pbc is None:
             raise ValueError("prepared cell-list route requires resolved cell and pbc")
-        minimum = 1 if cell_strategy == "atom_centric" else 4
+        minimum = 4 if fixed_cell or cell_strategy != "atom_centric" else 1
         if route == "cell_list":
             max_cells, radius = estimate_cell_list_sizes(
                 cell, pbc, cutoff, min_cells_per_dimension=minimum
@@ -1089,6 +1175,20 @@ def _prepare_buffers(
                     allocate_cell_list(num_atoms, max_cells, radius, device),
                 )
             )
+        )
+        if fixed_cell:
+            buffers["inv_cell_buffer"] = torch.empty(
+                (num_systems, 3, 3), dtype=positions.dtype, device=device
+            )
+            if route == "batch_cell_list":
+                buffers["cell_offsets"] = torch.empty(
+                    num_systems, dtype=torch.int32, device=device
+                )
+        buffers["cell_list_guard_flags"] = torch.ones(
+            num_systems, dtype=torch.bool, device=device
+        )
+        buffers["cell_list_guard_status"] = torch.empty(
+            num_systems, dtype=torch.int32, device=device
         )
         buffers.update(
             neighbor_matrix=torch.empty(
@@ -1298,6 +1398,8 @@ def _route_kwargs(
     kwargs: dict[str, object] = dict(state._buffers)
     kwargs.pop("naive_guard_flags", None)
     kwargs.pop("naive_guard_status", None)
+    kwargs.pop("cell_list_guard_flags", None)
+    kwargs.pop("cell_list_guard_status", None)
     dual = state._route in ("naive_dual_cutoff", "batch_naive_dual_cutoff")
     if dual:
         # The direct dual-cutoff kernels retain their historical ``*1``
@@ -1316,6 +1418,13 @@ def _route_kwargs(
         )
     if state._route in ("naive", "batch_naive", "cell_list", "batch_cell_list"):
         kwargs["target_indices"] = state._target_indices
+    if state.fixed_cell:
+        kwargs["_fixed_cell_geometry"] = state._fixed_cell_geometry
+        if state._route in ("cell_list", "batch_cell_list"):
+            kwargs.pop("inv_cell_buffer", None)
+            if state._route == "batch_cell_list":
+                kwargs.pop("cells_per_system", None)
+                kwargs.pop("cell_offsets", None)
     return kwargs
 
 
@@ -1334,12 +1443,16 @@ def _execute_route(
             raise RuntimeError("prepared cluster-tile state is missing private storage")
         if cell is None:
             raise RuntimeError("prepared cluster-tile execution requires cell metadata")
+        storage_cell = cell
+        if state.fixed_cell and state._cell_is_shared:
+            storage_cell = cell.expand(state.num_systems, -1, -1)
         return _execute_cluster_tile_storage(
             positions,
-            cell,
+            storage_cell,
             state._cluster_storage,
             rebuild_flags=rebuild_flags,
             pair_params=pair_params,
+            _live_cell=cell,
         )
     kwargs["rebuild_flags"] = rebuild_flags
     return_neighbor_list = state._return_neighbor_list
@@ -1351,7 +1464,10 @@ def _execute_route(
         return naive_neighbor_list(
             positions,
             state.cutoff,
-            cell=cell,
+            # An explicit fixed cell with no PBC is retained in the prepared
+            # state for runtime metadata validation, but the direct nonperiodic
+            # naive API requires that unused cell metadata be omitted.
+            cell=cell if pbc is not None else None,
             pbc=pbc,
             max_neighbors=state._max_neighbors,
             half_fill=state.half_fill,
@@ -1370,7 +1486,7 @@ def _execute_route(
             batch_idx=state._batch_idx,
             batch_ptr=state._batch_ptr,
             pbc=pbc,
-            cell=cell,
+            cell=cell if pbc is not None else None,
             max_neighbors=state._max_neighbors,
             max_atoms_per_system=state._max_atoms_per_system,
             half_fill=state.half_fill,
@@ -1390,7 +1506,7 @@ def _execute_route(
             state.cutoff,
             state.cutoff2,
             pbc=pbc,
-            cell=cell,
+            cell=cell if pbc is not None else None,
             max_neighbors1=state._max_neighbors,
             max_neighbors2=state._max_neighbors2,
             half_fill=state.half_fill,
@@ -1411,7 +1527,7 @@ def _execute_route(
             batch_idx=state._batch_idx,
             batch_ptr=state._batch_ptr,
             pbc=pbc,
-            cell=cell,
+            cell=cell if pbc is not None else None,
             max_neighbors1=state._max_neighbors,
             max_neighbors2=state._max_neighbors2,
             half_fill=state.half_fill,
@@ -1564,6 +1680,7 @@ def prepare_neighbor_list(
     return_vectors: bool = False,
     return_distances: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
     pair_fn: object | None = None,
     span_margin: float = 0.0,
     target_indices: torch.Tensor | None = None,
@@ -1628,6 +1745,9 @@ def prepare_neighbor_list(
     selective : bool, default=False
         Prepare a route that updates only systems selected by runtime
         ``rebuild_flags``.
+    fixed_cell : bool, default=False
+        Treat the supplied cell values as immutable for the lifetime of this
+        state and cache cell-derived topology metadata during preparation.
     pair_fn : warp.Function or CompiledPairFn, optional
         Warp pair function using the direct neighbor-route callback contract.
         Runtime ``pair_params`` are supplied to :func:`neighbor_list`.
@@ -1699,6 +1819,10 @@ def prepare_neighbor_list(
         raise ValueError("return_vectors and return_distances must be Boolean values")
     if not isinstance(selective, bool):
         raise ValueError("selective must be a Boolean")
+    if not isinstance(fixed_cell, bool):
+        raise ValueError("fixed_cell must be a Boolean")
+    if fixed_cell and cell is None:
+        raise ValueError("fixed_cell=True requires an explicit cell")
     if target_indices is not None and (
         target_indices.dtype != torch.int32
         or target_indices.device != positions.device
@@ -1840,6 +1964,7 @@ def prepare_neighbor_list(
         )
     cell_shape = tuple(resolved_cell.shape) if resolved_cell is not None else None
     cell_is_shared = route == "batch_cluster_tile" and cell_shape == (3, 3)
+    state_cell = resolved_cell
     if resolved_cell is not None:
         if (
             resolved_cell.dtype != positions.dtype
@@ -1865,7 +1990,7 @@ def prepare_neighbor_list(
         "naive_dual_cutoff",
         "batch_naive_dual_cutoff",
     ):
-        if resolved_cell is not None and resolved_pbc is None:
+        if resolved_cell is not None and resolved_pbc is None and not fixed_cell:
             raise ValueError("pbc is required when cell is provided")
         if resolved_cell is None and resolved_pbc is not None:
             raise ValueError("cell is required when pbc is provided")
@@ -1931,6 +2056,7 @@ def prepare_neighbor_list(
             return_distances=return_distances,
             pair_fn=pair_fn,
             max_tiles_per_group=max_tiles_per_group,
+            fixed_cell=fixed_cell,
         )
     buffers, geometry = _prepare_buffers(
         positions=positions,
@@ -1951,8 +2077,63 @@ def prepare_neighbor_list(
         target_indices=target_indices,
         cell_strategy=cell_strategy,
         num_systems=num_systems,
+        fixed_cell=fixed_cell,
         cluster_storage=cluster_storage,
     )
+    fixed_cell_geometry = None
+    if fixed_cell:
+        if _is_cluster_route(route):
+            if cluster_storage is None:
+                raise RuntimeError("prepared cluster-tile storage was not initialized")
+            fixed_cell_geometry = cluster_storage._fixed_cell_geometry
+        elif route in (
+            "naive",
+            "batch_naive",
+            "naive_dual_cutoff",
+            "batch_naive_dual_cutoff",
+        ) and (resolved_pbc is None or not wrap_positions):
+            # Non-periodic execution and prewrapped PBC execution do not use
+            # an inverse cell, so avoid preparing an unused cache.
+            fixed_cell_geometry = None
+        else:
+            if resolved_cell is None:
+                raise RuntimeError("fixed-cell preparation is missing cell metadata")
+            inv_cell = _prepare_fixed_cell_inverse(
+                resolved_cell,
+                output=buffers["inv_cell_buffer"],
+            )
+            cell_geometry_kwargs: dict[str, torch.Tensor | None] = {}
+            if route in ("cell_list", "batch_cell_list"):
+                if resolved_pbc is None:
+                    raise RuntimeError(
+                        "prepared cell-list state is missing pbc metadata"
+                    )
+                _initialize_prepared_cell_list_grid(
+                    positions,
+                    resolved_cell,
+                    resolved_pbc,
+                    buffers,
+                    cutoff=float(cutoff),
+                    route=route,
+                    num_systems=num_systems,
+                )
+                cell_geometry_kwargs = {
+                    "cells_per_dimension": buffers["cells_per_dimension"].reshape(
+                        num_systems, 3
+                    ),
+                    "neighbor_search_radius": buffers["neighbor_search_radius"].reshape(
+                        num_systems, 3
+                    ),
+                }
+                if route == "batch_cell_list":
+                    cell_geometry_kwargs.update(
+                        cells_per_system=buffers["cells_per_system"],
+                        cell_offsets=buffers["cell_offsets"],
+                    )
+            fixed_cell_geometry = _FixedCellGeometry(
+                inv_cell=inv_cell,
+                **cell_geometry_kwargs,
+            )
     public_output_names = _layout(
         route,
         format,
@@ -2009,6 +2190,7 @@ def prepare_neighbor_list(
         return_vectors=return_vectors,
         return_distances=return_distances,
         span_margin=span_margin,
+        fixed_cell=fixed_cell,
         supports_compilation=supports_compilation,
         compilation_blocker=blocker,
         route=route,
@@ -2017,7 +2199,7 @@ def prepare_neighbor_list(
         device=positions.device,
         dtype=positions.dtype,
         pbc=resolved_pbc,
-        cell=resolved_cell,
+        cell=(state_cell if fixed_cell and cell_is_shared else resolved_cell),
         cell_shape=cell_shape,
         cell_is_shared=cell_is_shared,
         batch_idx=protected_batch_idx,
@@ -2052,6 +2234,7 @@ def prepare_neighbor_list(
         geometry_buffers=geometry,
         span_capacity=span_capacity,
         synthesized_cell=synthesized,
+        fixed_cell_geometry=fixed_cell_geometry,
         exemplar_positions=exemplar_positions.detach().clone(),
         initialized=initialized,
     )
@@ -2107,10 +2290,11 @@ def _execute_prepared_neighbor_list(
             call_positions = positions
             call_cell = state._cell if cell is None else cell
             call_pbc = state._pbc
-            if state._cell_is_shared:
+            if state._cell_is_shared and not state.fixed_cell:
                 call_cell = call_cell.expand(state.num_systems, -1, -1).contiguous()
         if (
-            state._route
+            not state.fixed_cell
+            and state._route
             in (
                 "naive",
                 "batch_naive",
@@ -2133,6 +2317,28 @@ def _execute_prepared_neighbor_list(
                 state._buffers["shift_range_per_dimension"],
                 guard_flags,
                 state._buffers["naive_guard_status"],
+            )
+        if not state.fixed_cell and state._route in ("cell_list", "batch_cell_list"):
+            guard_cell = call_cell if call_cell.ndim == 3 else call_cell.unsqueeze(0)
+            guard_pbc = call_pbc if call_pbc.ndim == 2 else call_pbc.unsqueeze(0)
+            guard_flags = (
+                rebuild_flags
+                if rebuild_flags is not None
+                else state._buffers["cell_list_guard_flags"]
+            )
+            _check_prepared_cell_list_radius_coverage(
+                guard_cell,
+                state.cutoff,
+                guard_pbc,
+                state._buffers["cells_per_dimension"],
+                state._buffers["neighbor_search_radius"],
+                guard_flags,
+                state._buffers["cell_list_guard_status"],
+                state._route == "batch_cell_list",
+                state._buffers["atoms_per_cell_count"].numel(),
+                # Prepared calls pass cached grid buffers, so both builders use
+                # their four-cell minimum regardless of query strategy.
+                4,
             )
         output = _execute_route(
             call_positions,

@@ -29,7 +29,11 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.torch.neighbors import compile_pair_fn
+from nvalchemiops.torch.neighbors import (
+    compile_pair_fn,
+    neighbor_list,
+    prepare_neighbor_list,
+)
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
     batch_query_cell_list,
@@ -976,6 +980,97 @@ def test_compiled_pair_fn_batch_naive_pbc_fullgraph_matrix(device):
         positions, nm, nms, nn, nv, nd, pe, pf
     )
     _check_pair_outputs(nm_out, nn_out, nv_out, nd_out, pe_out, pf_out, pp)
+
+
+@pytest.mark.gpu
+def test_prepared_fixed_cell_compiled_pair_fn_naive_pbc(device):
+    """Prepared fixed-cell single naive invokes a compiled pair callback."""
+    _skip_without_cuda(device)
+    positions, cell, pbc = _single_system_pbc(device)
+    max_neighbors = 8
+    pair_fn = _compiled_pair_fn("prepared_fixed_naive_pbc")
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        fixed_cell=True,
+        max_neighbors=max_neighbors,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=pair_fn,
+    )
+    pair_params = (
+        (torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0)
+        * 0.5
+    ).reshape(-1, 1)
+
+    neighbor_list(positions, state=state, pair_params=pair_params)
+
+    assert state.neighbor_matrix is not None
+    assert state.num_neighbors is not None
+    assert state.neighbor_vectors is not None
+    assert state.neighbor_distances is not None
+    assert state.pair_energies is not None
+    assert state.pair_forces is not None
+    _check_pair_outputs(
+        state.neighbor_matrix,
+        state.num_neighbors,
+        state.neighbor_vectors,
+        state.neighbor_distances,
+        state.pair_energies,
+        state.pair_forces,
+        pair_params,
+    )
+
+
+@pytest.mark.gpu
+def test_prepared_fixed_cell_compiled_pair_fn_batch_naive_pbc(device):
+    """Prepared fixed-cell batch naive invokes a compiled pair callback."""
+    _skip_without_cuda(device)
+    one_system, one_cell, one_pbc = _single_system_pbc(device)
+    positions = torch.cat((one_system, one_system + 1.5))
+    cell = one_cell.repeat(2, 1, 1)
+    pbc = one_pbc.repeat(2, 1)
+    batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device=device)
+    max_neighbors = 8
+    pair_fn = _compiled_pair_fn("prepared_fixed_batch_naive_pbc")
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        fixed_cell=True,
+        max_neighbors=max_neighbors,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=pair_fn,
+    )
+    pair_params = (
+        (torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0)
+        * 0.5
+    ).reshape(-1, 1)
+
+    neighbor_list(positions, state=state, pair_params=pair_params)
+
+    assert state.neighbor_matrix is not None
+    assert state.num_neighbors is not None
+    assert state.neighbor_vectors is not None
+    assert state.neighbor_distances is not None
+    assert state.pair_energies is not None
+    assert state.pair_forces is not None
+    _check_pair_outputs(
+        state.neighbor_matrix,
+        state.num_neighbors,
+        state.neighbor_vectors,
+        state.neighbor_distances,
+        state.pair_energies,
+        state.pair_forces,
+        pair_params,
+    )
 
 
 def test_compiled_pair_fn_cell_list_fullgraph_matrix(device):

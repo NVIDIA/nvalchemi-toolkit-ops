@@ -20,9 +20,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import torch
+import warp as wp
 
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    prepare_cluster_tile_geometry as wp_prepare_cluster_tile_geometry,
+)
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
     _batch_cluster_tile_neighbor_list_impl,
@@ -87,6 +93,8 @@ class _ClusterTileStorage:
     _pair_energies: torch.Tensor | None = field(repr=False)
     _pair_forces: torch.Tensor | None = field(repr=False)
     _inv_cell: torch.Tensor = field(repr=False)
+    fixed_cell: bool
+    _fixed_cell_geometry: _FixedCellGeometry | None = field(repr=False)
     _selective_state: tuple[torch.Tensor, ...] = field(repr=False)
 
     @property
@@ -180,6 +188,7 @@ def _allocate_matrix_topology(
     return (*primary, *allocate_one()) if dual_cutoff else primary
 
 
+@scoped_torch_warp_stream
 def _prepare_cluster_tile_storage(
     positions: torch.Tensor,
     cutoff: float,
@@ -196,6 +205,7 @@ def _prepare_cluster_tile_storage(
     return_distances: bool = False,
     pair_fn: object | None = None,
     max_tiles_per_group: int | None = None,
+    fixed_cell: bool = False,
 ) -> _ClusterTileStorage:
     """Allocate reusable storage for a fixed cluster-tile configuration.
 
@@ -397,6 +407,76 @@ def _prepare_cluster_tile_storage(
         if protected_batch_ptr is not None
         else torch.empty((3, 3), dtype=positions.dtype, device=positions.device)
     )
+    fixed_cell_geometry = None
+    if fixed_cell:
+        cell_mat = cell[0] if protected_batch_ptr is None and cell.ndim == 3 else cell
+        inv_cell_mat, info = torch.linalg.inv_ex(cell_mat.detach(), check_errors=False)
+        torch._assert_async((info == 0).all(), "cell matrix must be non-singular")
+        inv_cell.copy_(inv_cell_mat.detach())
+        cell_batch = (
+            cell_mat.detach().unsqueeze(0) if cell_mat.ndim == 2 else cell_mat.detach()
+        )
+        inv_cell_batch = inv_cell.reshape(-1, 3, 3)
+        qr = torch.empty(
+            (cell_batch.shape[0], 15), dtype=torch.float32, device=positions.device
+        )
+        axis_aligned = torch.empty(
+            cell_batch.shape[0], dtype=torch.bool, device=positions.device
+        )
+        fractional_rounding_certified = torch.empty_like(axis_aligned)
+        qr_height_certified = torch.empty_like(axis_aligned)
+        bbox_cutoff_bounds = torch.empty(
+            (cell_batch.shape[0], 3), dtype=torch.float32, device=positions.device
+        )
+        wp_prepare_cluster_tile_geometry(
+            cell=wp.from_torch(
+                cell_batch.contiguous(),
+                dtype=wp.mat33f,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            inv_cell=wp.from_torch(
+                inv_cell_batch.contiguous(),
+                dtype=wp.mat33f,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            outer_cutoff_sq=float(build_cutoff * build_cutoff),
+            qr=wp.from_torch(
+                qr, dtype=wp.float32, requires_grad=False, return_ctype=True
+            ),
+            axis_aligned=wp.from_torch(
+                axis_aligned, dtype=wp.bool, requires_grad=False, return_ctype=True
+            ),
+            fractional_rounding_certified=wp.from_torch(
+                fractional_rounding_certified,
+                dtype=wp.bool,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            qr_height_certified=wp.from_torch(
+                qr_height_certified,
+                dtype=wp.bool,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            bbox_cutoff_bounds=wp.from_torch(
+                bbox_cutoff_bounds,
+                dtype=wp.float32,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            device=str(positions.device),
+        )
+        fixed_cell_geometry = _FixedCellGeometry(
+            inv_cell=inv_cell.reshape(-1, 3, 3),
+            cell=cell_batch.contiguous(),
+            qr=qr,
+            axis_aligned=axis_aligned,
+            fractional_rounding_certified=fractional_rounding_certified,
+            qr_height_certified=qr_height_certified,
+            bbox_cutoff_bounds=bbox_cutoff_bounds,
+        )
     selective_state: tuple[torch.Tensor, ...] = ()
     if protected_batch_ptr is not None and (selective or format == "coo"):
         _, tile_offsets, _, _ = estimate_batch_cluster_tile_segments(
@@ -450,6 +530,8 @@ def _prepare_cluster_tile_storage(
         _pair_energies=pair_energies,
         _pair_forces=pair_forces,
         _inv_cell=inv_cell,
+        fixed_cell=fixed_cell,
+        _fixed_cell_geometry=fixed_cell_geometry,
         _selective_state=selective_state,
     )
 
@@ -461,6 +543,7 @@ def _execute_cluster_tile_storage(
     *,
     rebuild_flags: torch.Tensor | None = None,
     pair_params: torch.Tensor | None = None,
+    _live_cell: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Execute a previously prepared cluster-tile configuration.
 
@@ -524,6 +607,11 @@ def _execute_cluster_tile_storage(
         raise TypeError("cell dtype does not match prepared state")
     if cell.device != state.device:
         raise ValueError("cell device does not match prepared state")
+    if state.fixed_cell and state._fixed_cell_geometry is not None:
+        if state._fixed_cell_geometry.cell is None:
+            raise RuntimeError("prepared cluster geometry cache is missing its cell")
+        _live_cell = _live_cell if _live_cell is not None else cell
+        cell = state._fixed_cell_geometry.cell
     if rebuild_flags is not None and not state.selective:
         raise ValueError("rebuild_flags requires a selective _ClusterTileStorage")
     if state.selective and rebuild_flags is None:
@@ -676,7 +764,9 @@ def _execute_cluster_tile_storage(
                 if state.selective or state.format == "coo"
                 else None
             ),
-            force_compute_inv_cell=True,
+            force_compute_inv_cell=not state.fixed_cell,
+            _fixed_cell_geometry=state._fixed_cell_geometry,
+            _live_cell=_live_cell,
             **matrix_kwargs,
             **coo_kwargs,
         )
@@ -739,7 +829,9 @@ def _execute_cluster_tile_storage(
         tile_col_group=tile_col_group,
         rebuild_flags=rebuild_flags,
         eager_rebuild_count=eager_rebuild_count,
-        force_compute_inv_cell=True,
+        force_compute_inv_cell=not state.fixed_cell,
+        _fixed_cell_geometry=state._fixed_cell_geometry,
+        _live_cell=_live_cell,
         **matrix_kwargs,
         **coo_kwargs,
     )
