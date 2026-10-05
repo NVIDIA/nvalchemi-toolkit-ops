@@ -10,11 +10,9 @@
   the device's FP64 rate (overridable via
   `NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`). `neighbor_list(method=None)` may now
   resolve to a different, faster strategy; explicit `method=` is unaffected.
-- JAX neighbor APIs moved toward Torch parity: `estimate_neighbor_list_costs`
-  takes optional `cell`/`pbc` with `positions` for free boundaries,
-  `batch_cell_list` accepts `neighbor_matrix` and `num_neighbors`, and the
-  cluster-tile `previous_*` buffer parameters were renamed to match Torch. The
-  old spellings still work and emit a `DeprecationWarning`.
+- JAX `estimate_neighbor_list_costs` and `suggest_neighbor_list_method` now take
+  optional `cell`/`pbc`, with `positions` supplied instead for free-boundary
+  systems, matching the Torch signature.
 - Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
   APIs. Naive and cell-list methods, including batched variants, accept
   ``coo_capacity`` for padded COO output with clipped pointers, raw required row
@@ -87,13 +85,6 @@
   fixed captured inverse, sort, build, query, and tail sequence even when every
   selective flag is false. Capture covers forward matrix topology, not geometry
   or backward execution.
-- Added `prepare_neighbor_list_method` to the Torch and JAX neighbor APIs, the
-  preallocation companion to `suggest_neighbor_list_method`. It resolves the
-  strategy, sizes capacities and grids, and allocates every buffer the strategy
-  needs, returning a mapping that splats into `neighbor_list`. JAX buffers are
-  donated for XLA aliasing rather than written in place, so results come from
-  the return value. `estimate_max_neighbors` gained `fluctuation_sigma`
-  (default `0.0`, unchanged behaviour) to allow for rows above the mean.
 
 ### Changed
 
