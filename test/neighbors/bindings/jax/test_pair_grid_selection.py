@@ -92,10 +92,10 @@ def test_public_eager_selector_matches_pairs(batched, compact, dtype, skew, stra
             positions=jnp.asarray(base * scale, dtype=dtype),
             cell=jnp.asarray(np.tile(cell[None], (systems, 1, 1)) * scale, dtype=dtype),
         )
-        reference = call(**kwargs, strategy="atom_centric")
+        reference = call(grid_policy="adaptive", **kwargs, strategy="atom_centric")
         profiler = cProfile.Profile()
         with profiler:
-            actual = call(**kwargs, strategy=strategy)
+            actual = call(grid_policy="adaptive", **kwargs, strategy=strategy)
             jax.block_until_ready(actual)
         selections = sum(
             e.callcount
@@ -144,10 +144,10 @@ def test_static_launch_metadata_keeps_existing_grid(batched, compiled):
             pair_centric_total_cells=int(np.prod(np.asarray(built[0]), axis=1).sum()),
             pair_centric_r_max=radius,
         )
-    reference = call(positions, **common)
+    reference = call(positions, grid_policy="adaptive", **common)
 
     def query(pos):
-        return call(pos, **common)
+        return call(pos, grid_policy="adaptive", **common)
 
     query_fn = jax.jit(query) if compiled else query
     profiler = cProfile.Profile()
@@ -226,10 +226,67 @@ def test_automatic_capacity_matches_atom_centric(batched, public):
     if batched:
         kwargs.update(batch_ptr=jnp.arange(systems + 1, dtype=jnp.int32) * atoms)
     call = batch_cell_list if batched else cell_list
-    expected = call(positions, **kwargs, strategy="atom_centric")
+    expected = call(
+        positions, grid_policy="adaptive", **kwargs, strategy="atom_centric"
+    )
     if public:
         kwargs["method"] = "batch_cell_list" if batched else "cell_list"
-        actual = neighbor_list(positions, **kwargs)
+        actual = neighbor_list(positions, grid_policy="adaptive", **kwargs)
     else:
-        actual = call(positions, **kwargs, strategy="pair_centric")
+        actual = call(
+            positions, grid_policy="adaptive", **kwargs, strategy="pair_centric"
+        )
     np.testing.assert_array_equal(_pairs(actual, True), _pairs(expected, True))
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("public", [False, True])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_grid_policy_default_and_opt_in(batched, public, compiled):
+    """Both policies and the default preserve neighbor records under eager/JIT."""
+    systems = 2 if batched else 1
+    positions = jnp.asarray(
+        np.random.default_rng(71).random((32 * systems, 3)) * 12, dtype=jnp.float32
+    )
+    cell = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12, (systems, 1, 1))
+    common = dict(
+        cutoff=6.0,
+        cell=cell,
+        pbc=jnp.ones((systems, 3), dtype=jnp.bool_),
+        max_neighbors=64,
+        max_total_cells=64 * systems,
+    )
+    if batched:
+        common.update(
+            batch_idx=jnp.repeat(jnp.arange(systems, dtype=jnp.int32), 32),
+            batch_ptr=jnp.arange(systems + 1, dtype=jnp.int32) * 32,
+        )
+    call = neighbor_list if public else (batch_cell_list if batched else cell_list)
+    if public:
+        common["method"] = (
+            "batch_cell_list_pair_centric" if batched else "cell_list_pair_centric"
+        )
+    else:
+        common["strategy"] = "pair_centric"
+    if compiled:
+        if batched:
+            common.update(
+                pair_centric_total_cells=64 * systems,
+                pair_centric_n_outer=124,
+                pair_centric_r_max=(2, 2, 2),
+            )
+        else:
+            common["pair_centric_n_outer"] = 124
+    outputs = []
+    for policy in (None, "configured", "adaptive"):
+        policy_kwargs = {} if policy is None else {"grid_policy": policy}
+
+        def execute(pos):
+            return call(pos, **common, **policy_kwargs)
+
+        result = (jax.jit(execute) if compiled else execute)(positions)
+        outputs.append(_pairs(result, False))
+    np.testing.assert_array_equal(outputs[0], outputs[1])
+    np.testing.assert_array_equal(outputs[0], outputs[2])
+    with pytest.raises(ValueError, match="grid_policy"):
+        call(positions, **common, grid_policy="unknown")

@@ -181,14 +181,16 @@
 
 ### Changed
 
-- Torch single-system and batched full-list pair-centric calls select grids from
+- Torch single-system and batched full-list pair-centric calls with
+  `grid_policy="adaptive"` select grids from
   current geometry and atom populations, balancing cell visits and cell crowding.
   Single-system alternatives must preserve or reduce estimated candidate pairs,
   serial neighbor-loop depth, cell storage, and logical block count. The configured
   grid wins ties and cost tradeoffs. Batched selection counts setup and
   neighbor-loop steps across every logical block and preserves source-pass count.
-  Default cell-list calls use the same sizing when their existing strategy rule
-  selects pair-centric execution. Batched selection reuses supplied boundaries.
+  `grid_policy="configured"` remains the default. With the adaptive policy,
+  automatic strategy selection uses the same sizing when it selects pair-centric
+  execution. Batched selection reuses supplied boundaries.
   Selected grids are reused during construction.
   Caller-provided workspaces apply the same rules during the GPU build, updating
   dimensions and search radii in place within their per-system capacity.
@@ -197,9 +199,10 @@
   Compiled full-list calls also use these rules when all cell buffers are supplied.
 - Eager JAX naive tile and cell-list queries reuse compiled inner calls across
   repeated inputs. Cell-list arrays remain runtime inputs to cached executables.
-- Eager JAX full-list CUDA calls that select `strategy="pair_centric"` reuse
+- Eager JAX full-list CUDA calls with `grid_policy="adaptive"` that select
+  `strategy="pair_centric"` reuse
   the geometry/population grid selector for single systems and batches.
-  Default eager cell-list calls also use it when their existing rule selects
+  Adaptive eager cell-list calls also use it when their existing rule selects
   pair-centric execution. Grid, search-radius, and cell-count preparation share
   one kernel; boxes remain runtime inputs. Public signatures and static/JIT
   launch-metadata paths are preserved.

@@ -28,6 +28,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     NEIGHBOR_LIST_STRATEGIES,
     neighbor_list_strategy_run_args,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 from nvalchemiops.torch.neighbors._compiled_pair_fn import (
     CompiledPairFn,
     compile_pair_fn,
@@ -110,6 +111,8 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
+    *,
+    grid_policy: str = "configured",
     **kwargs: Any,
 ):
     """Compute neighbor list using the appropriate method based on the provided parameters.
@@ -179,6 +182,11 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        Grid-sizing policy for supported pair-centric cell-list paths.
+        ``"adaptive"`` opts into geometry/population-based grid selection;
+        ``"configured"`` preserves the existing grid-sizing rule. Other neighbor
+        methods retain their grid behavior.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -381,6 +389,7 @@ def neighbor_list(
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
 
+    _validate_grid_policy(grid_policy)
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
     target_indices = kwargs.get("target_indices")
@@ -504,6 +513,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
@@ -542,6 +552,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )

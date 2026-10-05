@@ -57,7 +57,10 @@ from nvalchemiops.neighbors.cell_list import (
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as wp_query_cell_list,
 )
-from nvalchemiops.neighbors.cell_list._grid_selection import _get_pair_grid_kernel
+from nvalchemiops.neighbors.cell_list._grid_selection import (
+    _get_pair_grid_kernel,
+    _validate_grid_policy,
+)
 from nvalchemiops.neighbors.cell_list.launchers import _PAIR_CENTRIC_BLOCK_DIM
 from nvalchemiops.neighbors.neighbor_utils import (
     empty_sentinel,
@@ -1741,6 +1744,8 @@ def cell_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    *,
+    grid_policy: str = "configured",
 ) -> tuple[torch.Tensor, ...]:
     """Build complete neighbor matrix using spatial cell list acceleration.
 
@@ -1820,6 +1825,11 @@ def cell_list(
         and ``neighbor_matrix_shifts`` tensors are returned unchanged and all
         kernel launches are skipped.  When the flag is True (or when this argument
         is None) the neighbor list is recomputed as normal.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
+        selects grids from geometry and atom populations on supported full-list
+        pair-centric paths. Its cost model assumes approximately uniform spatial
+        occupancy; performance depends on the input distribution.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query kernel selection.  Both strategies return identical
         pair sets; per-row ordering inside ``neighbor_matrix`` differs.
@@ -1893,6 +1903,8 @@ def cell_list(
     nvalchemiops.neighbors.cell_list.query_cell_list : Core warp launcher for querying
     naive_neighbor_list : :math:`O(N^2)` method for small systems
     """
+
+    _validate_grid_policy(grid_policy)
 
     total_atoms = positions.shape[0]
     device = positions.device
@@ -2007,7 +2019,8 @@ def cell_list(
     )
     cell_list_min_cells = 1 if strategy == "atom_centric" else 4
     use_pair_grid = (
-        (
+        grid_policy == "adaptive"
+        and (
             strategy == "pair_centric"
             or (
                 strategy == "auto"

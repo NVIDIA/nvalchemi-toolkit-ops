@@ -33,6 +33,14 @@ import warp as wp
 __all__ = []
 
 
+def _validate_grid_policy(grid_policy: str) -> None:
+    """Require a supported cell-grid policy using host metadata only."""
+    if grid_policy not in {"configured", "adaptive"}:
+        raise ValueError(
+            f"grid_policy must be 'configured' or 'adaptive', got {grid_policy!r}"
+        )
+
+
 @lru_cache(maxsize=None)
 def _get_pair_grid_kernel(
     dtype: type,

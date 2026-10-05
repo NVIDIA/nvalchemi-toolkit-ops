@@ -44,7 +44,6 @@ from nvalchemiops.jax.neighbors.cell_list import (
     _report_pair_centric_metadata_mismatch,
     _resolve_cell_strategy,
     _validate_atom_centric_path,
-    _validate_cell_geometry,
     _validate_compact_target_buffers,
     _validate_pair_kwargs,
 )
@@ -63,6 +62,7 @@ from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     is_pair_centric_parallelism_sufficient,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
@@ -2198,6 +2198,8 @@ def batch_cell_list(
     pair_centric_total_cells: int | None = None,
     pair_centric_n_outer: int | None = None,
     pair_centric_r_max: tuple[int, int, int] | None = None,
+    *,
+    grid_policy: str = "configured",
 ) -> tuple[jax.Array, ...]:
     """Build and query spatial cell lists for batch of systems.
 
@@ -2216,6 +2218,7 @@ def batch_cell_list(
         Cutoff distance for neighbor detection.
     cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional
         Cell matrices defining lattice vectors. Default is identity matrix.
+        Entries must be finite and each matrix must have nonzero volume.
     pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional
         Periodic boundary condition flags. Default is all True.
     batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
@@ -2244,6 +2247,13 @@ def batch_cell_list(
         Value used to pad unused entries in the returned ``neighbor_matrix``
         (matrix return path only; the COO path is unaffected). If None, the
         matrix retains the kernel's default padding of ``total_atoms``.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
+        selects grids from geometry and atom populations on supported full-list
+        pair-centric paths. Its cost model assumes approximately uniform spatial
+        occupancy; performance depends on the input distribution.
+        Adaptive selection applies to eager calls without static pair-centric
+        launch metadata; traced calls retain the configured grid.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy, forwarded to :func:`batch_query_cell_list`.
         Both strategies produce identical pair SETS; only per-row ordering in
@@ -2331,6 +2341,8 @@ def batch_cell_list(
     batch_query_cell_list : Query cell list separately
     batch_naive_neighbor_list : Naive O(N^2) method
     """
+
+    _validate_grid_policy(grid_policy)
 
     has_pair_outputs = _has_partial_or_pair_outputs(
         target_indices=target_indices,
@@ -2449,9 +2461,6 @@ def batch_cell_list(
         dtype=topology_cell_dtype,
     )
 
-    if strategy == "atom_centric" and max_total_cells is None:
-        _validate_cell_geometry(cell, batched=True)
-
     # Build cell list
     (
         cells_per_dimension,
@@ -2471,7 +2480,8 @@ def batch_cell_list(
         cutoff=cutoff,
         max_total_cells=max_total_cells,
         select_pair_grid=(
-            _resolve_cell_strategy(
+            grid_policy == "adaptive"
+            and _resolve_cell_strategy(
                 strategy,
                 total_atoms=int(positions.shape[0]),
                 cutoff=float(cutoff),

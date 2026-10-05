@@ -120,6 +120,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     neighbor_list_strategy_run_args,
 )
 from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 
 
 def neighbor_list(
@@ -135,6 +136,8 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
+    *,
+    grid_policy: str = "configured",
     **kwargs: Any,
 ):
     """Compute an eager neighbor list using the appropriate method.
@@ -203,6 +206,11 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        Grid-sizing policy for supported pair-centric cell-list paths.
+        ``"adaptive"`` opts into geometry/population-based grid selection;
+        ``"configured"`` preserves the existing grid-sizing rule. Other neighbor
+        methods retain their grid behavior. JAX adaptive selection is eager-only.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -398,6 +406,7 @@ def neighbor_list(
     if cutoff2 is not None:
         _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
 
+    _validate_grid_policy(grid_policy)
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
     target_indices = kwargs.get("target_indices")
@@ -531,6 +540,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
@@ -572,6 +582,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )

@@ -54,7 +54,10 @@ from nvalchemiops.neighbors.cell_list import (
     is_pair_centric_parallelism_sufficient,
     select_batch_cell_list_strategy,
 )
-from nvalchemiops.neighbors.cell_list._grid_selection import _get_pair_grid_kernel
+from nvalchemiops.neighbors.cell_list._grid_selection import (
+    _get_pair_grid_kernel,
+    _validate_grid_policy,
+)
 from nvalchemiops.neighbors.cell_list.launchers import _PAIR_CENTRIC_BLOCK_DIM
 from nvalchemiops.neighbors.neighbor_utils import empty_sentinel, estimate_max_neighbors
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -1745,6 +1748,8 @@ def batch_cell_list(
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
     batch_ptr: torch.Tensor | None = None,
+    *,
+    grid_policy: str = "configured",
 ) -> tuple[torch.Tensor, ...]:
     """Build complete batch neighbor matrices using spatial cell list acceleration.
 
@@ -1821,6 +1826,11 @@ def batch_cell_list(
         non-rebuilt systems entirely on the GPU (no CPU-GPU sync). When this is used,
         pre-allocated ``neighbor_matrix`` and ``num_neighbors`` tensors must be provided
         and will not be globally zeroed - only rebuilt-system entries are reset.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
+        selects grids from geometry and atom populations on supported full-list
+        pair-centric paths. Its cost model assumes approximately uniform spatial
+        occupancy; performance depends on the input distribution.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query kernel selection.  Both strategies return identical
         pair sets; per-row ordering inside ``neighbor_matrix`` differs.
@@ -1882,6 +1892,8 @@ def batch_cell_list(
     nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list : Core warp launcher for querying
     batch_naive_neighbor_list : O(N^2) method for small systems
     """
+
+    _validate_grid_policy(grid_policy)
 
     total_atoms = positions.shape[0]
     device = positions.device
@@ -1990,7 +2002,8 @@ def batch_cell_list(
     selected_grid = None
     pair_grid_boundaries = None
     if (
-        (
+        grid_policy == "adaptive"
+        and (
             strategy == "pair_centric"
             or (
                 strategy == "auto"

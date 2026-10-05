@@ -22,7 +22,6 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable
 
@@ -55,6 +54,7 @@ from nvalchemiops.neighbors.cell_list import (
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as _warp_query_cell_list,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
     selective_zero_num_neighbors_single,
@@ -224,35 +224,6 @@ def _is_cpu_array(array: jax.Array) -> bool:
         return all(device.platform == "cpu" for device in array.devices())
     except (AttributeError, jax.errors.ConcretizationTypeError):
         return False
-
-
-def _validate_cell_geometry(
-    cell: jax.Array,
-    *,
-    batched: bool,
-) -> None:
-    """Reject non-finite or singular eager cells before capacity estimation."""
-    if isinstance(cell, jax.core.Tracer):
-        return
-
-    cell_host = np.asarray(jax.device_get(cell))
-    if not np.isfinite(cell_host).all():
-        raise RuntimeError("Cell geometry must contain finite values.")
-
-    with np.errstate(invalid="ignore", over="ignore"):
-        volumes = np.sum(
-            np.cross(cell_host[:, 0], cell_host[:, 1]) * cell_host[:, 2],
-            axis=-1,
-        )
-    if not np.isfinite(volumes).all():
-        raise RuntimeError("Cell geometry must contain finite values.")
-    if np.any(np.abs(volumes) == 0.0):
-        subject = "Cells" if batched else "Cell"
-        verb = "are" if batched else "is"
-        raise RuntimeError(
-            f"{subject} with volume == 0.0 detected and {verb} not supported."
-            " Please pass unit cells with `det(cell) != 0.0`."
-        )
 
 
 def _validate_atom_centric_path(atom_centric_path: str) -> str:
@@ -3010,6 +2981,8 @@ def cell_list(
     pair_forces: jax.Array | None = None,
     coo_capacity: int | None = None,
     pair_centric_n_outer: int | None = None,
+    *,
+    grid_policy: str = "configured",
 ) -> tuple[jax.Array, ...]:
     """Build and query spatial cell list for efficient neighbor finding.
 
@@ -3031,6 +3004,7 @@ def cell_list(
         Cutoff distance for neighbor detection.
     cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64, optional
         Cell matrix defining lattice vectors. Default is identity matrix.
+        Entries must be finite and the matrix must have nonzero volume.
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags. Default is all True.
     max_neighbors : int, optional
@@ -3105,6 +3079,13 @@ def cell_list(
         Pre-shaped output buffer for per-pair energies from ``pair_fn``.
     pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped output buffer for per-pair forces from ``pair_fn``.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
+        selects grids from geometry and atom populations on supported full-list
+        pair-centric paths. Its cost model assumes approximately uniform spatial
+        occupancy; performance depends on the input distribution.
+        Adaptive selection applies to eager calls without static pair-centric
+        launch metadata; traced calls retain the configured grid.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy, forwarded to :func:`query_cell_list`.
         Both strategies produce identical pair SETS; only per-row ordering in
@@ -3172,6 +3153,8 @@ def cell_list(
     query_cell_list : Query cell list separately
     naive_neighbor_list : Naive :math:`O(N^2)` method
     """
+
+    _validate_grid_policy(grid_policy)
 
     has_pair_outputs = _has_partial_or_pair_outputs(
         target_indices=target_indices,
@@ -3300,8 +3283,6 @@ def cell_list(
         max_neighbors = estimate_max_neighbors(cutoff)
 
     if max_total_cells is None:
-        if strategy == "atom_centric":
-            _validate_cell_geometry(cell, batched=False)
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
         )
@@ -3443,7 +3424,8 @@ def cell_list(
             max_total_cells=max_total_cells,
             graph_mode="none",
             select_pair_grid=(
-                _resolve_cell_strategy(
+                grid_policy == "adaptive"
+                and _resolve_cell_strategy(
                     strategy,
                     total_atoms=int(positions.shape[0]),
                     cutoff=float(cutoff),

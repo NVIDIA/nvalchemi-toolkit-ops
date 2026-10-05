@@ -122,10 +122,12 @@ def test_single_workspace_overwrites_previous_contents(dtype, spare_atoms):
             max_neighbors=128,
             return_neighbor_list=True,
         )
-        expected = cell_list(**common, strategy="atom_centric")
+        expected = cell_list(grid_policy="adaptive", **common, strategy="atom_centric")
         for value in workspace.values():
             value.fill_(7)
-        actual = cell_list(**common, strategy="pair_centric", **workspace)
+        actual = cell_list(
+            grid_policy="adaptive", **common, strategy="pair_centric", **workspace
+        )
         assert signature(actual) == signature(expected)
         assert int(workspace["atoms_per_cell_count"].sum()) == atoms
         for name in ("atom_periodic_shifts", "atom_to_cell_mapping", "cell_atom_list"):
@@ -136,7 +138,7 @@ def test_single_workspace_overwrites_previous_contents(dtype, spare_atoms):
 @pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize("public", [False, True])
 @pytest.mark.parametrize("reuse_workspace", [False, True])
-def test_default_cell_calls_select_grid(batched, public, reuse_workspace):
+def test_adaptive_default_strategy_calls_select_grid(batched, public, reuse_workspace):
     """Default cell calls refresh caller grids and preserve physical pairs."""
     atoms = 4096 if batched else 512
     systems = 2 if batched else 1
@@ -169,11 +171,13 @@ def test_default_cell_calls_select_grid(batched, public, reuse_workspace):
     capacity, radius = estimate(common["cell"], common["pbc"], 6.0)
     workspace = _workspace_kwargs(atoms * systems, capacity, radius)
     call = batch_cell_list if batched else cell_list
-    reference = call(**common, strategy="atom_centric")
+    reference = call(grid_policy="adaptive", **common, strategy="atom_centric")
     if public:
         common["method"] = "batch_cell_list" if batched else "cell_list"
         call = neighbor_list
-    actual = call(**common, **(workspace if reuse_workspace else {}))
+    actual = call(
+        grid_policy="adaptive", **common, **(workspace if reuse_workspace else {})
+    )
     if reuse_workspace:
         assert (
             workspace["cells_per_dimension"].reshape(systems, 3).tolist()
@@ -209,8 +213,10 @@ def test_compiled_single_grid_tracks_box(dtype, strategy):
         kwargs = dict(
             positions=positions, cell=cell, pbc=pbc, cutoff=6.0, max_neighbors=atoms
         )
-        expected = cell_list(**kwargs, strategy="atom_centric")
-        actual = query(**kwargs, strategy=strategy, **workspace, **outputs)
+        expected = cell_list(grid_policy="adaptive", **kwargs, strategy="atom_centric")
+        actual = query(
+            grid_policy="adaptive", **kwargs, strategy=strategy, **workspace, **outputs
+        )
         assert workspace["cells_per_dimension"].tolist() == (
             [2] * 3 if scale == 2.0 else [4] * 3
         )
@@ -257,8 +263,8 @@ def test_public_reused_workspace_selects_same_grid(atoms, side, expected):
         method="batch_cell_list_pair_centric",
         return_neighbor_list=True,
     )
-    reference = neighbor_list(**common)
-    actual = neighbor_list(**common, **workspace)
+    reference = neighbor_list(grid_policy="adaptive", **common)
+    actual = neighbor_list(grid_policy="adaptive", **common, **workspace)
     assert workspace["cells_per_dimension"].tolist() == [[expected] * 3] * 2
     assert signature(actual) == signature(reference)
     assert {name: value.data_ptr() for name, value in workspace.items()} == pointers
@@ -319,11 +325,13 @@ def test_compiled_reused_workspace_selects_current_grid(
         for scale in (1.0, 1.5, 0.9, 1.0):
             cell.copy_(base_cell * scale)
             positions.copy_(fraction * (21.978 * scale))
-            expected = neighbor_list(**common)
+            expected = neighbor_list(grid_policy="adaptive", **common)
             _, expected_radius, expected_grid = _select_pair_grid(
                 cell, pbc, 6.0, idx, ptr, capacity // 2, 4
             )
-            actual = compiled_query(**compiled_kwargs, **workspace, **outputs)
+            actual = compiled_query(
+                grid_policy="adaptive", **compiled_kwargs, **workspace, **outputs
+            )
             torch.testing.assert_close(workspace["cells_per_dimension"], expected_grid)
             torch.testing.assert_close(
                 workspace["neighbor_search_radius"], expected_radius
@@ -371,15 +379,15 @@ def test_reused_workspace_capacity_and_current_radii(capacity, expected):
         return_neighbor_list=True,
         max_neighbors=128,
     )
-    reference = neighbor_list(**common)
+    reference = neighbor_list(grid_policy="adaptive", **common)
     workspace = _workspace_kwargs(32, capacity, radius)
-    actual = neighbor_list(**common, **workspace)
+    actual = neighbor_list(grid_policy="adaptive", **common, **workspace)
     assert workspace["cells_per_dimension"].tolist() == [[expected] * 3] * 2
     assert workspace["neighbor_search_radius"].tolist() == [[1, 1, 1]] * 2
     assert signature(actual) == signature(reference)
     too_small = _workspace_kwargs(32, 1, radius)
     with pytest.raises(ValueError, match="cell workspace.*capacity"):
-        neighbor_list(**common, **too_small)
+        neighbor_list(grid_policy="adaptive", **common, **too_small)
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
@@ -493,7 +501,11 @@ def test_direct_binding_pair_geometry(supplied_ptr, reuse_workspace):
         capacity, radius = estimate_batch_cell_list_sizes(cell, pbc, 6.0)
         workspace = _workspace_kwargs(64, capacity, radius)
     actual = batch_cell_list(
-        **common, **workspace, batch_ptr=ptr, strategy="pair_centric"
+        grid_policy="adaptive",
+        **common,
+        **workspace,
+        batch_ptr=ptr,
+        strategy="pair_centric",
     )
     reference = batch_naive_neighbor_list(
         **common, max_atoms_per_system=32, strategy="scalar"
@@ -574,6 +586,7 @@ def test_uneven_current_boxes(dtype, nondefault_stream, reuse_workspace):
             for value in workspace.values():
                 value.fill_(-17)
             actual = neighbor_list(
+                grid_policy="adaptive",
                 **common,
                 batch_ptr=ptr,
                 method="batch_cell_list_pair_centric",
@@ -587,3 +600,60 @@ def test_uneven_current_boxes(dtype, nondefault_stream, reuse_workspace):
             cell, pbc, 6.0, batch_idx, ptr, DEFAULT_BATCH_MAX_NBINS, 4
         )
         assert total == int(grid.prod(dim=1).sum())
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("public", [False, True])
+def test_grid_policy_default_and_opt_in(batched, public):
+    """Default grids retain configured sizing while adaptive preserves pairs."""
+    systems = 3 if batched else 1
+    populations = [17, 0, 32] if batched else [32]
+    atoms = sum(populations)
+    generator = torch.Generator(device="cuda").manual_seed(71)
+    positions = torch.rand((atoms, 3), generator=generator, device="cuda") * 12
+    cell = torch.eye(3, device="cuda").repeat(systems, 1, 1) * 12
+    pbc = torch.ones((systems, 3), device="cuda", dtype=torch.bool)
+    common = dict(
+        positions=positions,
+        cutoff=6.0,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=64,
+        return_neighbor_list=True,
+    )
+    if batched:
+        common.update(
+            batch_idx=torch.repeat_interleave(
+                torch.arange(systems, device="cuda", dtype=torch.int32),
+                torch.tensor(populations, device="cuda"),
+            ),
+            batch_ptr=torch.tensor([0, 17, 17, 49], device="cuda", dtype=torch.int32),
+        )
+    call = neighbor_list if public else (batch_cell_list if batched else cell_list)
+    if public:
+        common["method"] = (
+            "batch_cell_list_pair_centric" if batched else "cell_list_pair_centric"
+        )
+    else:
+        common["strategy"] = "pair_centric"
+    results = []
+    grids = []
+    for policy in (None, "configured", "adaptive"):
+        radius = torch.full(
+            (systems, 3) if batched else (3,), 2, device="cuda", dtype=torch.int32
+        )
+        workspace = _workspace_kwargs(atoms, 64 * systems, radius)
+        policy_kwargs = {} if policy is None else {"grid_policy": policy}
+        result = call(**common, **workspace, **policy_kwargs)
+        results.append(signature(result))
+        grids.append(workspace["cells_per_dimension"].clone())
+    assert results[0] == results[1] == results[2]
+    torch.testing.assert_close(grids[0], torch.full_like(grids[0], 4))
+    torch.testing.assert_close(grids[0], grids[1])
+    if batched:
+        assert not torch.equal(grids[1], grids[2])
+    else:
+        # This geometry increases estimated pair work on coarser grids.
+        torch.testing.assert_close(grids[1], grids[2])
+    with pytest.raises(ValueError, match="grid_policy"):
+        call(**common, grid_policy="unknown")
