@@ -85,6 +85,10 @@
   sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
   explicit mesh dimensions remain caller-controlled.
   Cutoff and splitting-parameter formulas are preserved.
+  Calls that omit `spline_order` now use 5 instead of 4, which can change
+  numerical results and automatically selected meshes. Pass `spline_order=4`
+  to retain the previous interpolation order. To reproduce the previous PME
+  configuration, also pass the previous `mesh_dimensions` explicitly.
 - Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
   `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
 - Torch and JAX PME energy and force paths generate only the squared reciprocal

@@ -14,6 +14,10 @@
   sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
   explicit mesh dimensions remain caller-controlled.
   Cutoff and splitting-parameter formulas are preserved.
+  Calls that omit `spline_order` now use 5 instead of 4, which can change
+  numerical results and automatically selected meshes. Pass `spline_order=4`
+  to retain the previous interpolation order. To reproduce the previous PME
+  configuration, also pass the previous `mesh_dimensions` explicitly.
 - Supported JAX versions are `>=0.10.0,<0.10.2`; the lockfile selects 0.10.1
   to avoid GPU scatter slowdowns in newer releases
   ([JAX #38806](https://github.com/jax-ml/jax/issues/38806)).

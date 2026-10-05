@@ -2531,7 +2531,7 @@ def _pme_reciprocal_space_impl(
     moduli_y = _detach_setup_tensor(moduli_y)
     moduli_z = _detach_setup_tensor(moduli_z)
 
-    if cell.requires_grad:
+    if torch.is_grad_enabled() and cell.requires_grad:
         # Cell derivatives follow the current reciprocal metric and assignment
         # geometry. Rebuild these cell-dependent caches for differentiable calls.
         k_vectors = None

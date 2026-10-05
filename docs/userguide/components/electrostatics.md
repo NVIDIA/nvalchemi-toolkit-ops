@@ -3176,6 +3176,12 @@ instead of using this median-system heuristic.
 
 ### PME Mesh Sizing
 
+The default `spline_order` changes from 4 to 5. Existing calls that omit it
+can produce different numerical results and use different automatic meshes.
+Pass `spline_order=4` to retain the previous interpolation order. To reproduce
+the previous PME configuration, also pass the previous `mesh_dimensions`
+explicitly; spacing-based estimation uses the new rounding rule at every order.
+
 Torch and JAX use the same mesh rounding rules. For order-five accuracy sizing,
 each continuous axis estimate first rounds upward to the smallest dimension
 whose prime factors are 2, 3, 5, and 7. Each dimension covers the requested spline

@@ -133,3 +133,84 @@ def test_cached_cell_first_and_second_derivatives_match_uncached(
     for actual in (cached_gradient, cached_graph_gradient):
         torch.testing.assert_close(actual, reference_gradient, rtol=1e-8, atol=1e-10)
     torch.testing.assert_close(cached_hessian, reference_hessian, rtol=1e-8, atol=1e-10)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("full_api", [False, True])
+def test_no_grad_reuses_cell_metadata(
+    device: str, batched: bool, full_api: bool
+) -> None:
+    """Evaluation reuses supplied cell caches even when the cell requires gradients."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    dtype = torch.float64
+    positions = torch.tensor(
+        [[1.13, 1.07, 1.19], [2.13, 1.57, 1.19]], dtype=dtype, device=device
+    )
+    charges = torch.tensor([1.0, -1.0], dtype=dtype, device=device)
+    cell = torch.diag(torch.tensor([8.0, 9.0, 10.0], dtype=dtype, device=device))
+    batch_idx = None
+    if batched:
+        positions = torch.cat([positions, positions + 0.31])
+        charges = torch.cat([charges, charges * 0.7])
+        cell = torch.stack([cell, cell * 1.1])
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+    mesh_dimensions = (9, 10, 12)
+    k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dimensions)
+    cache = {
+        "k_vectors": k_vectors,
+        "k_squared": k_squared,
+        "volume": torch.abs(torch.linalg.det(cell)),
+        "cell_inv_t": torch.linalg.inv(cell).transpose(-1, -2).contiguous(),
+    }
+    cell.requires_grad_(True)
+    common = {
+        "alpha": 0.3,
+        "mesh_dimensions": mesh_dimensions,
+        "batch_idx": batch_idx,
+        "compute_forces": True,
+    }
+    if full_api:
+        indices = torch.arange(len(positions), dtype=torch.int32, device=device)
+        common.update(
+            neighbor_list=torch.stack([indices, indices ^ 1]),
+            neighbor_ptr=torch.arange(
+                len(positions) + 1, dtype=torch.int32, device=device
+            ),
+            neighbor_shifts=torch.zeros(
+                len(positions), 3, dtype=torch.int32, device=device
+            ),
+        )
+    selected_api = particle_mesh_ewald if full_api else pme_reciprocal_space
+    with torch.no_grad():
+        # Warm both paths before profiling CPU dispatch, including CUDA launches.
+        selected_api(positions, charges, cell, **common)
+        selected_api(positions, charges, cell, **common, **cache)
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU]
+        ) as uncached_profile:
+            reference = selected_api(positions, charges, cell, **common)
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU]
+        ) as cached_profile:
+            actual = selected_api(positions, charges, cell, **common, **cache)
+    for actual_output, reference_output in zip(actual, reference, strict=True):
+        assert not actual_output.requires_grad
+        assert not reference_output.requires_grad
+        torch.testing.assert_close(
+            actual_output, reference_output, rtol=1e-10, atol=1e-10
+        )
+    uncached_counts = {
+        event.key: event.count for event in uncached_profile.key_averages()
+    }
+    cached_counts = {event.key: event.count for event in cached_profile.key_averages()}
+    for operation in (
+        "aten::linalg_inv_ex",
+        "aten::linalg_det",
+        "aten::fft_fftfreq",
+        "aten::fft_rfftfreq",
+    ):
+        assert cached_counts.get(operation, 0) < uncached_counts.get(operation, 0), (
+            f"Supplied cell metadata should reduce {operation} calls"
+        )

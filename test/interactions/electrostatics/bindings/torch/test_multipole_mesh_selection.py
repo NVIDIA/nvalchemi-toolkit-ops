@@ -99,6 +99,7 @@ def test_multipole_estimate_covers_requested_assignment_order(device: str) -> No
     torch.testing.assert_close(order_six.sigma, default.sigma, rtol=0, atol=0)
 
 
+@pytest.mark.gpu
 @pytest.mark.parametrize("explicit_alpha", [False, True])
 def test_multipole_automatic_order_six_matches_explicit_mesh(
     explicit_alpha: bool,
