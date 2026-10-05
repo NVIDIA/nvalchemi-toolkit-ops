@@ -141,6 +141,9 @@
 
 ### Fixed
 
+- Corrected stress-to-cell forces and FIRE2 affine position updates to use the
+  row-vector lattice convention, preserving fractional coordinates during cell
+  changes (#193).
 - Torch multipole direct energy now supports symbolic tracing with explicit
   reciprocal vectors, batched valid-k counts, and source overlap constants;
   multipole features can reuse a prepared cache. The shared moment conversion
