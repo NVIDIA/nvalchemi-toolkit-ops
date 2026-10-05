@@ -16,6 +16,7 @@
 """Exercise eager JAX grid selection through the public neighbor bindings."""
 
 import cProfile
+import sys
 
 import jax
 import jax.numpy as jnp
@@ -27,8 +28,185 @@ from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
 from nvalchemiops.jax.neighbors.cell_list import cell_list
 
 from .conftest import requires_gpu
+from .test_pair_fn import _PAIR_FN, _pair_params
 
 pytestmark = requires_gpu
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize(
+    "public,strategy",
+    [
+        pytest.param(False, None, id="direct-default"),
+        pytest.param(False, "auto", id="direct-auto"),
+        pytest.param(False, "atom_centric", id="direct-atom"),
+        pytest.param(False, "pair_centric", id="direct-pair"),
+        pytest.param(True, "auto", id="dispatcher-auto"),
+        pytest.param(True, "atom_centric", id="dispatcher-atom"),
+        pytest.param(True, "pair_centric", id="dispatcher-pair"),
+    ],
+)
+@pytest.mark.parametrize(
+    "layout,outputs",
+    [
+        ("matrix", "vectors"),
+        ("matrix", "distances"),
+        ("matrix", "both"),
+        ("matrix", "buffers"),
+        ("matrix", "pair_fn"),
+        ("matrix", "pair_fn_geometry"),
+        ("coo", "vectors"),
+        ("coo", "distances"),
+        ("coo", "both"),
+        ("coo", "pair_fn"),
+        ("coo", "pair_fn_geometry"),
+        ("fixed_coo", "both"),
+        ("fixed_coo", "pair_fn"),
+        ("fixed_coo", "pair_fn_geometry"),
+    ],
+)
+def test_pair_output_grid_policy_matches_query(
+    batched, dtype, public, strategy, layout, outputs
+):
+    """Grid preparation matches the executed query across interacting options."""
+    populations = [17, 0, 32] if batched else [32]
+    atoms = sum(populations)
+    systems = len(populations)
+    positions = jnp.asarray(np.random.default_rng(73).random((atoms, 3)) * 12, dtype)
+    cell = jnp.tile(jnp.eye(3, dtype=dtype)[None] * 12, (systems, 1, 1))
+    batch_indices = np.repeat(np.arange(systems), populations)
+    common = dict(
+        positions=positions,
+        cutoff=6.0,
+        cell=cell,
+        pbc=jnp.ones((systems, 3), dtype=jnp.bool_),
+        max_neighbors=64,
+        max_total_cells=64 * systems,
+        return_vectors=outputs in {"vectors", "both", "pair_fn_geometry"},
+        return_distances=outputs in {"distances", "both", "pair_fn_geometry"},
+    )
+    if batched:
+        common.update(
+            batch_idx=jnp.asarray(batch_indices, dtype=jnp.int32),
+            batch_ptr=jnp.asarray(np.cumsum([0, *populations]), dtype=jnp.int32),
+        )
+    if outputs == "buffers":
+        common["neighbor_vectors"] = jnp.zeros((atoms, 64, 3), dtype=dtype)
+        common["neighbor_distances"] = jnp.zeros((atoms, 64), dtype=dtype)
+    fused = outputs in {"pair_fn", "pair_fn_geometry"}
+    if fused:
+        common.update(pair_fn=_PAIR_FN[dtype], pair_params=_pair_params(atoms, dtype))
+    direct = batch_cell_list if batched else cell_list
+    expected = direct(**common, strategy="atom_centric", grid_policy="configured")
+    compact = layout != "matrix"
+    common["return_neighbor_list"] = compact
+    if layout == "fixed_coo":
+        common["coo_capacity"] = atoms * 64
+    call = neighbor_list if public else direct
+    options = {}
+    if public:
+        method = "batch_cell_list" if batched else "cell_list"
+        options["method"] = method if strategy == "auto" else f"{method}_{strategy}"
+    elif strategy is not None:
+        options["strategy"] = strategy
+    expected_query = "pair_centric" if strategy == "pair_centric" else "atom_centric"
+
+    for policy in (None, "configured", "adaptive"):
+        selections = []
+        queries = []
+
+        def observe(frame, event, arg):
+            """Observe preparation and the forward consumer without replacing them."""
+            if event == "call":
+                name = frame.f_code.co_name
+                if name == "_select_pair_grid":
+                    selections.append(name)
+                elif name in {
+                    "_cell_list_pair_outputs_forward",
+                    "_batch_cell_list_pair_outputs_forward",
+                }:
+                    queries.append(frame.f_locals["strategy"])
+
+        policy_options = {} if policy is None else {"grid_policy": policy}
+        previous_profiler = sys.getprofile()
+        try:
+            sys.setprofile(observe)
+            actual = call(**common, **options, **policy_options)
+            jax.block_until_ready(actual)
+        finally:
+            sys.setprofile(previous_profiler)
+        assert queries == [expected_query]
+        assert len(selections) == int(
+            policy == "adaptive" and expected_query == "pair_centric"
+        )
+        counts = np.diff(np.asarray(actual[1])) if compact else actual[1]
+        np.testing.assert_array_equal(counts, expected[1])
+        np.testing.assert_array_equal(_pairs(actual, compact), _pairs(expected, False))
+        matrix, counts, shifts = map(np.asarray, actual[:3])
+        if compact:
+            length = int(counts[-1])
+            rows, targets = matrix[:, :length]
+            valid = slice(0, length)
+            images = shifts[valid]
+            capacity = common.get("coo_capacity", length)
+            assert matrix.shape == (2, capacity)
+            assert shifts.shape == (capacity, 3)
+            pair_shape = (capacity,)
+        else:
+            rows, slots = np.nonzero(
+                np.arange(matrix.shape[1])[None, :] < counts[:, None]
+            )
+            valid = (rows, slots)
+            targets = matrix[valid]
+            images = shifts[valid]
+            pair_shape = (atoms, 64)
+        assert len(rows) > 0
+        vectors = np.asarray(positions)[targets] - np.asarray(positions)[rows]
+        vectors += np.einsum(
+            "ni,nij->nj", images, np.asarray(cell)[batch_indices[rows]]
+        )
+        distances = np.linalg.norm(vectors, axis=1)
+        output_index = 5 if layout == "fixed_coo" else 3
+        if layout == "fixed_coo":
+            np.testing.assert_array_equal(actual[3], expected[1])
+            assert bool(actual[4])
+        if common["return_distances"]:
+            assert actual[output_index].shape == pair_shape
+            np.testing.assert_allclose(
+                np.asarray(actual[output_index])[valid],
+                distances,
+                rtol=1e-5,
+                atol=1e-5,
+            )
+            output_index += 1
+        if common["return_vectors"]:
+            assert actual[output_index].shape == (*pair_shape, 3)
+            np.testing.assert_allclose(
+                np.asarray(actual[output_index])[valid],
+                vectors,
+                rtol=1e-5,
+                atol=1e-5,
+            )
+            output_index += 1
+        if fused:
+            params = np.asarray(common["pair_params"])
+            assert actual[output_index].shape == pair_shape
+            assert actual[output_index + 1].shape == (*pair_shape, 3)
+            np.testing.assert_allclose(
+                np.asarray(actual[output_index])[valid],
+                params[rows, 0] + params[targets, 0] + distances,
+                rtol=1e-5,
+                atol=1e-5,
+            )
+            np.testing.assert_allclose(
+                np.asarray(actual[output_index + 1])[valid],
+                -vectors,
+                rtol=1e-5,
+                atol=1e-5,
+            )
+            output_index += 2
+        assert len(actual) == output_index
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

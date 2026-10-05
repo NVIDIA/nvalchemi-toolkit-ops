@@ -3425,6 +3425,7 @@ def cell_list(
             graph_mode="none",
             select_pair_grid=(
                 grid_policy == "adaptive"
+                and (not has_pair_outputs or strategy == "pair_centric")
                 and _resolve_cell_strategy(
                     strategy,
                     total_atoms=int(positions.shape[0]),
