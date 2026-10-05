@@ -178,11 +178,11 @@ float32 CUDA inputs, rather than promoting to float64 internally. This
 affects both Ewald and PME, since real space is shared between them. CPU
 execution is unchanged either way -- the fast path is CUDA-only.
 
-The change is numerically small (float32 results move at the ~1e-07 level)
-and second-order gradients (Hessian-vector products, including ordinary
-force- or stress-matching training losses) are unaffected: double-backward
-always uses the standard float64-materializing formulation regardless of
-which forward path ran.
+The change is numerically small: float32 results move at the ~1e-07 level.
+Second-order gradients move with the forward rather than staying fixed, so
+float32 Hessian-vector products -- including those from a force- or
+stress-matching loss -- shift to ~7e-07 relative and run 2.5-3.2x faster;
+float64 and CPU callers are unchanged.
 
 To keep the previous behavior, set `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1`
 before your process imports `nvalchemiops` (the flag is read once per

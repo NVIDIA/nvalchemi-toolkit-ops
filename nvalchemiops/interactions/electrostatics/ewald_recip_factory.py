@@ -318,6 +318,7 @@ def make_ewald_recip_kernel(
     cell_grad: bool = False,
     order: str = "forward",
     tiled: bool = False,
+    phase_scalar: type = wp.float64,
 ) -> _RecipKernels:
     """Return a cached, specialized ``ewald_recip`` kernel bundle.
 
@@ -348,6 +349,15 @@ def make_ewald_recip_kernel(
         When ``True``, selects the cooperative tiled fill kernel
         (``_ewald_recip_dbwd_reduce_tiled``); only effective for
         ``order="double_backward"``.
+    phase_scalar : type
+        Precision for the ``k . r`` phase and its transcendentals in the
+        second-order kernels; only effective for ``order="double_backward"``.
+        Defaults to ``wp.float64``, which reproduces the previous kernels
+        bit-for-bit because every cast becomes an identity. Pass ``wp.float32``
+        to evaluate the O(N*K) phase work in float32; the per-(system, k)
+        accumulators stay float64 either way, so the error does not grow with
+        the atom count. This is a specialization axis: it appears in the Warp
+        module name, so the two variants never share a module.
 
     Returns
     -------
@@ -360,7 +370,12 @@ def make_ewald_recip_kernel(
 
     if order == "double_backward":
         return _make_double_backward_kernels(
-            wp_dtype, batched, deriv_state, cell_grad, tiled=tiled
+            wp_dtype,
+            batched,
+            deriv_state,
+            cell_grad,
+            tiled=tiled,
+            phase_scalar=phase_scalar,
         )
 
     fill = get_ewald_recip_component_kernel(wp_dtype, component="fill", batched=batched)
@@ -395,6 +410,7 @@ def get_ewald_recip_kernel(
     order: str = "forward",
     component: str = "ewald_recip",
     tiled: bool = False,
+    phase_scalar: type = wp.float64,
 ) -> _RecipKernels:
     """Return a cached ``ewald_recip`` kernel bundle, validating dtype + component.
 
@@ -425,6 +441,11 @@ def get_ewald_recip_kernel(
     tiled : bool
         When ``True``, selects the cooperative tiled fill kernel for
         ``order="double_backward"``.
+    phase_scalar : type
+        Precision for the ``k . r`` phase and its transcendentals in the
+        second-order kernels; only effective for ``order="double_backward"``.
+        Defaults to ``wp.float64`` (bit-for-bit the previous behavior). See
+        :func:`make_ewald_recip_kernel`.
 
     Returns
     -------
@@ -447,6 +468,7 @@ def get_ewald_recip_kernel(
         cell_grad=cell_grad,
         order=order,
         tiled=tiled,
+        phase_scalar=phase_scalar,
     )
 
 
@@ -1129,6 +1151,7 @@ def _make_double_backward_kernels(
     deriv_state: _DerivState,
     cell_grad: bool = False,
     tiled: bool = False,
+    phase_scalar: type = wp.float64,
 ) -> _RecipKernels:
     """Build the second-derivative node (recompute mode).
 
@@ -1170,6 +1193,16 @@ def _make_double_backward_kernels(
     k-major outputs ``grad_kvectors`` / ``grad_volume`` and the k/V part of
     ``grad_grad_energy``. The atom-major ``compute`` contracts the stored sums into
     ``grad_positions`` / ``grad_charges`` (pos/charge terms + k/V cross terms).
+
+    ``phase_scalar`` sets the precision of ``k . r`` and its ``cos`` / ``sin``. Both
+    stages recompute those for every ``(atom, k)``, so that O(N*K) transcendental work
+    dominates an HVP step; evaluating it in float32 is what the float32 CUDA path does.
+    Every accumulator stays float64 regardless, which matters because the cell-gradient
+    variant reduces over all atoms sequentially in one thread -- float32 accumulation
+    there would degrade with the atom count, whereas float32 phases do not. The default
+    ``wp.float64`` makes each added cast an identity, so float64 and CPU callers are
+    bit-for-bit unchanged. It is part of the module name, so specializations never
+    collide.
     """
     info = _DTYPE_INFO[wp_dtype]
     vec_dtype = info.vec
@@ -1177,11 +1210,17 @@ def _make_double_backward_kernels(
     BATCHED = bool(batched)
     DERIV_DQ = wp.constant(deriv_state is _DerivState.E_F_dQ)
     CELL_GRAD = wp.constant(bool(cell_grad))
+    # Precision for the O(N*K) phase and its transcendentals. float64 reproduces
+    # the previous kernels bit-for-bit, since the casts become identities.
+    PHASE = phase_scalar if phase_scalar is not None else wp.float64
 
     deriv_suffix = "dq" if deriv_state is _DerivState.E_F_dQ else "force"
     cell_suffix = "_cell" if cell_grad else ""
-    reduce_suffix = f"double_backward_reduce_{deriv_suffix}{cell_suffix}"
-    compute_suffix = f"double_backward_{deriv_suffix}{cell_suffix}"
+    # Phase precision is a specialization axis: it changes the emitted code, so it
+    # must appear in the module name or two variants would share one Warp module.
+    phase_suffix = "" if PHASE is wp.float64 else "_phase32"
+    reduce_suffix = f"double_backward_reduce_{deriv_suffix}{cell_suffix}{phase_suffix}"
+    compute_suffix = f"double_backward_{deriv_suffix}{cell_suffix}{phase_suffix}"
     reduce_module = _ewald_recip_module_name(wp_dtype, BATCHED, reduce_suffix)
     compute_module = _ewald_recip_module_name(wp_dtype, BATCHED, compute_suffix)
 
@@ -1237,6 +1276,12 @@ def _make_double_backward_kernels(
         k_squared = kx * kx + ky * ky + kz * kz
         if k_squared < wp.float64(_K_SQUARED_EPSILON):
             return
+
+        # Phase-precision copies of k. The O(N*K) phase and its transcendentals
+        # evaluate at PHASE; every accumulator below stays float64.
+        kx_p = PHASE(k_vector[0])
+        ky_p = PHASE(k_vector[1])
+        kz_p = PHASE(k_vector[2])
 
         g_k = wp_exp_kernel(k_squared, exp_factor) * wp.float64(EIGHTPI) / vol
 
@@ -1302,9 +1347,13 @@ def _make_double_backward_kernels(
             ry = wp.float64(position[1])
             rz = wp.float64(position[2])
             qi = wp.float64(charges[atom_idx])
-            k_dot_r = kx * rx + ky * ry + kz * rz
-            cos_kr = wp.cos(k_dot_r)
-            sin_kr = wp.sin(k_dot_r)
+            k_dot_r = (
+                kx_p * PHASE(position[0])
+                + ky_p * PHASE(position[1])
+                + (kz_p * PHASE(position[2]))
+            )
+            cos_kr = wp.float64(wp.cos(k_dot_r))
+            sin_kr = wp.float64(wp.sin(k_dot_r))
             qc = qi * cos_kr
             qs = qi * sin_kr
 
@@ -1564,6 +1613,12 @@ def _make_double_backward_kernels(
         if k_squared < wp.float64(_K_SQUARED_EPSILON):
             return
 
+        # Phase-precision copies of k; per-lane accumulators stay float64 so the
+        # tile reduction is unchanged.
+        kx_p = PHASE(k_vector[0])
+        ky_p = PHASE(k_vector[1])
+        kz_p = PHASE(k_vector[2])
+
         g_k = wp_exp_kernel(k_squared, exp_factor) * wp.float64(EIGHTPI) / vol
 
         a_start = wp.int32(0)
@@ -1583,13 +1638,14 @@ def _make_double_backward_kernels(
             atom_idx = atom_tile_start + lane
             if atom_idx < a_end:
                 position = positions[atom_idx]
-                rx = wp.float64(position[0])
-                ry = wp.float64(position[1])
-                rz = wp.float64(position[2])
                 qi = wp.float64(charges[atom_idx])
-                k_dot_r = kx * rx + ky * ry + kz * rz
-                cos_kr = wp.cos(k_dot_r)
-                sin_kr = wp.sin(k_dot_r)
+                k_dot_r = (
+                    kx_p * PHASE(position[0])
+                    + ky_p * PHASE(position[1])
+                    + (kz_p * PHASE(position[2]))
+                )
+                cos_kr = wp.float64(wp.cos(k_dot_r))
+                sin_kr = wp.float64(wp.sin(k_dot_r))
                 qc = qi * cos_kr
                 qs = qi * sin_kr
 
@@ -1677,6 +1733,10 @@ def _make_double_backward_kernels(
         rx = wp.float64(position[0])
         ry = wp.float64(position[1])
         rz = wp.float64(position[2])
+        # Phase-precision copies of r; accumulators below stay float64.
+        rx_p = PHASE(position[0])
+        ry_p = PHASE(position[1])
+        rz_p = PHASE(position[2])
         vp = v_pos[atom_idx]
         if DERIV_DQ:
             vqi = v_charge[atom_idx]
@@ -1717,9 +1777,13 @@ def _make_double_backward_kernels(
             if k_squared < wp.float64(_K_SQUARED_EPSILON):
                 continue
 
-            k_dot_r = kx * rx + ky * ry + kz * rz
-            cos_m = wp.cos(k_dot_r)
-            sin_m = wp.sin(k_dot_r)
+            k_dot_r = (
+                rx_p * PHASE(k_vec[0])
+                + ry_p * PHASE(k_vec[1])
+                + (rz_p * PHASE(k_vec[2]))
+            )
+            cos_m = wp.float64(wp.cos(k_dot_r))
+            sin_m = wp.float64(wp.sin(k_dot_r))
             w_m = (
                 wp.float64(vp[0]) * kx + wp.float64(vp[1]) * ky + wp.float64(vp[2]) * kz
             )

@@ -60,6 +60,7 @@ import warp as wp
 from nvalchemiops.interactions.electrostatics._factory_common import (
     _DerivState,
     _use_fp32_electrostatics,
+    electrostatics_uses_legacy_fp32,
     get_backward_scale_kernel,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -461,6 +462,25 @@ def _atom_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     )
 
 
+def _resolve_recip_phase_scalar(wp_scalar: type, torch_device) -> type:
+    """Device-aware precision for the double-backward phase arithmetic.
+
+    The second-order reduce and compute stages each recompute ``cos(k.r)`` /
+    ``sin(k.r)`` for every ``(atom, k)``; that O(N*K) transcendental work is the
+    bulk of an HVP step. This selects the precision it evaluates at. Every
+    accumulator stays float64 regardless, so only the phase changes.
+
+    Mirrors :func:`_can_use_fp32_nostore`: float32 CUDA inputs only, and the
+    same ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` opt-out, so the forward and
+    second-order paths move together.
+    """
+    if wp_scalar is wp.float64:
+        return wp.float64
+    if torch_device.type != "cuda":
+        return wp.float64
+    return wp.float64 if electrostatics_uses_legacy_fp32() else wp_scalar
+
+
 def _can_use_fp32_nostore(input_dtype, torch_device) -> bool:
     """Whether the float32 no-store reciprocal path may serve this call.
 
@@ -470,9 +490,11 @@ def _can_use_fp32_nostore(input_dtype, torch_device) -> bool:
 
     Cell gradients are served by the ``_cellgrad`` fill variants, which ride the
     same reduction and additionally emit the unweighted per-k cache the O(S*K)
-    kspace backward consumes. Second-order (double-backward) cell gradients are
-    not affected: that path builds its own float64 ``(S, K)`` accumulators and
-    never reads these.
+    kspace backward consumes. Second-order (double-backward) cell gradients do
+    not read any of these: that path builds its own float64 ``(S, K)``
+    accumulators. Its phase precision is chosen separately by
+    :func:`_resolve_recip_phase_scalar`, so second-order results do still track
+    the forward's precision -- just not through this gate.
 
     float32 input is required: dropping the phase arithmetic to float32 is only
     defensible when the caller already chose float32 positions.
@@ -1057,18 +1079,20 @@ def _double_backward_impl(
     # ``dEdR_cache`` / ``dEdq_cache`` (the backward op's leading first-order caches) and
     # the trailing ``need_*`` flags are accepted for positional alignment but unused: the
     # second order always recomputes the per-(system,k) sums from the forward inputs
-    # using the standard (materializing) formulation, regardless of whether forward
-    # used the float32 no-store path -- there is no float32-nostore double-backward
-    # kernel. This matters for any loss built from forces or virial (both are
-    # themselves first derivatives of energy), since differentiating them again is a
-    # second-order gradient through positions/charges even though user code only
-    # calls ``.backward()`` once -- i.e. ordinary force- or stress-matching training,
-    # not just explicit ``create_graph=True`` use. Forward's fast path agrees with
-    # the standard formulation to ~1e-7 in value (see test_ewald_recip_fp32_nostore.py),
-    # so this is a small, deliberate accuracy trade-off -- the returned gradient is
-    # for the standard formulation exactly, not a formally consistent tangent of
-    # the fast forward -- rather than a hard error on the default path, which would
-    # otherwise break force/stress-loss training for every float32 CUDA caller.
+    # using the materializing formulation, regardless of whether forward used the
+    # float32 no-store path -- there is no float32-nostore double-backward kernel. The
+    # returned gradient is therefore that formulation's, not a formally consistent
+    # tangent of the fast forward; the two agree to ~1e-7 in value (see
+    # test_ewald_recip_fp32_nostore.py). That is a deliberate accuracy trade-off rather
+    # than a hard error on the default path, which would otherwise break force- or
+    # stress-matching training for every float32 CUDA caller -- such a loss
+    # differentiates energy twice even though user code calls ``.backward()`` once,
+    # since forces and virial are themselves first derivatives.
+    #
+    # ``phase_scalar`` below is a separate axis: it sets the precision of the phase
+    # recomputation inside that formulation (float32 on float32 CUDA), while the
+    # per-(system,k) accumulators stay float64. So second-order results do move with
+    # the forward's precision; they are not pinned to float64.
     input_dtype = positions.dtype
     num_atoms = positions.shape[0]
     num_k = k_vectors_2d.shape[-2]
@@ -1118,6 +1142,7 @@ def _double_backward_impl(
         cell_grad=use_cell_db,
         order="double_backward",
         tiled=use_tiled_reduce,
+        phase_scalar=_resolve_recip_phase_scalar(wp_scalar, positions.device),
     )
     # Per-(system,k) reduction scratch buffers (g_k-scaled sums).
     gA = wp.zeros((num_systems, num_k), dtype=wp.float64, device=device)

@@ -173,11 +173,9 @@
   and reciprocal space are affected -- real space is shared by Ewald and PME.
   CPU execution is unchanged either way; the fast path is CUDA-only. Set
   `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
-  (always float64-core) behavior. Changes float32 results at the ~1e-07
-  level; double-backward (Hessian-vector products, including ordinary
-  force- or stress-matching training losses) continues to use the standard
-  float64-materializing formulation regardless of which forward path ran, so
-  it is unaffected.
+  (always float64-core) behavior. Changes float32 results at the ~1e-07 level
+  and float32 Hessian-vector products at ~7e-07, the latter also 2.5-3.2x
+  faster.
 
 ### Added
 

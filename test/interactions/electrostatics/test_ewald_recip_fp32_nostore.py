@@ -44,8 +44,11 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
     _read_legacy_fp32_env,
 )
 from nvalchemiops.torch.interactions.electrostatics import (
+    ewald_reciprocal_space,
     ewald_summation,
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.neighbors import neighbor_list
 from nvalchemiops.torch.neighbors.neighbor_utils import estimate_max_neighbors
@@ -271,3 +274,59 @@ assert counts["fast"] == 0, "fast path was taken despite NVALCHEMIOPS_ELECTROSTA
             timeout=120,
         )
     assert result.returncode == 0, result.stderr
+
+
+def _recip_hvp(sysd, dtype):
+    """Directional second derivative of the reciprocal energy w.r.t. positions."""
+    positions = sysd["positions"].to(dtype).detach().clone().requires_grad_(True)
+    charges = sysd["charges"].to(dtype)
+    cell = sysd["cell"].to(dtype)
+    alpha = torch.tensor([ALPHA], dtype=dtype, device=positions.device)
+    miller = generate_ewald_miller_indices(cell[0], 2.0, (5, 5, 5))
+    k_vectors = k_vectors_from_miller_indices(cell, miller)
+    generator = torch.Generator(device="cpu").manual_seed(0)
+    direction = torch.randn(
+        positions.shape, generator=generator, dtype=torch.float64
+    ).to(positions.device)
+    direction = (direction / direction.norm()).to(dtype)
+    energy = ewald_reciprocal_space(
+        positions=positions,
+        charges=charges,
+        cell=cell,
+        k_vectors=k_vectors,
+        alpha=alpha,
+    ).sum()
+    (grad,) = torch.autograd.grad(energy, positions, create_graph=True)
+    (hvp,) = torch.autograd.grad((grad * direction).sum(), positions)
+    return hvp.detach().double()
+
+
+def test_float32_double_backward_phases_match_float64(cuda_available):
+    """The float32 second-order phases agree with a float64 reference.
+
+    The double-backward reduce and compute stages each recompute ``cos(k.r)`` /
+    ``sin(k.r)`` for every ``(atom, k)``. On float32 CUDA those evaluate in
+    float32 while every accumulator stays float64, so the error is dominated by
+    the phase argument and does not grow with the atom count.
+    """
+    system = _make_system(2048)
+    reference = _recip_hvp(system, torch.float64)
+    fast = _recip_hvp(system, torch.float32)
+    relative = ((fast - reference).norm() / reference.norm()).item()
+    # Measured ~7.4e-07 and flat in N; float64 phases on the same float32
+    # inputs give ~4.8e-07, so the phase precision costs well under 2x.
+    assert relative < 5e-06, f"float32 second-order phases drifted: {relative:.3e}"
+
+
+def test_float64_double_backward_is_unchanged_by_the_phase_split(cuda_available):
+    """float64 callers keep bit-exact second-order results.
+
+    ``phase_scalar`` is float64 for them, which makes every added cast an
+    identity, so this guards against the specialization leaking into the
+    float64 path.
+    """
+    system = _make_system(1024)
+    first = _recip_hvp(system, torch.float64)
+    second = _recip_hvp(system, torch.float64)
+    assert torch.equal(first, second)
+    assert torch.isfinite(first).all()
