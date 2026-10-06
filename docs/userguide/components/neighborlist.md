@@ -1329,6 +1329,17 @@ than the prepared state provides. A smaller or more skewed cell may require
 re-preparation; insufficient coverage raises instead of returning an incomplete
 neighbor list.
 
+Pass `atomic_density` to `prepare_neighbor_list(...)` to estimate omitted
+neighbor widths from density, measured in atoms per unit volume (for example,
+atoms/Å³ when positions are in Å). Explicit widths take precedence. Ordinary
+dual-cutoff routes estimate each missing width separately; cluster routes use
+the outer cutoff with a 32-neighbor floor.
+
+Omitting density preserves Torch's existing density-based estimates and JAX's
+atom-count-based widths. Estimates remain capacity heuristics: if neighbor rows
+overflow, increase the density or provide explicit widths. Density is consumed
+during preparation; do not pass it when reusing a state.
+
 Torch cluster-tile COO uses `max_pairs`. JAX fixed COO uses `coo_capacity`; one
 value applies to both cutoff groups, while a two-value tuple sets them
 independently. See the Torch or JAX

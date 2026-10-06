@@ -18,9 +18,11 @@
 import inspect
 from itertools import product
 
+import numpy as np
 import pytest
 import torch
 
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.torch.neighbors import (
     NeighborListState,
     NeighborOverflowError,
@@ -539,6 +541,281 @@ def test_prepared_existing_non_tile_routes(
         assert state.neighbor_matrix2 is result[3]
         assert state.num_neighbors2 is result[4]
         assert state.neighbor_matrix_shifts2 is result[5]
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    "method", ["naive", "cell_list", "batch_naive", "batch_cell_list"]
+)
+@pytest.mark.parametrize("atomic_density", [20, 20.0])
+def test_prepared_atomic_density_estimates_noncluster_widths_and_preserves_pairs(
+    method: str, atomic_density: int | float
+) -> None:
+    """Density estimates capacities for single and batch matrix routes."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.1, 0.1],
+            [0.6, 0.1, 0.1],
+            [1.2, 0.1, 0.1],
+            [1.7, 0.1, 0.1],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    batched = method.startswith("batch_")
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+    expected_width = estimate_max_neighbors(1.0, atomic_density=float(atomic_density))
+
+    defaults = prepare_neighbor_list(
+        positions, 1.0, cell=cell, pbc=pbc, batch_ptr=batch_ptr, method=method
+    )
+    explicit_none = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        atomic_density=None,
+    )
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        atomic_density=atomic_density,
+    )
+    assert defaults.neighbor_matrix is not None
+    assert explicit_none.neighbor_matrix is not None
+    assert state.neighbor_matrix is not None
+    assert explicit_none.neighbor_matrix.shape[1] == defaults.neighbor_matrix.shape[1]
+    assert state.neighbor_matrix.shape[1] == expected_width
+
+    prepared = neighbor_list(positions, cell=cell, state=state)
+    direct = neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        max_neighbors=expected_width,
+    )
+    assert_neighbor_matrix_equal(prepared, direct)
+    with pytest.raises(TypeError, match="unexpected keyword argument 'atomic_density'"):
+        neighbor_list(positions, cell=cell, state=state, atomic_density=atomic_density)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize(
+    ("primary_width", "secondary_width"),
+    [(None, None), (7, None), (None, 9), (7, 9)],
+)
+def test_prepared_atomic_density_dual_widths_are_independent_and_overridable(
+    batched: bool, primary_width: int | None, secondary_width: int | None
+) -> None:
+    """Dual-cutoff estimates use each cutoff and preserve explicit widths."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.1, 0.1],
+            [0.6, 0.1, 0.1],
+            [1.2, 0.1, 0.1],
+            [1.7, 0.1, 0.1],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cutoff, cutoff2, density = 1.0, 1.25, 20.0
+    method = "batch_naive" if batched else "naive"
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+    expected_primary = primary_width or estimate_max_neighbors(
+        cutoff, atomic_density=density
+    )
+    expected_secondary = secondary_width or estimate_max_neighbors(
+        cutoff2, atomic_density=density
+    )
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cutoff2=cutoff2,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        max_neighbors=primary_width,
+        max_neighbors2=secondary_width,
+        atomic_density=density,
+    )
+    assert state.neighbor_matrix1 is not None
+    assert state.neighbor_matrix2 is not None
+    assert state.neighbor_matrix1.shape[1] == expected_primary
+    assert state.neighbor_matrix2.shape[1] == expected_secondary
+    result = neighbor_list(positions, cell=cell, state=state)
+    assert result[0].shape[1] == expected_primary
+    assert result[3].shape[1] == expected_secondary
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("method", "batched"),
+    [("cluster_tile", False), ("batch_cluster_tile", True)],
+)
+@pytest.mark.parametrize(("cutoff", "cutoff2"), [(0.5, 1.25), (1.25, 0.5)])
+@pytest.mark.parametrize("max_neighbors", [None, 7])
+@pytest.mark.parametrize("density", [0.01, 20.0])
+def test_prepared_atomic_density_cluster_outer_width_and_floor(
+    method: str,
+    batched: bool,
+    cutoff: float,
+    cutoff2: float,
+    max_neighbors: int | None,
+    density: float,
+) -> None:
+    """Cluster widths use the outer cutoff, floor 32, and honor overrides."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.1, 0.1],
+            [0.4, 0.1, 0.1],
+            [1.1, 0.1, 0.1],
+            [1.4, 0.1, 0.1],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 5.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+    expected_width = max(
+        estimate_max_neighbors(max(cutoff, cutoff2), atomic_density=density), 32
+    )
+    if density == 20.0 and max_neighbors is None:
+        assert expected_width > estimate_max_neighbors(
+            min(cutoff, cutoff2), atomic_density=density
+        )
+    if max_neighbors is not None:
+        expected_width = max_neighbors
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cutoff2=cutoff2,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        format="matrix",
+        max_neighbors=max_neighbors,
+        max_tiles_per_group=1,
+        atomic_density=density,
+    )
+    assert state.neighbor_matrix1 is not None
+    assert state.neighbor_matrix2 is not None
+    assert state.neighbor_matrix1.shape[1] == expected_width
+    assert state.neighbor_matrix2.shape[1] == expected_width
+    prepared = neighbor_list(positions, cell=cell, state=state)
+    if batched:
+        assert batch_ptr is not None
+        direct = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            batch_ptr,
+            cutoff2=cutoff2,
+            max_neighbors=expected_width,
+            max_tiles_per_group=1,
+            format="matrix",
+        )
+    else:
+        direct = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            cutoff2=cutoff2,
+            max_neighbors=expected_width,
+            max_tiles_per_group=1,
+            format="matrix",
+        )
+    _assert_cluster_route_equal(prepared, direct, "matrix")
+
+
+@pytest.mark.parametrize(
+    "atomic_density",
+    [
+        pytest.param(True, id="bool"),
+        pytest.param(np.float64(0.5), id="numpy-scalar"),
+        pytest.param(np.array([0.5]), id="numpy-array"),
+        pytest.param(torch.tensor(0.5), id="torch-tensor"),
+        pytest.param("0.5", id="string"),
+        pytest.param(0.5 + 0j, id="complex"),
+        pytest.param(0, id="zero"),
+        pytest.param(-1, id="negative"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="positive-infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+        pytest.param(10**400, id="integer-conversion-overflow"),
+    ],
+)
+def test_prepared_atomic_density_rejects_invalid_values_with_explicit_width(
+    atomic_density: object,
+) -> None:
+    """Invalid density values are rejected even when no width estimate is needed."""
+    positions = torch.zeros((2, 3), dtype=torch.float32)
+    with pytest.raises(ValueError, match="atomic_density"):
+        prepare_neighbor_list(
+            positions,
+            0.5,
+            method="naive",
+            max_neighbors=8,
+            atomic_density=atomic_density,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_atomic_density_underestimate_preserves_overflow_error() -> None:
+    """An underestimated density retains the route's existing overflow error."""
+    positions = torch.zeros((34, 3), dtype=torch.float32, device="cuda")
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    density = 0.1
+    cutoff = 2.0
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        max_tiles_per_group=4,
+        atomic_density=density,
+    )
+    assert state.neighbor_matrix is not None
+    assert state.neighbor_matrix.shape[1] == max(
+        estimate_max_neighbors(cutoff, atomic_density=density), 32
+    )
+    with pytest.raises(NeighborOverflowError, match="larger than the maximum allowed"):
+        neighbor_list(positions, cell=cell, state=state)
+    assert not state.initialized.any()
 
 
 @pytest.mark.gpu

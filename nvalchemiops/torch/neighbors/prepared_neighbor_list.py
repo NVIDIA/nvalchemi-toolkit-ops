@@ -415,6 +415,22 @@ def _validate_span_margin(value: float) -> float:
     return value
 
 
+def _validate_atomic_density(value: object) -> float | None:
+    if value is None:
+        return None
+    if type(value) not in (int, float):
+        raise ValueError("atomic_density must be a finite positive Python int or float")
+    try:
+        density = float(value)
+    except OverflowError as exc:
+        raise ValueError(
+            "atomic_density must be a finite positive Python int or float"
+        ) from exc
+    if not math.isfinite(density) or density <= 0:
+        raise ValueError("atomic_density must be a finite positive Python int or float")
+    return density
+
+
 def _is_cluster_route(route: str) -> bool:
     return route in ("cluster_tile", "batch_cluster_tile")
 
@@ -1726,6 +1742,7 @@ def prepare_neighbor_list(
     fixed_cell: bool = False,
     pair_fn: object | None = None,
     span_margin: float = 0.0,
+    atomic_density: float | None = None,
     target_indices: torch.Tensor | None = None,
     strategy: str = "auto",
     atom_centric_path: str = "auto",
@@ -1801,6 +1818,14 @@ def prepare_neighbor_list(
         capped by the synthesized cell's remaining headroom. Equally small
         real expansion can also pass. A nonzero value requires ``cell=None``
         and a resolved cell-list route. This is not a neighbor-list skin.
+    atomic_density : float, optional
+        Finite positive Python ``int`` or ``float`` in atoms per unit volume,
+        using the same length units as positions and cutoffs. Used during
+        preparation to estimate only omitted neighbor widths; explicit widths
+        take precedence. ``None`` keeps the existing density-based defaults.
+        Ordinary dual-cutoff routes estimate each missing width at its cutoff;
+        cluster routes use the outer cutoff with a 32-neighbor floor. These
+        estimates are capacity heuristics.
     target_indices : torch.Tensor, shape (num_rows,), dtype=int32, optional
         Fixed compact source-row selection on the prepared device for routes
         that support partial rows.
@@ -1848,6 +1873,7 @@ def prepare_neighbor_list(
         raise ValueError("cutoff must be positive")
     cutoff2 = _positive_float("cutoff2", cutoff2)
     span_margin = _validate_span_margin(span_margin)
+    atomic_density = _validate_atomic_density(atomic_density)
     if kwargs:
         unknown = next(iter(kwargs))
         raise TypeError(
@@ -2042,9 +2068,15 @@ def prepare_neighbor_list(
         fill_value = positions.shape[0]
     elif not isinstance(fill_value, int) or isinstance(fill_value, bool):
         raise ValueError("fill_value must be an integer")
+
+    def estimate_width(at_cutoff: float) -> int:
+        if atomic_density is None:
+            return estimate_max_neighbors(at_cutoff)
+        return estimate_max_neighbors(at_cutoff, atomic_density=atomic_density)
+
     if max_neighbors is None:
         max_neighbors = max(
-            estimate_max_neighbors(
+            estimate_width(
                 max(float(cutoff), float(cutoff2 or cutoff))
                 if _is_cluster_route(route)
                 else cutoff
@@ -2055,7 +2087,7 @@ def prepare_neighbor_list(
         route in ("naive_dual_cutoff", "batch_naive_dual_cutoff")
         and max_neighbors2 is None
     ):
-        max_neighbors2 = max(estimate_max_neighbors(cutoff2 or cutoff), 1)
+        max_neighbors2 = max(estimate_width(cutoff2 or cutoff), 1)
     if _is_cluster_route(route) and max_tiles_per_group is None:
         build_cutoff = max(float(cutoff), float(cutoff2 or cutoff))
         if protected_batch_ptr is None:

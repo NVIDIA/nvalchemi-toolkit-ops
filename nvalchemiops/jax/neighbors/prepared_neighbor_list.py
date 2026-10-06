@@ -811,6 +811,23 @@ def _validate_span_margin(value: int | float) -> float:
     return value
 
 
+def _validate_atomic_density(value: Any) -> float | None:
+    """Validate and normalize the optional Python scalar density hint."""
+    if value is None:
+        return None
+    if type(value) not in (int, float):
+        raise ValueError("atomic_density must be a finite positive Python int or float")
+    try:
+        density = float(value)
+    except OverflowError as exc:
+        raise ValueError(
+            "atomic_density must be a finite positive Python int or float"
+        ) from exc
+    if not math.isfinite(density) or density <= 0:
+        raise ValueError("atomic_density must be a finite positive Python int or float")
+    return density
+
+
 def _batch_indices(
     batch_idx: jax.Array | None,
     batch_ptr: jax.Array | None,
@@ -1671,6 +1688,7 @@ def prepare_neighbor_list(
     max_neighbors: int | None = None,
     max_neighbors1: int | None = None,
     max_neighbors2: int | None = None,
+    atomic_density: float | None = None,
     coo_capacity: int | tuple[int, int] | None = None,
     max_tiles_per_group: int | None = None,
     return_vectors: bool = False,
@@ -1734,6 +1752,14 @@ def prepare_neighbor_list(
         uses that spelling.
     max_neighbors1, max_neighbors2 : int, optional
         Independent primary and secondary row widths for dual-cutoff routes.
+    atomic_density : float, optional
+        Finite positive Python ``int`` or ``float`` in atoms per unit volume,
+        using the same length units as positions and cutoffs. Used during
+        preparation to estimate only omitted neighbor widths; explicit widths
+        take precedence. ``None`` keeps the existing atom-count-based defaults.
+        Ordinary dual-cutoff routes estimate each missing width at its cutoff;
+        cluster routes use the outer cutoff with a 32-neighbor floor. These
+        estimates are capacity heuristics.
     coo_capacity : int or tuple of int, optional
         Fixed JAX COO capacity, required for prepared non-cluster COO. A scalar
         applies to both dual-cutoff groups; a pair sets them independently.
@@ -1804,6 +1830,7 @@ def prepare_neighbor_list(
     NeighborListState : Inspect resolved configuration, results, and status.
     check_neighbor_list_state : Convert sticky device status to an exception.
     """
+    atomic_density = _validate_atomic_density(atomic_density)
     if not isinstance(fixed_cell, bool):
         raise ValueError("fixed_cell must be a Python bool")
     if fixed_cell and cell is None:
@@ -1847,13 +1874,53 @@ def prepare_neighbor_list(
         kwargs,
     )
     method = resolution.method
-    kwargs = resolution.kwargs
+    kwargs = dict(resolution.kwargs)
     systems = resolution.systems
     n = resolution.num_atoms
     cluster = resolution.cluster
     fmt = resolution.format
     capacity = resolution.capacity
     fv = resolution.fill_value
+    if atomic_density is not None:
+        from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+
+        if cluster:
+            if cutoff2 is None:
+                if kwargs.get("max_neighbors") is None:
+                    estimate = estimate_max_neighbors(
+                        float(cutoff),
+                        atomic_density=atomic_density,
+                        max_neighbors_lower_bound=32,
+                    )
+                    kwargs["max_neighbors"] = estimate
+            else:
+                missing_primary = kwargs.get("max_neighbors1") is None
+                missing_secondary = kwargs.get("max_neighbors2") is None
+                if missing_primary or missing_secondary:
+                    estimate_cutoff = max(float(cutoff), float(cutoff2))
+                    estimate = estimate_max_neighbors(
+                        estimate_cutoff,
+                        atomic_density=atomic_density,
+                        max_neighbors_lower_bound=32,
+                    )
+                    if missing_primary:
+                        kwargs["max_neighbors1"] = estimate
+                    if missing_secondary:
+                        kwargs["max_neighbors2"] = estimate
+        elif cutoff2 is None:
+            if kwargs.get("max_neighbors") is None:
+                kwargs["max_neighbors"] = estimate_max_neighbors(
+                    float(cutoff), atomic_density=atomic_density
+                )
+        else:
+            if kwargs.get("max_neighbors1") is None:
+                kwargs["max_neighbors1"] = estimate_max_neighbors(
+                    float(cutoff), atomic_density=atomic_density
+                )
+            if kwargs.get("max_neighbors2") is None:
+                kwargs["max_neighbors2"] = estimate_max_neighbors(
+                    float(cutoff2), atomic_density=atomic_density
+                )
     if span_margin and not (
         cell is None and method in {"cell_list", "batch_cell_list"}
     ):

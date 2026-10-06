@@ -50,6 +50,7 @@ from nvalchemiops.jax.neighbors.prepared_neighbor_list import (
     check_neighbor_list_state,
     prepare_neighbor_list,
 )
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
 from .conftest import requires_gpu
 from .test_cluster_tile import _brute_force_pairs_full, _matrix_to_pair_set_full
@@ -1106,6 +1107,294 @@ def test_prepared_cluster_tile_output_requires_cluster_and_is_public() -> None:
             method="naive",
             format="tile",
         )
+
+
+def test_prepared_atomic_density_none_preserves_atom_count_default() -> None:
+    """Omitting or explicitly clearing density keeps the atom-count width."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    default = prepare_neighbor_list(positions, 1.0, method="naive")
+    explicit_none = prepare_neighbor_list(
+        positions, 1.0, method="naive", atomic_density=None
+    )
+    assert default.neighbor_matrix.shape == (4, 4)
+    assert explicit_none.neighbor_matrix.shape == default.neighbor_matrix.shape
+
+
+def test_prepared_atomic_density_none_keeps_cluster_default_below_floor() -> None:
+    """Without a density hint, cluster widths keep the existing atom-count default."""
+    positions, cell, pbc = _cell_inputs(4)
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        max_tiles_per_group=1,
+    )
+    assert state.neighbor_matrix.shape == (4, 4)
+
+
+@pytest.mark.parametrize(
+    ("method", "batched"),
+    [
+        ("naive", False),
+        ("cell_list", False),
+        ("batch_naive", True),
+        ("batch_cell_list", True),
+    ],
+    ids=["naive", "cell-list", "batch-naive", "batch-cell-list"],
+)
+@pytest.mark.parametrize("density", [1, 100.0], ids=["python-int", "python-float"])
+def test_prepared_atomic_density_estimates_single_width(
+    method: str, batched: bool, density: int | float
+) -> None:
+    """Each single-cutoff route estimates omitted width and preserves active topology."""
+    positions = jnp.array(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [5.0, 0.0, 0.0], [5.4, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32) if batched else None
+    batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32) if batched else None
+    expected_width = estimate_max_neighbors(1.2, atomic_density=density)
+    prepared_options: dict[str, Any] = {"method": method}
+    direct_options: dict[str, Any] = {
+        "method": method,
+        "max_neighbors": expected_width,
+    }
+    if batched:
+        prepared_options.update(batch_idx=batch_idx, batch_ptr=batch_ptr)
+        direct_options.update(batch_idx=batch_idx, batch_ptr=batch_ptr)
+    if method.endswith("cell_list"):
+        prepared_options.update(strategy="atom_centric", max_total_cells=128)
+        direct_options["max_total_cells"] = 128
+
+    state = prepare_neighbor_list(
+        positions,
+        1.2,
+        atomic_density=density,
+        **prepared_options,
+    )
+    assert state.neighbor_matrix.shape == (4, expected_width)
+    actual, successor = neighbor_list(positions, state=state)
+    assert bool(jnp.all(successor.valid))
+    assert int(jnp.sum(actual[1])) > 0
+
+    expected = neighbor_list(positions, 1.2, **direct_options)
+    _assert_active_cell_topology_equal(actual, expected)
+
+
+def test_prepared_atomic_density_preserves_explicit_single_width() -> None:
+    """The density hint does not replace an explicit single-cutoff width."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    state = prepare_neighbor_list(
+        positions,
+        1.2,
+        method="naive",
+        max_neighbors=7,
+        atomic_density=100.0,
+    )
+    assert state.neighbor_matrix.shape == (4, 7)
+
+
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "two-system-batch"])
+def test_prepared_atomic_density_estimates_dual_widths_per_cutoff(
+    batched: bool,
+) -> None:
+    """Dual primary and secondary widths use their own cutoff estimates."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32) if batched else None
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cutoff2=1.5,
+        method="naive_dual_cutoff",
+        batch_ptr=batch_ptr,
+        atomic_density=4.0,
+    )
+    primary = estimate_max_neighbors(0.5, atomic_density=4.0)
+    secondary = estimate_max_neighbors(1.5, atomic_density=4.0)
+    assert state.neighbor_matrix1.shape == (4, primary)
+    assert state.neighbor_matrix2.shape == (4, secondary)
+    assert state.is_batched is batched
+    assert state.num_systems == (2 if batched else 1)
+
+
+def test_prepared_atomic_density_keeps_dual_cutoff_order_validation() -> None:
+    """Density estimation does not relax the existing dual cutoff order."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    with pytest.raises(ValueError, match="cutoff must not exceed cutoff2"):
+        prepare_neighbor_list(
+            positions,
+            1.5,
+            cutoff2=0.5,
+            method="naive_dual_cutoff",
+            atomic_density=4.0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("explicit", "expected"),
+    [
+        ({"max_neighbors1": 7, "max_neighbors2": 9}, (7, 9)),
+        ({"max_neighbors1": 7}, (7, 64)),
+        ({"max_neighbors2": 9}, (16, 9)),
+    ],
+    ids=["both-explicit", "secondary-estimated", "primary-estimated"],
+)
+def test_prepared_atomic_density_preserves_explicit_dual_widths(
+    explicit: dict[str, int], expected: tuple[int, int]
+) -> None:
+    """Explicit dual widths take precedence while omitted widths are estimated."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cutoff2=1.5,
+        method="naive_dual_cutoff",
+        atomic_density=4.0,
+        **explicit,
+    )
+    assert state.neighbor_matrix1.shape == (4, expected[0])
+    assert state.neighbor_matrix2.shape == (4, expected[1])
+
+
+@pytest.mark.parametrize("density", [0.01, 100.0], ids=["floor", "outer-cutoff"])
+def test_prepared_atomic_density_cluster_uses_outer_cutoff_and_floor(
+    density: float,
+) -> None:
+    """Dual cluster widths use the outer cutoff and a 32-neighbor estimate floor."""
+    positions, cell, pbc = _cell_inputs(4)
+    expected = estimate_max_neighbors(
+        1.5,
+        atomic_density=density,
+        max_neighbors_lower_bound=32,
+    )
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cutoff2=1.5,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        atomic_density=density,
+        max_tiles_per_group=1,
+    )
+    assert state.neighbor_matrix1.shape == (4, expected)
+    assert state.neighbor_matrix2.shape == (4, expected)
+
+
+def test_prepared_atomic_density_cluster_keeps_explicit_widths() -> None:
+    """The cluster floor and density estimate do not replace explicit widths."""
+    positions, cell, pbc = _cell_inputs(4)
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cutoff2=1.5,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        max_neighbors1=7,
+        max_neighbors2=9,
+        atomic_density=1e308,
+        max_tiles_per_group=1,
+    )
+    assert state.neighbor_matrix1.shape == (4, 7)
+    assert state.neighbor_matrix2.shape == (4, 9)
+
+
+@pytest.mark.parametrize(
+    "density",
+    [
+        True,
+        False,
+        0,
+        -1,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        "0.5",
+        1 + 2j,
+        np.float64(0.5),
+        np.array(0.5),
+        jnp.asarray(0.5),
+        10**1000,
+    ],
+    ids=[
+        "true",
+        "false",
+        "zero",
+        "negative",
+        "nan",
+        "positive-infinity",
+        "negative-infinity",
+        "string",
+        "complex",
+        "numpy-scalar",
+        "numpy-array",
+        "jax-array",
+        "integer-conversion-overflow",
+    ],
+)
+def test_prepared_atomic_density_rejects_invalid_values_even_with_explicit_width(
+    density: Any,
+) -> None:
+    """Invalid density hints are rejected even when no width needs estimating."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    with pytest.raises(ValueError, match="atomic_density"):
+        prepare_neighbor_list(
+            positions,
+            1.0,
+            method="naive",
+            max_neighbors=8,
+            atomic_density=density,
+        )
+
+
+def test_prepared_atomic_density_is_not_a_runtime_option() -> None:
+    """Density is consumed during preparation and rejected during execution."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    state = prepare_neighbor_list(positions, 1.0, method="naive")
+    with pytest.raises(TypeError, match="unexpected prepared neighbor-list option"):
+        neighbor_list(positions, state=state, atomic_density=1.0)
+
+
+def test_prepared_atomic_density_state_threads_jitted_successors() -> None:
+    """A density-sized state executes and threads normally through JIT."""
+    positions, _cell, _pbc = _cell_inputs(4)
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        method="naive",
+        atomic_density=1.0,
+    )
+    compiled = jax.jit(lambda values, prepared: neighbor_list(values, state=prepared))
+    first, state1 = compiled(positions, state)
+    second, state2 = compiled(positions, state1)
+    np.testing.assert_array_equal(np.asarray(first[1]), np.asarray(second[1]))
+    assert bool(jnp.all(state1.valid))
+    assert bool(jnp.all(state2.valid))
+
+
+def test_prepared_atomic_density_underestimate_remains_sticky() -> None:
+    """An intentionally undersized density estimate keeps sticky overflow status."""
+    positions = jnp.arange(18, dtype=jnp.float32)[:, None] * 0.01
+    positions = jnp.concatenate(
+        (positions, jnp.zeros((18, 2), dtype=jnp.float32)), axis=1
+    )
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        method="naive",
+        atomic_density=0.001,
+    )
+    assert state.neighbor_matrix.shape == (18, 16)
+    _, failed = neighbor_list(positions, state=state)
+    assert failed.valid.tolist() == [False]
+    separated = positions.at[:, 0].set(jnp.arange(18, dtype=jnp.float32) * 2.0)
+    _, succeeded = neighbor_list(separated, state=failed)
+    assert succeeded.valid.tolist() == [False]
+    with pytest.raises(NeighborOverflowError):
+        check_neighbor_list_state(succeeded)
 
 
 @pytest.mark.parametrize(

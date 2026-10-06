@@ -45,7 +45,8 @@
   ``check_neighbor_list_state(...)``. Synthesized nonperiodic cell-list states
   accept a bounded, translation-invariant ``span_margin``. Their span checks
   tolerate bounded floating-point rounding, which can also admit equally small
-  real expansion.
+  real expansion. Both preparation APIs accept ``atomic_density`` to estimate
+  omitted neighbor widths; explicit capacities take precedence.
 - Prepared Torch and JAX neighbor states accept ``fixed_cell=True`` to cache
   cell-dependent search geometry, including inverse cells, cell-list grids,
   and cluster-tile lattice factors and cutoff certificates. The option requires
