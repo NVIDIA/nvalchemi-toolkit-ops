@@ -287,10 +287,21 @@ def estimate_neighbor_list_costs(
                 "positions to synthesize a bounding box from for a "
                 "free-boundary system"
             )
-        _, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
-        if num_systems > 1:
-            cell = cell.expand(num_systems, -1, -1)
-            pbc = pbc.unsqueeze(0).expand(num_systems, -1)
+        if batch_idx is not None and num_systems > 1:
+            # Per-system boxes: one shared box inflates every system's volume
+            # when they occupy different regions, which is not what the
+            # dispatcher builds.
+            _, cell, pbc = synthesize_cell_for_batch(
+                positions,
+                batch_idx.detach().to(dtype=torch.int32),
+                batch_ptr.detach().to(dtype=torch.int32),
+                cutoff,
+            )
+        else:
+            _, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
+            if num_systems > 1:
+                cell = cell.expand(num_systems, -1, -1)
+                pbc = pbc.unsqueeze(0).expand(num_systems, -1)
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.detach().to(dtype=torch.int32).contiguous()
     if batch_idx is not None:
