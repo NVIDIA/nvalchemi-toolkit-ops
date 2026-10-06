@@ -79,14 +79,19 @@ license:  ## Check license headers
 #
 # Groups are declared as a name plus the pytest arguments for that name, rather
 # than a single path, so a group can exclude a subtree (see electrostatics below).
-FULL_GROUPS := types math neighbors dynamics batch_utils warp_dispatch \
+FULL_GROUPS := types math neighbors_jax neighbors neighbors_torch dynamics batch_utils warp_dispatch \
 	torch_boundary segment_ops segment_ops_backward segment_ops_torch \
 	segment_ops_jax interactions dispersion electrostatics electrostatics_jax \
 	electrostatics_torch electrostatics_shared benchmarks
 
 ARGS_types                := test/test_types.py
 ARGS_math                 := test/math
-ARGS_neighbors            := test/neighbors
+# JAX neighbors use the pooling allocator configured below for CUDA capture.
+# Keep Torch in a separate process so JAX's pool is released at process exit.
+# Exclude bindings from the shared group to avoid running tests twice.
+ARGS_neighbors            := test/neighbors --ignore=test/neighbors/bindings
+ARGS_neighbors_jax        := test/neighbors/bindings/jax
+ARGS_neighbors_torch      := test/neighbors/bindings/torch
 ARGS_dynamics             := test/dynamics
 ARGS_batch_utils          := test/test_batch_utils.py
 ARGS_warp_dispatch        := test/test_warp_dispatch.py
@@ -119,7 +124,7 @@ ARGS_benchmarks           := test/benchmarks test/test_benchmark_pme_mesh_integr
 # Regenerate with `make minimal-suite-report` when a module gains behaviour the
 # selected files do not exercise. Do not hand-edit these lists without re-running
 # it — the point of them is that they are measured, not guessed.
-MINIMAL_GROUPS ?= types_min math_min neighbors_min dynamics_min warp_dispatch_min \
+MINIMAL_GROUPS ?= types_min math_min neighbors_jax_min neighbors_min neighbors_torch_min dynamics_min warp_dispatch_min \
 	segment_ops_min segment_ops_backward_min segment_ops_torch_min \
 	segment_ops_jax_min interactions_min dispersion_min electrostatics_min \
 	electrostatics_jax_min electrostatics_torch_min
@@ -164,11 +169,12 @@ ARGS_electrostatics_torch_min := test/interactions/electrostatics/bindings/torch
 	test/interactions/electrostatics/bindings/torch/test_multipole_reciprocal.py \
 	test/interactions/electrostatics/bindings/torch/test_slab.py
 
-ARGS_neighbors_min := test/neighbors/test_cell_list_kernel_getters.py \
+NEIGHBORS_MIN_FILES := test/neighbors/test_cell_list_kernel_getters.py \
 	test/neighbors/test_cluster_tile_kernel_getters.py \
 	test/neighbors/test_cluster_tile_kernels.py \
 	test/neighbors/test_compat_imports.py \
 	test/neighbors/test_pair_outputs.py \
+	test/neighbors/test_fixed_cell_core.py \
 	test/neighbors/bindings/jax/test_batch_cluster_tile.py \
 	test/neighbors/bindings/jax/test_batch_naive.py \
 	test/neighbors/bindings/jax/test_cluster_tile.py \
@@ -176,6 +182,8 @@ ARGS_neighbors_min := test/neighbors/test_cell_list_kernel_getters.py \
 	test/neighbors/bindings/jax/test_naive_dual_cutoff.py \
 	test/neighbors/bindings/jax/test_neighborlist.py \
 	test/neighbors/bindings/jax/test_rebuild_detection.py \
+	test/neighbors/bindings/jax/test_prepared_neighbor_list.py \
+	test/neighbors/bindings/jax/test_prepared_neighbor_list_status.py \
 	test/neighbors/bindings/torch/test_base_dispatch.py \
 	test/neighbors/bindings/torch/test_batch_cell_list.py \
 	test/neighbors/bindings/torch/test_batch_cluster_tile.py \
@@ -187,7 +195,17 @@ ARGS_neighbors_min := test/neighbors/test_cell_list_kernel_getters.py \
 	test/neighbors/bindings/torch/test_naive.py \
 	test/neighbors/bindings/torch/test_naive_dual_cutoff.py \
 	test/neighbors/bindings/torch/test_neighborlist.py \
-	test/neighbors/bindings/torch/test_rebuild_detection.py
+	test/neighbors/bindings/torch/test_rebuild_detection.py \
+	test/neighbors/bindings/torch/test_prepared_neighbor_list.py \
+	test/neighbors/bindings/torch/test_prepared_neighbor_list_compiler.py
+ARGS_neighbors_min := $(filter-out test/neighbors/bindings/jax/% test/neighbors/bindings/torch/%,$(NEIGHBORS_MIN_FILES))
+ARGS_neighbors_jax_min := $(filter test/neighbors/bindings/jax/%,$(NEIGHBORS_MIN_FILES))
+ARGS_neighbors_torch_min := $(filter test/neighbors/bindings/torch/%,$(NEIGHBORS_MIN_FILES))
+
+# Run JAX neighbor tests with its normal pooling allocator before JAX initializes.
+# Other groups keep the root conftest platform-allocator default.
+TEST_ENV_neighbors_jax := XLA_PYTHON_CLIENT_ALLOCATOR=default XLA_PYTHON_CLIENT_PREALLOCATE=false
+TEST_ENV_neighbors_jax_min := XLA_PYTHON_CLIENT_ALLOCATOR=default XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 # 36 minutes in one job would still be too slow to wait on, so CI splits the
 # suite across parallel runners. Groups are packed by measured cost rather than
@@ -198,7 +216,7 @@ ARGS_neighbors_min := test/neighbors/test_cell_list_kernel_getters.py \
 # the JAX/Torch split is intact.
 SHARD_COUNT := 3
 SHARD_1_GROUPS := electrostatics_torch_min
-SHARD_2_GROUPS := neighbors_min math_min electrostatics_min
+SHARD_2_GROUPS := neighbors_jax_min neighbors_min neighbors_torch_min math_min electrostatics_min
 SHARD_3_GROUPS := electrostatics_jax_min dispersion_min dynamics_min \
 	interactions_min types_min warp_dispatch_min segment_ops_min \
 	segment_ops_backward_min segment_ops_torch_min segment_ops_jax_min
@@ -238,7 +256,7 @@ PYTEST_TESTMON_FLAGS ?=
 SKIP_MINIMAL_FILES ?=
 
 define run_group
-	COVERAGE_FILE=.coverage.$(1) \
+	$(TEST_ENV_$(1)) COVERAGE_FILE=.coverage.$(1) \
 	uv run coverage run -m pytest $(ARGS_$(1)) $(PYTEST_SLOW_FLAG) \
 		$(PYTEST_TESTMON_FLAGS) $(if $(SKIP_MINIMAL_FILES),$(IGNORE_$(1))); \
 	RET=$$?; if [ $$RET -ne 0 ] && [ $$RET -ne 5 ]; then exit $$RET; fi;
@@ -250,7 +268,7 @@ testmon-collect:  ## Build the testmon database (never combine this with coverag
 	@# only one, so a run that collects for testmon reports near-zero coverage.
 	@# This target therefore runs on its own, without `coverage run`.
 	$(foreach grp,$(FULL_GROUPS),\
-		uv run pytest --testmon $(ARGS_$(grp)); \
+		$(TEST_ENV_$(grp)) uv run pytest --testmon $(ARGS_$(grp)); \
 		RET=$$?; if [ $$RET -ne 0 ] && [ $$RET -ne 5 ]; then exit $$RET; fi;) true
 
 .PHONY: coverage-run

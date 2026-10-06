@@ -30,6 +30,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
     TileBufferOverflow,
 )
+from nvalchemiops.torch.neighbors import neighbor_list, prepare_neighbor_list
 from nvalchemiops.torch.neighbors.cell_list import cell_list
 from nvalchemiops.torch.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -747,8 +748,14 @@ class TestTileNeighborListCorrectness:
                 )
                 assert edge in tile_pairs
 
-    def test_dual_cutoff_certificate_uses_outer_triclinic_radius(self, device, dtype):
-        """An uncertified outer radius uses closest-image search for cutoff2."""
+    @pytest.mark.parametrize("fixed_cell", [False, True])
+    @pytest.mark.parametrize(
+        ("primary_cutoff", "secondary_cutoff"), [(2.0, 4.8), (4.8, 2.0)]
+    )
+    def test_dual_cutoff_certificate_uses_outer_triclinic_radius(
+        self, device, dtype, fixed_cell, primary_cutoff, secondary_cutoff
+    ):
+        """The larger radius keeps the closest-image search in either cutoff order."""
         positions = torch.tensor(
             [[4.0, 5.0, 0.0], [8.3, 3.0, 0.0]],
             dtype=dtype,
@@ -770,18 +777,39 @@ class TestTileNeighborListCorrectness:
         assert (1, 0, 0, 0) in expected_outer[0]
         assert (0, 0, 0, 0) in expected_outer[1]
 
-        dual = cluster_tile_neighbor_list(
-            positions,
-            inner_cutoff,
-            cell,
-            max_neighbors=8,
-            cutoff2=outer_cutoff,
+        if fixed_cell:
+            state = prepare_neighbor_list(
+                positions,
+                primary_cutoff,
+                cell=cell[0],
+                pbc=torch.ones(3, dtype=torch.bool, device=device),
+                method="cluster_tile",
+                cutoff2=secondary_cutoff,
+                fixed_cell=True,
+                max_neighbors=8,
+                max_tiles_per_group=1,
+            )
+            dual = neighbor_list(positions, cell=cell[0], state=state)
+        else:
+            dual = cluster_tile_neighbor_list(
+                positions,
+                primary_cutoff,
+                cell,
+                max_neighbors=8,
+                cutoff2=secondary_cutoff,
+            )
+        expected_primary = (
+            expected_inner if primary_cutoff == inner_cutoff else expected_outer
         )
-        assert _per_atom_neighbor_sets(*dual[:3], 2) == expected_inner
-        assert _per_atom_neighbor_sets(*dual[3:], 2) == expected_outer
-        assert dual[1].cpu().tolist() == [0, 0]
-        assert dual[4].cpu().tolist() == [1, 1]
-        assert dual[5][0, 0].cpu().tolist() == [0, 0, 0]
+        expected_secondary = (
+            expected_inner if secondary_cutoff == inner_cutoff else expected_outer
+        )
+        assert _per_atom_neighbor_sets(*dual[:3], 2) == expected_primary
+        assert _per_atom_neighbor_sets(*dual[3:], 2) == expected_secondary
+        assert dual[1].cpu().tolist() == [len(row) for row in expected_primary]
+        assert dual[4].cpu().tolist() == [len(row) for row in expected_secondary]
+        if primary_cutoff == inner_cutoff:
+            assert dual[5][0, 0].cpu().tolist() == [0, 0, 0]
 
     @pytest.mark.parametrize("rotated", [False, True], ids=["skewed", "rotated"])
     def test_qr_height_certificate_sheared_translated_pair(
@@ -890,8 +918,9 @@ class TestTileNeighborListCorrectness:
         assert tile[1][:1].cpu().tolist() == [0]
         assert tile[2][:1].cpu().tolist() == [0]
 
+    @pytest.mark.parametrize("fixed_cell", [False, True])
     def test_qr_height_uncertified_pair_near_cutoff_matches_reference(
-        self, device, dtype
+        self, device, dtype, fixed_cell
     ):
         """A radius just above half-height retains the complete image search."""
         positions = torch.tensor(
@@ -906,14 +935,31 @@ class TestTileNeighborListCorrectness:
         expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
         assert expected == [frozenset(((1, 0, -1, 0),)), frozenset(((0, 0, 1, 0),))]
 
-        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
-            positions,
-            cutoff,
-            cell,
-            max_neighbors=4,
-            return_distances=True,
-            return_vectors=True,
-        )
+        if fixed_cell:
+            state = prepare_neighbor_list(
+                positions,
+                cutoff,
+                cell=cell[0],
+                pbc=torch.ones(3, dtype=torch.bool, device=device),
+                method="cluster_tile",
+                fixed_cell=True,
+                max_neighbors=4,
+                max_tiles_per_group=1,
+                return_distances=True,
+                return_vectors=True,
+            )
+            matrix, counts, shifts, distances, vectors = neighbor_list(
+                positions, cell=cell[0], state=state
+            )
+        else:
+            matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                max_neighbors=4,
+                return_distances=True,
+                return_vectors=True,
+            )
         assert _per_atom_neighbor_sets(matrix, counts, shifts, 2) == expected
         torch.testing.assert_close(
             shifts[:, 0],

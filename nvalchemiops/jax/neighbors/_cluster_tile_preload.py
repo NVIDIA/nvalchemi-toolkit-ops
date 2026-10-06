@@ -29,6 +29,7 @@ from nvalchemiops.neighbors.cluster_tile.kernels import (
     _get_reset_cluster_tile_counts_kernel,
     get_batch_query_cluster_tile_coo_kernel,
     get_batch_query_cluster_tile_kernel,
+    get_prepare_cluster_tile_geometry_kernel,
     get_query_cluster_tile_coo_kernel,
     get_query_cluster_tile_kernel,
 )
@@ -180,13 +181,16 @@ def _validate_cluster_tile_coo_options(
 
 
 @functools.cache
-def _preload_cluster_tile_build_module(device_alias: str) -> None:
+def _preload_cluster_tile_build_module(
+    device_alias: str, *, fixed_cell: bool = False
+) -> None:
     """Register every build variant, then load their shared module once."""
     kernels = [
         _get_build_cluster_tiles_kernel(
             batched=False,
             segmented=False,
             selective=selective,
+            fixed_cell=fixed_cell,
         )
         for selective in (False, True)
     ]
@@ -195,6 +199,7 @@ def _preload_cluster_tile_build_module(device_alias: str) -> None:
             batched=True,
             segmented=segmented,
             selective=selective,
+            fixed_cell=fixed_cell,
         )
         for segmented, selective in (
             (False, False),
@@ -206,13 +211,16 @@ def _preload_cluster_tile_build_module(device_alias: str) -> None:
         _get_reset_cluster_tile_counts_kernel(selective=selective)
         for selective in (False, True)
     )
+    kernels.append(get_prepare_cluster_tile_geometry_kernel())
     device = wp.get_device(device_alias)
     empty_sentinel(1, wp.int32, device)
     empty_sentinel(1, wp.bool, device)
     _load_kernel_modules(device, *kernels)
 
 
-def _preload_cluster_tile_build_kernel(*, device_source: Any | None = None) -> None:
+def _preload_cluster_tile_build_kernel(
+    *, device_source: Any | None = None, fixed_cell: bool = False
+) -> None:
     """Construct and load all cluster-tile build specializations.
 
     Parameters
@@ -221,7 +229,7 @@ def _preload_cluster_tile_build_kernel(*, device_source: Any | None = None) -> N
         JAX value used to select devices for the preload.
     """
     for device_alias in _warp_device_aliases(device_source):
-        _preload_cluster_tile_build_module(device_alias)
+        _preload_cluster_tile_build_module(device_alias, fixed_cell=fixed_cell)
 
 
 @functools.cache
@@ -234,6 +242,7 @@ def _preload_cluster_tile_query_kernel_cached(
     dual_cutoff: bool,
     geometry: bool,
     pair_fn: Any | None,
+    fixed_cell: bool,
 ) -> None:
     """Load one matrix-query specialization once per device."""
     getter = (
@@ -244,6 +253,7 @@ def _preload_cluster_tile_query_kernel_cached(
     kernel = getter(
         tile_segmented=tile_segmented,
         selective=selective,
+        fixed_cell=fixed_cell,
         dual_cutoff=dual_cutoff,
         return_vectors=geometry,
         return_distances=geometry,
@@ -268,6 +278,7 @@ def _preload_cluster_tile_query_kernel(
     geometry: bool = False,
     pair_fn: Any | None = None,
     device_source: Any | None = None,
+    fixed_cell: bool = False,
 ) -> None:
     """Construct and load a cluster-tile matrix-query specialization.
 
@@ -297,6 +308,7 @@ def _preload_cluster_tile_query_kernel(
             dual_cutoff=dual_cutoff,
             geometry=geometry,
             pair_fn=pair_fn,
+            fixed_cell=fixed_cell,
         )
 
 
@@ -308,10 +320,11 @@ def _preload_cluster_tile_coo_kernel_cached(
     tile_segmented: bool,
     coo_segmented: bool,
     selective: bool,
+    fixed_cell: bool,
 ) -> None:
     """Load one COO-query specialization once per device."""
     if coo_segmented:
-        _preload_cluster_tile_build_module(device_alias)
+        _preload_cluster_tile_build_module(device_alias, fixed_cell=fixed_cell)
     getter = (
         get_batch_query_cluster_tile_coo_kernel
         if batched
@@ -321,6 +334,7 @@ def _preload_cluster_tile_coo_kernel_cached(
         tile_segmented=tile_segmented,
         coo_segmented=coo_segmented,
         selective=selective,
+        fixed_cell=fixed_cell,
     )
     device = wp.get_device(device_alias)
     empty_sentinel(1, wp.int32, device)
@@ -338,6 +352,7 @@ def _preload_cluster_tile_coo_kernel(
     coo_segmented: bool = False,
     selective: bool = False,
     device_source: Any | None = None,
+    fixed_cell: bool = False,
 ) -> None:
     """Construct and load a topology-only cluster-tile COO specialization.
 
@@ -361,4 +376,5 @@ def _preload_cluster_tile_coo_kernel(
             tile_segmented=tile_segmented,
             coo_segmented=coo_segmented,
             selective=selective,
+            fixed_cell=fixed_cell,
         )

@@ -1057,6 +1057,7 @@ def _graph_naive_tile_pbc_wrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
     cell: wp.array(dtype=wp.mat33f),
     pbc: wp.array2d(dtype=wp.bool),
+    inv_cell: wp.array(dtype=wp.mat33f),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
@@ -1064,6 +1065,7 @@ def _graph_naive_tile_pbc_wrapped_f32(
     cutoff: wp.float32,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1081,6 +1083,8 @@ def _graph_naive_tile_pbc_wrapped_f32(
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
+        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
+        reuse_inv_cell=bool(reuse_inv_cell),
     )
 
 
@@ -1088,6 +1092,7 @@ def _graph_naive_tile_pbc_wrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
     cell: wp.array(dtype=wp.mat33d),
     pbc: wp.array2d(dtype=wp.bool),
+    inv_cell: wp.array(dtype=wp.mat33d),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
@@ -1095,6 +1100,7 @@ def _graph_naive_tile_pbc_wrapped_f64(
     cutoff: wp.float64,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1112,6 +1118,8 @@ def _graph_naive_tile_pbc_wrapped_f64(
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
+        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
+        reuse_inv_cell=bool(reuse_inv_cell),
     )
 
 
@@ -1190,6 +1198,8 @@ def _naive_pair_outputs_forward(
     pair_params: jax.Array | None = None,
     target_indices: jax.Array | None = None,
     half_fill: bool = False,
+    wrap_positions: bool = True,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure for the naive autograd path.
 
@@ -1315,13 +1325,20 @@ def _naive_pair_outputs_forward(
         else:
             nm, nn, nv, nd = outs
     else:
+        fixed_mode = _fixed_cell_geometry is not None
+        fixed_inverse = (
+            None if _fixed_cell_geometry is None else _fixed_cell_geometry[0]
+        )
+        pbc_mode = (
+            "prewrapped" if fixed_mode and not wrap_positions else "wrap_on_entry"
+        )
         if has_pair_fn:
             kernel = _get_jax_naive_pair_fn_kernel(
-                pair_fn, wp_dtype, "wrap_on_entry", half_fill, is_partial
+                pair_fn, wp_dtype, pbc_mode, half_fill, is_partial
             )
-        elif is_partial:
+        elif is_partial or fixed_inverse is not None:
             kernel = _get_jax_naive_pair_kernel(
-                wp_dtype, "wrap_on_entry", half_fill, is_partial
+                wp_dtype, pbc_mode, half_fill, is_partial
             )
         elif half_fill:
             kernel = _DIRECT_NAIVE_GEOMETRY_KERNELS[("wrap_on_entry", True)][
@@ -1351,11 +1368,29 @@ def _naive_pair_outputs_forward(
                 max_shifts_per_system,
             ) = compute_naive_num_shifts(cell, cutoff, pbc)
         offs = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+        positions_kernel = positions
+        if fixed_mode and wrap_positions and fixed_inverse is not None:
+            positions_kernel = jnp.zeros_like(positions)
+            wrap_kernel = (
+                _jax_wrap_positions_single_f64
+                if f64
+                else _jax_wrap_positions_single_f32
+            )
+            positions_kernel, offs = wrap_kernel(
+                positions,
+                cell,
+                fixed_inverse,
+                pbc,
+                empty_batch_idx,
+                positions_kernel,
+                offs,
+                launch_dims=(total_atoms,),
+            )
         active_shift_dim = int(max_shifts_per_system)
         if is_partial and not half_fill:
             active_shift_dim = 2 * active_shift_dim - 1
         outs = kernel(
-            positions,
+            positions_kernel,
             offs,
             cutoff_sq,
             zero_dt,
@@ -1457,6 +1492,7 @@ def naive_neighbor_list(
     pair_params: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
     # Deprecated kwarg aliases (removed in 0.5):
     inv_cell: jax.Array | None = None,
     positions_wrapped: jax.Array | None = None,
@@ -1917,6 +1953,8 @@ def naive_neighbor_list(
             "pair_params": pair_params,
             "target_indices": target_indices,
             "half_fill": bool(half_fill),
+            "wrap_positions": bool(wrap_positions),
+            "_fixed_cell_geometry": _fixed_cell_geometry,
         }
         route_out = _route_pair_outputs(
             positions,
@@ -2014,6 +2052,8 @@ def naive_neighbor_list(
         "inv_cell",
         inv_cell,
     )
+    if _fixed_cell_geometry is not None and _fixed_cell_geometry[0] is not None:
+        inv_cell = _fixed_cell_geometry[0]
     positions_wrapped = resolve_buffer_alias(
         "positions_wrapped_buffer",
         positions_wrapped_buffer,
@@ -2209,8 +2249,17 @@ def naive_neighbor_list(
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
                 (True, bool(wrap_positions), positions.dtype)
             ]
-            pbc_arg = (pbc,) if wrap_positions else ()
-            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
+            reuse_inv_cell = (
+                wrap_positions
+                and _fixed_cell_geometry is not None
+                and _fixed_cell_geometry[0] is not None
+            )
+            pbc_arg = (
+                (pbc, _fixed_cell_geometry[0] if reuse_inv_cell else empty_cell)
+                if wrap_positions
+                else ()
+            )
+            tile_args = (
                 positions,
                 cell,
                 *pbc_arg,
@@ -2221,6 +2270,11 @@ def naive_neighbor_list(
                 cutoff_static,
                 num_shifts,
                 half_fill,
+            )
+            if wrap_positions:
+                tile_args += (reuse_inv_cell,)
+            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
+                *tile_args,
             )
     elif graph_mode == "warp":
         has_pbc = pbc is not None
