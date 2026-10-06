@@ -144,6 +144,7 @@ from nvalchemiops.math.spline import (
 # Import from the torch-level module (NOT the electrostatics package) to avoid a
 # spline -> electrostatics -> pme -> spline import cycle.
 from nvalchemiops.torch._warp_op_helpers import (
+    _capture_safe_inverse,
     register_warp_op_chain,
     scoped_torch_warp_stream,
 )
@@ -570,7 +571,7 @@ def _spline_gather_gradient_backward_chain(ctx, grad_force):
     #   explicit (prefactor) term:  ff.T @ grad_force   (ff = cell @ force = -qgf)
     #   implicit (stencil-Hessian): HV.T @ positions    (HV = cell @ grad_pos_hess)
     if ctx.needs_cell:
-        cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))  # (1, 3, 3)
+        cell = _capture_safe_inverse(cell_inv_t.transpose(-1, -2))  # (1, 3, 3)
         ff = saved_forces @ cell[0].transpose(-1, -2)
         term_explicit = ff.transpose(-1, -2) @ grad_force_c
         hv = grad_pos_hess @ cell[0].transpose(-1, -2)
@@ -606,7 +607,7 @@ def _cell_inv_t_grad_from_force(
     dependence via the ``spline_gather_gradient`` chain, and ``inv`` is
     Torch-native.
     """
-    cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))  # (1, 3, 3)
+    cell = _capture_safe_inverse(cell_inv_t.transpose(-1, -2))  # (1, 3, 3)
     qgf = -(forces @ cell[0].transpose(-1, -2))
     return (qgf.transpose(-1, -2) @ positions).unsqueeze(0)
 
@@ -900,7 +901,7 @@ def _spline_gather_gradient(
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     if cell_inv_t is None:
-        cell_inv = torch.linalg.inv(cell)
+        cell_inv = _capture_safe_inverse(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.spline_gather_gradient(
         positions,
@@ -1075,7 +1076,7 @@ def _spline_gather_with_force_backward_chain(ctx, grad_potential, grad_forces):
             if ctx.needs_pos:
                 grad_pos = _add(grad_pos, pos_hess)
             if ctx.needs_cell:
-                cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))
+                cell = _capture_safe_inverse(cell_inv_t.transpose(-1, -2))
                 ff = saved_forces @ cell[0].transpose(-1, -2)
                 term_explicit = ff.transpose(-1, -2) @ gf
                 hv = pos_hess @ cell[0].transpose(-1, -2)
@@ -1475,7 +1476,7 @@ def _batch_spline_gather_gradient_backward_chain(ctx, grad_force):
     # grad_cell_inv_t: per-system vjp of force w.r.t. cell_inv_t (explicit
     # prefactor + implicit stencil-Hessian terms), reduced per system.
     if ctx.needs_cell:
-        cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))  # (B, 3, 3)
+        cell = _capture_safe_inverse(cell_inv_t.transpose(-1, -2))  # (B, 3, 3)
         cell_per_atom = cell[idx]  # (N, 3, 3)
         ff = torch.bmm(cell_per_atom, saved_forces.unsqueeze(-1)).squeeze(
             -1
@@ -1512,7 +1513,7 @@ def _batch_cell_inv_t_grad_from_force(
     Reduced over atoms with ``index_add_`` so the cell second order flows through
     autograd.
     """
-    cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))  # (B, 3, 3)
+    cell = _capture_safe_inverse(cell_inv_t.transpose(-1, -2))  # (B, 3, 3)
     idx = batch_idx.to(torch.int64)
     cell_per_atom = cell[idx]  # (N, 3, 3)
     qgf = -torch.bmm(cell_per_atom, forces.unsqueeze(-1)).squeeze(-1)  # (N, 3)
@@ -1840,7 +1841,7 @@ def _batch_spline_gather_gradient(
 ) -> torch.Tensor:
     """Internal: batched spline gather-gradient (registered custom op)."""
     if cell_inv_t is None:
-        cell_inv = torch.linalg.inv(cell)
+        cell_inv = _capture_safe_inverse(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.batch_spline_gather_gradient(
         positions,
@@ -2025,7 +2026,7 @@ def _batch_spline_gather_with_force_backward_chain(ctx, grad_potential, grad_for
                 grad_pos = _add(grad_pos, pos_hess)
             if ctx.needs_cell:
                 idx = batch_idx.to(torch.int64)
-                cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))
+                cell = _capture_safe_inverse(cell_inv_t.transpose(-1, -2))
                 cell_per_atom = cell[idx]
                 ff = torch.bmm(cell_per_atom, saved_forces.unsqueeze(-1)).squeeze(-1)
                 hv = torch.bmm(cell_per_atom, pos_hess.unsqueeze(-1)).squeeze(-1)
