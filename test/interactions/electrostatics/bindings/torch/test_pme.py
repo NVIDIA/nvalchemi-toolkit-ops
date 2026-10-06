@@ -37,6 +37,9 @@ import torch
 import warp as wp
 from torch.fx.experimental.proxy_tensor import make_fx
 
+from nvalchemiops.interactions.electrostatics._factory_common import (
+    _read_legacy_fp32_env,
+)
 from nvalchemiops.torch.interactions.electrostatics import (
     compute_bspline_moduli_1d,
     estimate_pme_parameters,
@@ -656,6 +659,66 @@ class TestDtypeSupport:
         )
         assert torch.allclose(f_f32.double(), f_f64, rtol=1e-4, atol=1e-5), (
             f"Forces mismatch: f32={f_f32}, f64={f_f64}"
+        )
+
+    def test_fast_vs_legacy_fp32_consistency(self):
+        """``particle_mesh_ewald`` agrees fast vs. legacy at float32 CUDA.
+
+        PME's real-space contribution shares ``ewald_real_factory`` with
+        Ewald, so it picked up the same float32 fast-path default
+        (``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` unset). The reciprocal
+        mesh/FFT path is untouched by that flag, so this exercises the
+        composite function end to end rather than isolating the changed
+        piece, matching how a real caller would notice (or not notice) a
+        divergence.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device("cuda")
+        positions, charges, cell = create_dipole_system(device, dtype=torch.float32)
+        num_atoms = positions.shape[0]
+        neighbor_matrix = torch.zeros(
+            (num_atoms, num_atoms - 1), dtype=torch.int32, device=device
+        )
+        for i in range(num_atoms):
+            neighbor_matrix[i] = torch.tensor(
+                [j for j in range(num_atoms) if j != i],
+                dtype=torch.int32,
+                device=device,
+            )
+        neighbor_matrix_shifts = torch.zeros(
+            (num_atoms, num_atoms - 1, 3), dtype=torch.int32, device=device
+        )
+
+        def run(legacy):
+            with pytest.MonkeyPatch.context() as mp:
+                if legacy:
+                    mp.setenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", "1")
+                else:
+                    mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", raising=False)
+                _read_legacy_fp32_env.cache_clear()
+                energies, forces = particle_mesh_ewald(
+                    positions=positions,
+                    charges=charges,
+                    cell=cell,
+                    alpha=0.3,
+                    mesh_dimensions=(16, 16, 16),
+                    neighbor_matrix=neighbor_matrix,
+                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    compute_forces=True,
+                )
+            _read_legacy_fp32_env.cache_clear()
+            return energies, forces
+
+        e_fast, f_fast = run(legacy=False)
+        e_legacy, f_legacy = run(legacy=True)
+
+        assert torch.isfinite(e_fast).all() and torch.isfinite(f_fast).all()
+        assert torch.allclose(e_fast, e_legacy, rtol=1e-5, atol=1e-7), (
+            f"energy: fast={e_fast}, legacy={e_legacy}"
+        )
+        assert torch.allclose(f_fast, f_legacy, rtol=1e-5, atol=1e-7), (
+            f"forces: fast={f_fast}, legacy={f_legacy}"
         )
 
 
