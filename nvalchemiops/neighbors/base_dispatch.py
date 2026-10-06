@@ -34,6 +34,7 @@ __all__ = [
     "FEATURE_POSITIONS_FLOAT32",
     "NEIGHBOR_LIST_STRATEGIES",
     "auto_base_constants",
+    "fp64_naive_penalty",
     "finalize_neighbor_list_method",
     "get_select_neighbor_list_method_cost_kernel",
     "neighbor_list_strategy_run_args",
@@ -60,7 +61,7 @@ NaiveStrategy = Literal["scalar", "tile"]
 # the decision rather than raw atom-count thresholds.
 AUTO_BASE_DEFAULTS = {
     "NVALCHEMI_NEIGHLIST_CELL_SHELL": 27.0,
-    "NVALCHEMI_NEIGHLIST_CELL_SETUP": 4096.0,
+    "NVALCHEMI_NEIGHLIST_CELL_SETUP": 1192450.0,
 }
 
 DEFAULT_SINGLE_MAX_NBINS = 524288
@@ -81,6 +82,59 @@ FEATURE_BATCHED = 1 << 2
 _MAX_WARP_LINEAR_LAUNCH = 2**31 - 1
 _EPS = 1.0e-30
 _INF = 3.0e30
+# Reference stencil the ``shell`` knob is normalised against (3x3x3).
+_SHELL_REFERENCE = 27.0
+
+# Naive per-candidate scan and per-pair output write. The scan weight is on a
+# float32 basis; float64 is handled by _FP64_NAIVE_PENALTY below.
+_NAIVE_SCAN = 0.002
+_NAIVE_WRITE = 1.3
+# Scalar and tile are indistinguishable per candidate, so break the tie toward
+# tile by a margin below the measurement noise rather than leaving the choice
+# to enumeration order.
+_NAIVE_SCALAR_TIEBREAK = 1.01
+_NAIVE_FLOOR = 340700.0
+
+_CELL_ATOM_SCAN = 0.1
+_CELL_ATOM_WRITE = 1.5
+_CELL_PAIR_WRITE = 0.437
+_CELL_PAIR_LAUNCH = 0.3
+_CELL_PAIR_SCAN = 0.1
+# Pair-centric sorts positions into cell order first, a per-atom pass that
+# atom-centric has no equivalent of.
+_CELL_PAIR_PER_ATOM = 50.0
+
+# Pair-centric enumerates (cell, neighbour-offset) blocks across the whole
+# grid, so the vacuum in a free-boundary bounding box is work it performs;
+# atom-centric starts from atoms and never visits an empty cell.
+_APERIODIC_PAIR_VACUUM = 2.0
+
+# Naive evaluates N^2 distances in the position dtype, while cell_list is
+# dominated by an index-bound sort, so the crossover between them moves with
+# the device's FP64 rate for float64 inputs only.
+_FP64_NAIVE_PENALTY = 5.0
+# SM architectures with ~1:2 FP64 throughput. Unlisted architectures and CPUs
+# take the penalised path, which is the conservative direction.
+_FAST_FP64_ARCHS = frozenset({70, 72, 80, 90, 100})
+
+# Cluster-tile build is a Morton encode, radix sort, cluster assignment and
+# tile scan, so its per-atom term is well above pair-centric's single sort
+# pass; its tile queries emit pairs from shared memory, so its per-pair write
+# is below pair-centric's.
+_CLUSTER_TILE_PIPELINE = 1200000.0
+_CLUSTER_TILE_PER_ATOM = 750.0
+_CLUSTER_TILE_WRITE = 0.2
+
+# Batched overheads are dominated by per-atom work: the wrap/fill launches
+# preceding the search run over atoms, so summed across systems they scale with
+# the total atom count however it is partitioned. Only naive and pair-centric
+# carry these; atom-centric launches once per batch. The naive per-atom term is
+# position-dtype arithmetic, so it takes the same float64 penalty as the scan
+# and is stated on the same float32 basis.
+_BATCH_NAIVE_PER_SYSTEM = 0.0
+_BATCH_NAIVE_PER_ATOM = 20.0
+_BATCH_PAIR_PER_SYSTEM = 270.0
+_BATCH_PAIR_PER_ATOM = 10.0
 _SPHERE_VOLUME_FACTOR = 4.1887902047863905
 
 _OPTION_CUTOFF2 = 1 << 0
@@ -209,6 +263,43 @@ def auto_base_constants() -> tuple[float, float]:
         _auto_env_float("NVALCHEMI_NEIGHLIST_CELL_SHELL"),
         _auto_env_float("NVALCHEMI_NEIGHLIST_CELL_SETUP"),
     )
+
+
+def fp64_naive_penalty(device: wp.Device) -> float:
+    """Return the float64 scan penalty for ``device``.
+
+    Parameters
+    ----------
+    device : warp.context.Device
+        Device the selector will run on.
+
+    Returns
+    -------
+    float
+        Multiplier applied to the naive per-candidate scan cost when positions
+        are float64. ``1.0`` on architectures with fast FP64.
+
+    Notes
+    -----
+    Overridden by ``NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`` when set, which is
+    the escape hatch for an architecture missing from
+    :data:`_FAST_FP64_ARCHS`.
+
+    See Also
+    --------
+    auto_base_constants : The other env-tunable selector constants.
+    """
+    raw = os.environ.get("NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    arch = getattr(device, "arch", None)
+    if getattr(device, "is_cuda", False) and arch is not None:
+        if int(arch) in _FAST_FP64_ARCHS:
+            return 1.0
+    return float(_FP64_NAIVE_PENALTY)
 
 
 def _wp_scalar_from_cell_dtype(cell_dtype: type) -> type:
@@ -378,6 +469,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         cutoff: wp.float32,
         shell: wp.float32,
         setup: wp.float32,
+        fp64_scan_penalty: wp.float32,
         max_nbins: wp.int32,
         max_launch_size: wp.int64,
         option_mask: wp.int32,
@@ -411,6 +503,8 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             Cell-list shell work multiplier.
         setup : float
             Cell-list per-system setup cost.
+        fp64_scan_penalty : float
+            Multiplier applied to the naive scan cost for float64 positions.
         max_nbins : int
             Cell-list per-system cap used by the selected frontend.
         max_launch_size : int
@@ -635,21 +729,43 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         if half_fill:
             expected_pairs = expected_pairs * wp.float32(0.5)
 
-        # Fixed per-system launch/allocation overhead (higher when batched).
-        naive_setup = wp.float32(2048.0)
+        # This kernel accumulates per system, so constants here are charged
+        # per system; the batched naive path launches once for the whole batch,
+        # so its floor is amortised instead.
+        system_share = wp.float32(1.0) / wp.float32(max(num_systems, wp.int32(1)))
+        # Supplied by the host for this device; applies to float64 only.
+        precision_scale = wp.float32(1.0)
+        if not is_float32:
+            precision_scale = fp64_scan_penalty
+
+        pair_vacuum = wp.float32(1.0)
+        if not any_pbc:
+            pair_vacuum = wp.float32(_APERIODIC_PAIR_VACUUM)
+
+        naive_setup = wp.float32(_NAIVE_FLOOR) * system_share
         if is_batched:
-            naive_setup = wp.float32(20000.0)
+            naive_setup = (
+                naive_setup
+                + wp.float32(_BATCH_NAIVE_PER_SYSTEM)
+                + wp.float32(_BATCH_NAIVE_PER_ATOM) * precision_scale * n_float
+            )
         # Naive cost = per-candidate scan + per-pair output write + setup.
-        # Scan weight: scalar 0.35 (global loads) vs tile 0.010 (shared-memory
-        # reuse). Output write weight: 2.0 scalar vs 1.5 tile.
+        # The scalar path pays for global loads where the tile path reuses
+        # shared memory, so it carries the heavier scan weight.
         scalar_cost = (
-            wp.float32(0.35) * active_n_work * wp.float32(shift_count)
-            + wp.float32(2.0) * expected_pairs
+            wp.float32(_NAIVE_SCAN * _NAIVE_SCALAR_TIEBREAK)
+            * precision_scale
+            * active_n_work
+            * wp.float32(shift_count)
+            + wp.float32(_NAIVE_WRITE) * expected_pairs
             + naive_setup
         )
         tile_cost = (
-            wp.float32(0.010) * active_n_work * wp.float32(shift_count)
-            + wp.float32(1.5) * expected_pairs
+            wp.float32(_NAIVE_SCAN)
+            * precision_scale
+            * active_n_work
+            * wp.float32(shift_count)
+            + wp.float32(_NAIVE_WRITE) * expected_pairs
             + naive_setup
         )
         if (
@@ -715,19 +831,6 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         ):
             wp.atomic_max(flags, 2, wp.int32(1))
 
-        # cost_cells = grid cell count (volume / cutoff^3), clamped to
-        # [1, max_nbins]. grid_work is the pruned candidate count: naive
-        # active_n_work scanned over ``shell`` stencil cells (default 27 ~ 3x3x3).
-        cost_cells = volume / cutoff_volume
-        cost_cells = wp.max(cost_cells, wp.float32(1.0))
-        cost_cells = wp.min(cost_cells, wp.float32(max_nbins))
-        grid_work = shell * active_n_work / cost_cells
-        # Atom-centric: 2.0 per-candidate distance test + 0.8 output write,
-        # over the cell-grid build/sort floor ``setup``.
-        cell_atom_cost = (
-            setup + wp.float32(2.0) * grid_work + wp.float32(0.8) * expected_pairs
-        )
-
         radius_x = wp.int32(
             wp.ceil(cutoff * wp.float32(cells_per_dimension[0]) / face_distance_x)
         )
@@ -740,6 +843,29 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         radius_x = max(radius_x, wp.int32(0))
         radius_y = max(radius_y, wp.int32(0))
         radius_z = max(radius_z, wp.int32(0))
+
+        # Candidates per source atom = stencil cells * atoms per cell, both
+        # taken from the grid that is actually built rather than from a fixed
+        # stencil and an idealised cell count.
+        stencil_cells = wp.float32(
+            (wp.int32(2) * radius_x + wp.int32(1))
+            * (wp.int32(2) * radius_y + wp.int32(1))
+            * (wp.int32(2) * radius_z + wp.int32(1))
+        )
+        cost_cells = wp.max(wp.float32(total_cells_i32), wp.float32(1.0))
+        grid_work = (
+            (shell / wp.float32(_SHELL_REFERENCE))
+            * stencil_cells
+            * active_n_work
+            / cost_cells
+        )
+        # The grid build is a single batched launch, so ``setup`` is amortised
+        # rather than charged once per system.
+        cell_atom_cost = (
+            setup * system_share
+            + wp.float32(_CELL_ATOM_SCAN) * grid_work
+            + wp.float32(_CELL_ATOM_WRITE) * expected_pairs
+        )
         n_outer = (
             radius_x
             * (wp.int32(2) * radius_y + wp.int32(1))
@@ -765,11 +891,19 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         # Pair-centric: cheaper per pair (0.55 write, 0.5 scan) but pays a
         # per-block launch term (0.025 * pair_launch_effective) for its many
         # small blocks (capped when coarsening is required).
+        # Pair-centric launches per (cell, neighbour-offset), so every system
+        # adds its own blocks and its floor stays per-system.
         cell_pair_cost = (
-            setup
-            + wp.float32(0.55) * expected_pairs
-            + wp.float32(0.025) * wp.float32(pair_launch_effective)
-            + wp.float32(0.5) * grid_work
+            setup * system_share
+            + wp.float32(_CELL_PAIR_PER_ATOM) * n_float
+            + (
+                wp.float32(_BATCH_PAIR_PER_SYSTEM)
+                + wp.float32(_BATCH_PAIR_PER_ATOM) * n_float
+            )
+            * wp.float32(is_batched)
+            + wp.float32(_CELL_PAIR_WRITE) * expected_pairs
+            + wp.float32(_CELL_PAIR_LAUNCH) * wp.float32(pair_launch_effective)
+            + wp.float32(_CELL_PAIR_SCAN) * grid_work * pair_vacuum
         )
         wp.atomic_add(costs, 2, cell_atom_cost)
         wp.atomic_add(costs, 3, cell_pair_cost)
@@ -802,12 +936,12 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         # Cluster-tile one-time pipeline floor (Morton encode, sort, cluster
         # build, tile scan), added once per batch rather than per-system.
         if tid == 0:
-            wp.atomic_add(costs, 4, wp.float32(1200000.0))
-        # Per-atom build: 32 * n (radix sort + cluster assignment, modeled
-        # linearly over the large-N range cluster_tile runs in); the
-        # 0.35 * expected_pairs term is the tile query output write.
+            wp.atomic_add(costs, 4, wp.float32(_CLUSTER_TILE_PIPELINE))
+        # Per-atom build plus the tile-query output write.
         cluster_cost = (
-            wp.float32(0.35) * expected_pairs + wp.float32(32.0) * n_float + setup
+            wp.float32(_CLUSTER_TILE_WRITE) * expected_pairs
+            + wp.float32(_CLUSTER_TILE_PER_ATOM) * n_float
+            + setup
         )
         wp.atomic_add(costs, 4, cluster_cost)
 
@@ -949,6 +1083,7 @@ def estimate_neighbor_list_costs(
     costs = wp.zeros(5, dtype=wp.float32, device=device)
     flags = wp.zeros(len(_FLAG_NAMES), dtype=wp.int32, device=device)
     shell, setup = auto_base_constants()
+    fp64_scan_penalty = fp64_naive_penalty(device)
     pbc_is_batched = pbc.ndim == 2
     pbc_single = pbc if not pbc_is_batched else empty_sentinel(1, wp.bool, device)
     pbc_batch = pbc if pbc_is_batched else empty_sentinel(2, wp.bool, device)
@@ -985,6 +1120,7 @@ def estimate_neighbor_list_costs(
             wp.float32(float(cutoff)),
             wp.float32(float(shell)),
             wp.float32(float(setup)),
+            wp.float32(float(fp64_scan_penalty)),
             wp.int32(int(max_nbins)),
             wp.int64(int(max_launch_size)),
             wp.int32(options),

@@ -125,7 +125,18 @@ class _TriclinicQR:
 
 @wp.func
 def _prepare_triclinic_qr(cell: wp.mat33f) -> _TriclinicQR:
-    """Prepare QR factors for the cell's lattice basis."""
+    """Prepare QR factors for the cell's lattice basis.
+
+    Parameters
+    ----------
+    cell : wp.mat33f
+        Cell matrix with lattice vectors as rows.
+
+    Returns
+    -------
+    _TriclinicQR
+        QR factors, with ``axis_aligned`` set when the cell matrix is diagonal.
+    """
     qr = _TriclinicQR()
     qr.axis_aligned = (
         cell[0, 1] == 0.0
@@ -175,6 +186,18 @@ def _triclinic_cutoff_is_certified(
     the reciprocal lattice vectors. Requiring each bound to remain below one
     half certifies that rounding selects that image and that no second image
     can also be in range. The small margin is conservative for float32 input.
+
+    Parameters
+    ----------
+    inv_cell : wp.mat33f
+        Inverse cell matrix, whose columns are the reciprocal vectors.
+    outer_cutoff : wp.float32
+        Largest query cutoff the certificate must hold for.
+
+    Returns
+    -------
+    wp.bool
+        Whether fractional rounding is exact within ``outer_cutoff``.
     """
     reciprocal_a = wp.vec3f(inv_cell[0, 0], inv_cell[1, 0], inv_cell[2, 0])
     reciprocal_b = wp.vec3f(inv_cell[0, 1], inv_cell[1, 1], inv_cell[2, 1])
@@ -191,7 +214,20 @@ def _triclinic_cutoff_is_certified(
 def _prepare_triclinic_qr_if_needed(
     cell: wp.mat33f, fractional_rounding_certified: wp.bool
 ) -> _TriclinicQR:
-    """Prepare QR only when the cutoff certificate cannot select the image."""
+    """Prepare QR only when the cutoff certificate cannot select the image.
+
+    Parameters
+    ----------
+    cell : wp.mat33f
+        Cell matrix with lattice vectors as rows.
+    fractional_rounding_certified : wp.bool
+        Whether the cutoff certificate already selects the image.
+
+    Returns
+    -------
+    _TriclinicQR
+        QR factors, or a default-initialized value when they are not needed.
+    """
     qr = _TriclinicQR()
     if not fractional_rounding_certified:
         qr = _prepare_triclinic_qr(cell)
@@ -211,6 +247,18 @@ def _triclinic_qr_height_is_certified(
     rounding then minimizes the remaining q0 component. The relative margin
     protects the float32 comparisons. Axis-aligned cells use their direct
     componentwise path and do not have QR heights populated.
+
+    Parameters
+    ----------
+    qr : _TriclinicQR
+        QR factors for the lattice basis.
+    outer_cutoff : wp.float32
+        Largest query cutoff the certificate must hold for.
+
+    Returns
+    -------
+    wp.bool
+        Whether the lattice heights exceed twice ``outer_cutoff``.
     """
     if qr.axis_aligned:
         return wp.bool(False)
@@ -224,7 +272,24 @@ def _triclinic_qr_height_is_certified(
 def _wrap_triclinic_fractional(
     d: wp.vec3f, cell: wp.mat33f, inv_cell: wp.mat33f
 ) -> tuple[wp.vec3f, wp.vec3i]:
-    """Apply componentwise rounding after the cutoff certificate succeeds."""
+    """Apply componentwise rounding after the cutoff certificate succeeds.
+
+    Parameters
+    ----------
+    d : wp.vec3f
+        Separation vector in Cartesian space.
+    cell : wp.mat33f
+        Cell matrix with lattice vectors as rows.
+    inv_cell : wp.mat33f
+        Inverse lattice basis.
+
+    Returns
+    -------
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
+    wp.vec3i
+        Lattice shift applied to reach it.
+    """
     fractional = wp.transpose(inv_cell) * d
     s_a = -wp.int32(wp.floor(fractional[0] + 0.5))
     s_b = -wp.int32(wp.floor(fractional[1] + 0.5))
@@ -354,7 +419,24 @@ def _wrap_triclinic_prepared(
 def _wrap_triclinic_babai(
     d: wp.vec3f, cell: wp.mat33f, qr: _TriclinicQR
 ) -> tuple[wp.vec3f, wp.vec3i]:
-    """Return the nearest-plane image for a QR-height-certified pair query."""
+    """Return the nearest-plane image for a QR-height-certified pair query.
+
+    Parameters
+    ----------
+    d : wp.vec3f
+        Separation vector in Cartesian space.
+    cell : wp.mat33f
+        Cell matrix with lattice vectors as rows.
+    qr : _TriclinicQR
+        QR factors for ``cell``.
+
+    Returns
+    -------
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
+    wp.vec3i
+        Lattice shift applied to reach it.
+    """
     y0 = wp.dot(qr.q0, d)
     y1 = wp.dot(qr.q1, d)
     y2 = wp.dot(qr.q2, d)
@@ -381,7 +463,30 @@ def _wrap_triclinic_pair(
     fractional_rounding_certified: wp.bool,
     qr_height_certified: wp.bool,
 ) -> tuple[wp.vec3f, wp.vec3i]:
-    """Use the strongest available pair certificate before complete search."""
+    """Use the strongest available pair certificate before complete search.
+
+    Parameters
+    ----------
+    d : wp.vec3f
+        Separation vector in Cartesian space.
+    cell : wp.mat33f
+        Cell matrix with lattice vectors as rows.
+    inv_cell : wp.mat33f
+        Inverse lattice basis.
+    qr : _TriclinicQR
+        QR factors for ``cell``.
+    fractional_rounding_certified : wp.bool
+        Whether fractional rounding alone selects the image.
+    qr_height_certified : wp.bool
+        Whether the Babai pass alone selects the image.
+
+    Returns
+    -------
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
+    wp.vec3i
+        Lattice shift applied to reach it.
+    """
     # The reciprocal bound makes fractional rounding unique within cutoff;
     # the height bound isolates c and b, leaving Babai's minimizing a. Only
     # uncertified queries need the complete QR sphere search.
@@ -398,7 +503,22 @@ def _wrap_triclinic(
     cell: wp.mat33f,
     inv_cell: wp.mat33f,
 ):
-    """Prepare and apply a closest-image search for one displacement."""
+    """Prepare and apply a closest-image search for one displacement.
+
+    Parameters
+    ----------
+    d : wp.vec3f
+        Separation vector in Cartesian space.
+    cell : wp.mat33f
+        Cell matrix with lattice vectors as rows.
+    inv_cell : wp.mat33f
+        Inverse lattice basis.
+
+    Returns
+    -------
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
+    """
     qr = _prepare_triclinic_qr(cell)
     return _wrap_triclinic_prepared(d, cell, inv_cell, qr)
 
@@ -804,6 +924,8 @@ def _bbox_valid(
         Cell matrix.
     inv_cell : wp.mat33f
         Inverse cell matrix.
+    qr : _TriclinicQR
+        QR factors for ``cell``.
     cutoff_sq : wp.float32
         Squared cutoff distance.
 

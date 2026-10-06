@@ -4,6 +4,15 @@
 
 ### Changed
 
+- Recalibrated neighbor-list strategy selection. Free-boundary systems no longer
+  double-count the periodic-image saving, cluster-tile is selected where it wins
+  rather than across its whole eligibility region, and float64 work is scaled by
+  the device's FP64 rate (overridable via
+  `NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`). `neighbor_list(method=None)` may now
+  resolve to a different, faster strategy; explicit `method=` is unaffected.
+- JAX `estimate_neighbor_list_costs` and `suggest_neighbor_list_method` now take
+  optional `cell`/`pbc`, with `positions` supplied instead for free-boundary
+  systems, matching the Torch signature.
 - Torch and JAX PME mesh estimation now covers the requested spline support.
   The default spline order is five, with accuracy-based dimensions rounded
   upward to 2/3/5/7-smooth FFT sizes. The selector snaps to power-of-two meshes
