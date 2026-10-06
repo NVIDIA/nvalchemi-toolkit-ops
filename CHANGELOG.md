@@ -4,6 +4,26 @@
 
 ### Changed
 
+- Torch and JAX PME mesh estimation now covers the requested spline support.
+  The default spline order is five, with accuracy-based dimensions rounded
+  upward to 2/3/5/7-smooth FFT sizes. The selector snaps to power-of-two meshes
+  first, then smooth dimensions divisible by four, allowing at most 25% more
+  total mesh points than the smallest smooth mesh.
+  Public sizing APIs expose `fft_padding_fraction=0.25`; `0` keeps the smallest
+  smooth mesh. Explicit other orders retain upstream power-of-two accuracy
+  sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
+  explicit mesh dimensions remain caller-controlled.
+  Cutoff and splitting-parameter formulas are preserved.
+  Calls that omit `spline_order` now use 5 instead of 4, which can change
+  numerical results and automatically selected meshes. Pass `spline_order=4`
+  to retain the previous interpolation order. To reproduce the previous PME
+  configuration, also pass the previous `mesh_dimensions` explicitly.
+- Supported JAX versions are `>=0.10.0,<0.10.2`; the lockfile selects 0.10.1
+  to avoid GPU scatter slowdowns in newer releases
+  ([JAX #38806](https://github.com/jax-ml/jax/issues/38806)).
+- Torch and JAX PME energy and force paths generate only the squared reciprocal
+  grid when Cartesian reciprocal vectors are unused, reducing peak memory.
+  Virial and cell-gradient paths generate the Cartesian vectors they require.
 - Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
   APIs. Naive and cell-list methods, including batched variants, accept
   ``coo_capacity`` for padded COO output with clipped pointers, raw required row
@@ -34,6 +54,8 @@
 
 ### Added
 
+- Added `generate_k_squared_pme` to the Torch and JAX electrostatics namespaces
+  for reciprocal paths that use squared magnitudes.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
@@ -141,6 +163,9 @@
 
 ### Fixed
 
+- Corrected stress-to-cell forces and FIRE2 affine position updates to use the
+  row-vector lattice convention, preserving fractional coordinates during cell
+  changes (#193).
 - Torch multipole direct energy now supports symbolic tracing with explicit
   reciprocal vectors, batched valid-k counts, and source overlap constants;
   multipole features can reuse a prepared cache. The shared moment conversion
