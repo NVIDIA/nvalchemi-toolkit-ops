@@ -142,12 +142,13 @@ class TestRealSpaceValidation:
 class TestElectrostaticEnergyValidation:
     """Guard branches in the Path-B ``multipole_electrostatic_energy``."""
 
-    def test_batched_rejects_k_vectors(self):
+    def test_batched_rejects_invalid_k_vectors_shape(self):
+        """Reject unbatched k-vector shapes when batch_idx is supplied."""
         pos = _positions()
         mm = pack_multipole_moments(torch.zeros(2, dtype=torch.float64))
         batch_idx = torch.zeros(2, dtype=torch.int32)
         cell = _cell().unsqueeze(0)
-        with pytest.raises(ValueError, match="k_vectors is not supported for batched"):
+        with pytest.raises(ValueError, match="batched k_vectors must have shape"):
             multipole_electrostatic_energy(
                 pos,
                 mm,
