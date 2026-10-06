@@ -140,6 +140,20 @@ def plot_series(
     caption
         Caption text below the plot.
     """
+    series = {
+        label: (xs, ys)
+        for label, (xs, ys) in series.items()
+        if xs is not None and ys is not None and len(xs) and len(ys)
+    }
+    if not series:
+        # Every row failed or carried no data: say so on the figure rather
+        # than plotting a fabricated axis.
+        _write_no_data_placeholder(
+            output_path,
+            title or "No benchmark data",
+            "No successful benchmark rows for this panel.",
+        )
+        return
     setup_plot_style()
     num_series = len(series)
 
@@ -197,16 +211,9 @@ def plot_series(
     )
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(log_scale_formatter))
     ax.yaxis.set_minor_formatter(ticker.NullFormatter())
-
-    x_values = [
-        np.asarray(xs) for xs, _ in series.values() if xs is not None and len(xs)
-    ]
-    if not x_values:
-        # No plottable points (e.g. every benchmark row failed): leave the
-        # default axes rather than aborting the whole plot generation.
-        all_x = np.array([1.0])
-    else:
-        all_x = np.concatenate(x_values)
+    all_x = np.concatenate(
+        [np.asarray(xs) for xs, _ in series.values() if xs is not None and len(xs)]
+    )
     lo_exp = int(np.floor(np.log2(all_x.min())))
     hi_exp = int(np.ceil(np.log2(all_x.max())))
     x_ticks = [2**k for k in range(lo_exp, hi_exp + 1)]

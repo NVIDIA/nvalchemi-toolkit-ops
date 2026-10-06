@@ -157,18 +157,19 @@ FIRE2 (Fast Inertial Relaxation Engine 2) treats optimization as damped molecula
 dynamics. The algorithm adjusts velocities along the force direction and dynamically
 adapts the integration timestep:
 
-- **Adaptive timestep:** Downhill motion ($P = \mathbf{F} \cdot \mathbf{v} > 0$)
-  increases the timestep up to `dt_max` (default $10.0\,\text{fs}$). Uphill motion ($P
-  < 0$) decreases the timestep and resets velocities. Parameters: `f_inc` (default
-  1.1), `f_dec` (default 0.5).
+- **Adaptive timestep:** After `delaystep` (default 60) consecutive downhill steps
+  ($P = \mathbf{F} \cdot \mathbf{v} > 0$), the timestep grows by factor `dtgrow`
+  (default 1.05) up to `tmax` (default 0.08). On an uphill step it shrinks by
+  `dtshrink` (default 0.75), bounded below by `tmin` (default 0.005).
 - **Velocity mixing:** Mixes velocity with the normalized force direction:
   $\mathbf{v} \leftarrow (1-\alpha)\mathbf{v} + \alpha |\mathbf{v}| \hat{\mathbf{F}}$.
-  During downhill steps, it decreases the mixing parameter $\alpha$ by factor
-  `f_alpha` (default 0.99).
-- **Maximum displacement:** Limits atomic displacement to `maxstep` (default
-  $0.2\,\text{Å}$) per step to maintain stability.
-- **Convergence check:** Evaluates maximum atomic force against a threshold: $\max_i
-  \lVert \mathbf{F}_i \rVert < f_{\max}$ (default $0.01\,\text{eV}/\text{Å}$).
+  Downhill, the mixing parameter decays by `alphashrink` (default 0.985); uphill,
+  it resets to `alpha0` (default 0.09).
+- **Maximum displacement:** Limits each system's step to `maxstep` (default 0.1)
+  for stability.
+- **Caller-owned stopping:** `fire2_step` has no tolerance and no terminal status.
+  The caller checks convergence, for example by the largest per-atom force
+  magnitude, and decides when to stop.
 
 L-BFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno) is a quasi-Newton
 optimization method. It approximates the inverse Hessian operator from a rolling
@@ -297,8 +298,7 @@ Full optimization runs comparing FIRE1 and FIRE2 convergence and wall-clock time
 on fixed-cell and variable-cell LJ systems:
 
 ```bash
-python benchmark_fire_compare.py --config benchmark_config.yaml --output-dir
-./benchmark_results
+python benchmark_fire_compare.py --config benchmark_config.yaml --output-dir ./benchmark_results
 ```
 
 ### FIRE2 Kernel Performance
@@ -307,8 +307,7 @@ Raw per-step GPU kernel timing using CUDA events, sweeping total atoms and batch
 sizes across float32 and float64:
 
 ```bash
-python benchmark_fire2.py --config benchmark_config.yaml --output-dir
-./benchmark_results
+python benchmark_fire2.py --config benchmark_config.yaml --output-dir ./benchmark_results
 ```
 
 ### L-BFGS vs FIRE2
@@ -317,8 +316,7 @@ Energy/force evaluations to convergence, which is the cost that dominates
 relaxation driven by a machine-learned potential, plus per-step cost gates:
 
 ```bash
-python benchmark_lbfgs.py --config benchmark_config.yaml --output-dir
-./benchmark_results
+python benchmark_lbfgs.py --config benchmark_config.yaml --output-dir ./benchmark_results
 python benchmark_lbfgs.py --gates
 ```
 
