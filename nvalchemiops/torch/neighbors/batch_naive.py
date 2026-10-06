@@ -1193,21 +1193,6 @@ def _batch_naive_pair_outputs_forward(
                 target_indices=wp_target_indices,
                 return_vectors=True,
                 return_distances=True,
-                inv_cell_buffer=(
-                    wp.from_torch(
-                        _fixed_cell_geometry.inv_cell,
-                        dtype=wp_mat_dtype,
-                        requires_grad=False,
-                        return_ctype=True,
-                    )
-                    if _fixed_cell_geometry is not None
-                    and _fixed_cell_geometry.inv_cell is not None
-                    else None
-                ),
-                reuse_inv_cell=(
-                    _fixed_cell_geometry is not None
-                    and _fixed_cell_geometry.inv_cell is not None
-                ),
                 neighbor_vectors=wp.from_torch(
                     neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False
                 ),

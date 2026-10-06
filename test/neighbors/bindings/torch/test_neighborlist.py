@@ -2170,6 +2170,18 @@ class TestNeighborListFineGrainedMethodEquivalence:
         positions, cell, pbc = self._periodic_float32_system(device)
         cutoff = 5.0
 
+        if method == "naive_tile" and device == "cpu":
+            with pytest.raises(ValueError, match="strategy='tile' requires CUDA"):
+                neighbor_list(
+                    positions,
+                    cutoff,
+                    cell=cell,
+                    pbc=pbc,
+                    method=method,
+                    return_neighbor_list=True,
+                )
+            return
+
         base = neighbor_list(
             positions,
             cutoff,
@@ -2284,6 +2296,20 @@ class TestNeighborListFineGrainedMethodEquivalence:
         )
         batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
         cutoff = 5.0
+
+        if device == "cpu":
+            with pytest.raises(ValueError, match="strategy='tile' requires CUDA"):
+                neighbor_list(
+                    positions,
+                    cutoff,
+                    cell=cell,
+                    pbc=pbc,
+                    batch_idx=batch_idx,
+                    batch_ptr=batch_ptr,
+                    method="batch_naive_tile",
+                    return_neighbor_list=True,
+                )
+            return
 
         base = neighbor_list(
             positions,
