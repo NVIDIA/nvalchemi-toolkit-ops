@@ -161,7 +161,7 @@ def _synthesize_cell_for_geometry(
     if positions.shape[0] == 0:
         # ``jnp.min`` has no identity on an empty axis. Match the Torch
         # synthesizer and hand back a unit cell for an empty system.
-        cell = jnp.broadcast_to(jnp.eye(3, dtype=positions.dtype), (num_systems, 3, 3))
+        cell = jnp.eye(3, dtype=positions.dtype)[jnp.newaxis]
         return cell, jnp.zeros((num_systems, 3), dtype=jnp.bool_)
     if batch_idx is None or num_systems == 1:
         pos_min = jnp.min(positions, axis=0)
