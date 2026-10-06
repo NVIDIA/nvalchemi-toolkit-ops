@@ -32,6 +32,7 @@ from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 _ENV_KNOBS = (
     "NVALCHEMI_NEIGHLIST_CELL_SHELL",
     "NVALCHEMI_NEIGHLIST_CELL_SETUP",
+    "NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY",
 )
 
 

@@ -183,7 +183,10 @@ class TestNeighborListAutoSelection:
         num_atoms = 50_000
         box_size = (num_atoms / 0.01) ** (1 / 3)
         key = jax.random.PRNGKey(0)
-        positions = jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * box_size
+        positions = jax.device_put(
+            jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * box_size,
+            jax.devices("gpu" if device.startswith("cuda") else "cpu")[0],
+        )
         cutoff = 2.0
 
         result = neighbor_list(positions, cutoff, return_neighbor_list=True)

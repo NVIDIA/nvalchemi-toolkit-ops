@@ -77,11 +77,7 @@ def broadcast_shared_cell_for_batch(
 
     Parameters
     ----------
-    cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3), optional
-        Omit together with ``pbc`` for a free-boundary system and pass
-        ``positions`` instead; the cost model then prices the aperiodic naive
-        path rather than the periodic one. Supplying a box with an all-False
-        ``pbc`` is equivalent but requires the caller to build the box.
+    cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3)
         Unit cell matrix. If shape is ``(3, 3)``, the single cell is expanded
         to ``(num_systems, 3, 3)`` via contiguous broadcast.  If already
         ``(num_systems, 3, 3)`` it is returned unchanged.

@@ -126,15 +126,16 @@ class _TriclinicQR:
 @wp.func
 def _prepare_triclinic_qr(cell: wp.mat33f) -> _TriclinicQR:
     """Prepare QR factors for the cell's lattice basis.
+
     Parameters
     ----------
     cell : wp.mat33f
-        Lattice basis, column-major.
+        Cell matrix with lattice vectors as rows.
 
     Returns
     -------
     _TriclinicQR
-        QR factors, with ``axis_aligned`` set for an orthogonal basis.
+        QR factors, with ``axis_aligned`` set when the cell matrix is diagonal.
     """
     qr = _TriclinicQR()
     qr.axis_aligned = (
@@ -189,7 +190,7 @@ def _triclinic_cutoff_is_certified(
     Parameters
     ----------
     inv_cell : wp.mat33f
-        Inverse lattice basis, whose columns are the reciprocal vectors.
+        Inverse cell matrix, whose columns are the reciprocal vectors.
     outer_cutoff : wp.float32
         Largest query cutoff the certificate must hold for.
 
@@ -214,10 +215,11 @@ def _prepare_triclinic_qr_if_needed(
     cell: wp.mat33f, fractional_rounding_certified: wp.bool
 ) -> _TriclinicQR:
     """Prepare QR only when the cutoff certificate cannot select the image.
+
     Parameters
     ----------
     cell : wp.mat33f
-        Lattice basis, column-major.
+        Cell matrix with lattice vectors as rows.
     fractional_rounding_certified : wp.bool
         Whether the cutoff certificate already selects the image.
 
@@ -271,19 +273,20 @@ def _wrap_triclinic_fractional(
     d: wp.vec3f, cell: wp.mat33f, inv_cell: wp.mat33f
 ) -> tuple[wp.vec3f, wp.vec3i]:
     """Apply componentwise rounding after the cutoff certificate succeeds.
+
     Parameters
     ----------
     d : wp.vec3f
         Separation vector in Cartesian space.
     cell : wp.mat33f
-        Lattice basis, column-major.
+        Cell matrix with lattice vectors as rows.
     inv_cell : wp.mat33f
         Inverse lattice basis.
 
     Returns
     -------
-    wp.vec3f
-        Minimum-image separation vector.
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
     wp.vec3i
         Lattice shift applied to reach it.
     """
@@ -417,19 +420,20 @@ def _wrap_triclinic_babai(
     d: wp.vec3f, cell: wp.mat33f, qr: _TriclinicQR
 ) -> tuple[wp.vec3f, wp.vec3i]:
     """Return the nearest-plane image for a QR-height-certified pair query.
+
     Parameters
     ----------
     d : wp.vec3f
         Separation vector in Cartesian space.
     cell : wp.mat33f
-        Lattice basis, column-major.
+        Cell matrix with lattice vectors as rows.
     qr : _TriclinicQR
         QR factors for ``cell``.
 
     Returns
     -------
-    wp.vec3f
-        Minimum-image separation vector.
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
     wp.vec3i
         Lattice shift applied to reach it.
     """
@@ -460,12 +464,13 @@ def _wrap_triclinic_pair(
     qr_height_certified: wp.bool,
 ) -> tuple[wp.vec3f, wp.vec3i]:
     """Use the strongest available pair certificate before complete search.
+
     Parameters
     ----------
     d : wp.vec3f
         Separation vector in Cartesian space.
     cell : wp.mat33f
-        Lattice basis, column-major.
+        Cell matrix with lattice vectors as rows.
     inv_cell : wp.mat33f
         Inverse lattice basis.
     qr : _TriclinicQR
@@ -477,8 +482,8 @@ def _wrap_triclinic_pair(
 
     Returns
     -------
-    wp.vec3f
-        Minimum-image separation vector.
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
     wp.vec3i
         Lattice shift applied to reach it.
     """
@@ -499,19 +504,20 @@ def _wrap_triclinic(
     inv_cell: wp.mat33f,
 ):
     """Prepare and apply a closest-image search for one displacement.
+
     Parameters
     ----------
     d : wp.vec3f
         Separation vector in Cartesian space.
     cell : wp.mat33f
-        Lattice basis, column-major.
+        Cell matrix with lattice vectors as rows.
     inv_cell : wp.mat33f
         Inverse lattice basis.
 
     Returns
     -------
-    wp.vec3f
-        Minimum-image separation vector.
+    tuple[wp.vec3f, wp.vec3i]
+        Closest-image displacement and the shift added to ``d``.
     """
     qr = _prepare_triclinic_qr(cell)
     return _wrap_triclinic_prepared(d, cell, inv_cell, qr)

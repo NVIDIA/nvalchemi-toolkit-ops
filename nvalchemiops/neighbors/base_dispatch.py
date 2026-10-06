@@ -265,7 +265,7 @@ def auto_base_constants() -> tuple[float, float]:
     )
 
 
-def fp64_naive_penalty(device) -> float:
+def fp64_naive_penalty(device: wp.Device) -> float:
     """Return the float64 scan penalty for ``device``.
 
     Parameters
@@ -750,8 +750,8 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
                 + wp.float32(_BATCH_NAIVE_PER_ATOM) * precision_scale * n_float
             )
         # Naive cost = per-candidate scan + per-pair output write + setup.
-        # Scan weight: scalar 0.35 (global loads) vs tile 0.010 (shared-memory
-        # reuse). Output write weight: 2.0 scalar vs 1.5 tile.
+        # The scalar path pays for global loads where the tile path reuses
+        # shared memory, so it carries the heavier scan weight.
         scalar_cost = (
             wp.float32(_NAIVE_SCAN * _NAIVE_SCALAR_TIEBREAK)
             * precision_scale

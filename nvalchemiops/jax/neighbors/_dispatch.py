@@ -485,9 +485,11 @@ def estimate_neighbor_list_costs(
             target_count=target_count_arg,
         )
 
-    # JAX arrays carry no Warp device, so resolve it from the one Warp uses.
+    # JAX arrays carry no Warp device, so name the Warp device from the array's
+    # own JAX device rather than assuming the first GPU.
+    jax_device = cell.device
     fp64_scan_penalty = fp64_naive_penalty(
-        wp.get_device("cuda:0" if feature_mask & FEATURE_CUDA else "cpu")
+        wp.get_device(f"cuda:{jax_device.id}" if feature_mask & FEATURE_CUDA else "cpu")
     )
 
     if cell.dtype == jnp.float64:
