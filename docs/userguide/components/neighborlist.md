@@ -1247,12 +1247,24 @@ Torch:
 - Pass the mutable state as `state=`. A compiled function may capture it in a
   closure. The call returns the ordinary result tuple and updates the state in
   place.
-- Fixed result buffers are borrowed; complete backward before reusing the
-  state. Exact-size COO topology is newly allocated on each call, so older
-  returned topology tensors remain usable.
+- Returned arrays may share the state's storage. The next call can overwrite
+  their contents, so finish using them before reusing the state. Clone any
+  results you need to keep. Exact-size COO topology is allocated separately on
+  each call and remains usable.
 - Argument errors detected before route execution leave the state reusable. A
   route-execution failure invalidates it, so prepare a new state. A CUDA device
   assertion requires restarting the process.
+
+For molecular dynamics or relaxation, this usually means completing the current
+step's energy and force calculation before updating the neighbor list.
+
+If you use the returned distances or vectors in a differentiable energy
+calculation, finish its backward pass before reusing the state. This also applies
+when autograd saves borrowed neighbor indices or shifts for backward. No backward
+pass is needed when you use these outputs without autograd.
+
+See the {doc}`Torch neighbor and geometry example
+</examples/neighbors/01_simple_neighbor_list>`.
 
 JAX:
 

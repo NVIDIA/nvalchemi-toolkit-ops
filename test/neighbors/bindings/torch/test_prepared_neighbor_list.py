@@ -577,6 +577,257 @@ def test_prepared_cell_list_reuses_topology_storage(batched: bool) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cell_list"])
+def test_prepared_geometry_reuse_keeps_each_backward_connected(method: str) -> None:
+    """Ordinary backward-before-reuse calls match independent route gradients."""
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        torch.tensor(
+            [[0.1, 1.0, 1.0], [0.5, 1.0, 1.0], [3.9, 1.0, 1.0]],
+            dtype=torch.float32,
+            device="cuda",
+        ),
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+    )
+    frames = (
+        [[0.1, 1.0, 1.0], [0.5, 1.0, 1.0], [3.9, 1.0, 1.0]],
+        [[0.2, 1.0, 1.0], [0.65, 1.0, 1.0], [3.8, 1.0, 1.0]],
+    )
+    for frame in frames:
+        positions = torch.tensor(
+            frame, dtype=torch.float32, device="cuda", requires_grad=True
+        )
+        runtime_cell = cell.detach().clone().requires_grad_()
+        result = neighbor_list(positions, cell=runtime_cell, state=state)
+        assert state.neighbor_distances is result[-2]
+        assert state.neighbor_vectors is result[-1]
+        active = result[0] != state.fill_value
+        loss = result[-2][active].sum() + result[-1][active].square().sum()
+        loss.backward()
+        actual_position_grad = positions.grad.detach().clone()
+        actual_cell_grad = runtime_cell.grad.detach().clone()
+
+        reference_positions = positions.detach().clone().requires_grad_()
+        reference_cell = runtime_cell.detach().clone().requires_grad_()
+        reference = neighbor_list(
+            reference_positions,
+            0.75,
+            cell=reference_cell,
+            pbc=pbc,
+            method=method,
+            max_neighbors=8,
+            return_vectors=True,
+            return_distances=True,
+        )
+        reference_active = reference[0] != state.fill_value
+        reference_loss = (
+            reference[-2][reference_active].sum()
+            + reference[-1][reference_active].square().sum()
+        )
+        reference_loss.backward()
+        torch.testing.assert_close(actual_position_grad, reference_positions.grad)
+        torch.testing.assert_close(actual_cell_grad, reference_cell.grad)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cell_list"])
+def test_prepared_geometry_clone_survives_changed_pairs_before_backward(
+    method: str,
+) -> None:
+    """Cloned earlier geometry keeps its gradients after pair and shift changes."""
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    initial = torch.tensor(
+        [[0.1, 1.0, 1.0], [3.9, 1.0, 1.0], [2.0, 1.0, 1.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    state = prepare_neighbor_list(
+        initial,
+        0.55,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+    )
+    frame0 = initial.clone().requires_grad_()
+    frame0_cell = cell.clone().requires_grad_()
+    first = neighbor_list(frame0, cell=frame0_cell, state=state)
+    first_active = (first[0] != state.fill_value).clone()
+    assert torch.count_nonzero(first[2]) > 0
+    saved_distances = first[-2].clone()
+    saved_vectors = first[-1].clone()
+    saved_loss = (
+        saved_distances[first_active].sum() + saved_vectors[first_active].square().sum()
+    )
+
+    frame1 = torch.tensor(
+        [[0.1, 1.0, 1.0], [0.5, 1.0, 1.0], [0.9, 1.0, 1.0]],
+        dtype=torch.float32,
+        device="cuda",
+        requires_grad=True,
+    )
+    second = neighbor_list(frame1, cell=frame0_cell, state=state)
+    second_active = second[0] != state.fill_value
+    assert int(second_active.sum()) != int(first_active.sum())
+    assert torch.count_nonzero(second[2]) == 0
+    assert state.neighbor_distances is second[-2]
+    assert state.neighbor_vectors is second[-1]
+    saved_loss.backward()
+
+    reference_positions = initial.clone().requires_grad_()
+    reference_cell = cell.clone().requires_grad_()
+    reference = neighbor_list(
+        reference_positions,
+        0.55,
+        cell=reference_cell,
+        pbc=pbc,
+        method=method,
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+    )
+    reference_active = reference[0] != state.fill_value
+    reference_loss = (
+        reference[-2][reference_active].sum()
+        + reference[-1][reference_active].square().sum()
+    )
+    reference_loss.backward()
+    torch.testing.assert_close(frame0.grad, reference_positions.grad)
+    torch.testing.assert_close(frame0_cell.grad, reference_cell.grad)
+    assert frame1.grad is None
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("method", "batched"),
+    [
+        ("naive", False),
+        ("batch_naive", True),
+        ("cell_list", False),
+        ("batch_cell_list", True),
+    ],
+)
+@pytest.mark.parametrize("fixed_cell", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_prepared_periodic_geometry_gradients_across_routes(
+    method: str, batched: bool, fixed_cell: bool, dtype: torch.dtype
+) -> None:
+    """Single and batch naive/cell-list geometry differentiates for both cell modes."""
+    positions = torch.tensor(
+        [[0.1, 1.0, 1.0], [7.9, 1.0, 1.0], [4.1, 1.0, 1.0], [3.9, 1.0, 1.0]],
+        dtype=dtype,
+        device="cuda",
+    )
+    base_cell = torch.eye(3, dtype=dtype, device="cuda") * 8.0
+    if batched:
+        cell = base_cell.repeat(2, 1, 1)
+        pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    else:
+        positions = positions[:2]
+        cell = base_cell
+        pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+        batch_ptr = None
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        fixed_cell=fixed_cell,
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+    )
+    runtime_positions = positions.detach().clone().requires_grad_()
+    runtime_cell = cell.detach().clone().requires_grad_()
+    result = neighbor_list(runtime_positions, cell=runtime_cell, state=state)
+    active = result[0] != state.fill_value
+    assert torch.count_nonzero(result[2][active]) > 0
+    assert state.neighbor_distances is result[-2]
+    assert state.neighbor_vectors is result[-1]
+    loss = result[-2][active].sum() + result[-1][active].square().sum()
+    loss.backward()
+    assert runtime_positions.grad is not None
+    assert runtime_positions.grad.abs().sum() > 0
+    assert runtime_cell.grad is not None
+    assert runtime_cell.grad.abs().sum() > 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_selective_geometry_preserves_stationary_unselected_system() -> None:
+    """A selective rebuild preserves borrowed geometry for an unchanged system."""
+    positions = torch.tensor(
+        [[0.1, 1.0, 1.0], [7.9, 1.0, 1.0], [4.1, 1.0, 1.0], [3.9, 1.0, 1.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1) * 8.0
+    pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_cell_list",
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+        selective=True,
+    )
+    all_systems = torch.ones(2, dtype=torch.bool, device="cuda")
+    selected_system_only = torch.tensor([True, False], device="cuda")
+    first_positions = positions.clone().requires_grad_()
+    runtime_cell = cell.clone().requires_grad_()
+    first = neighbor_list(
+        first_positions,
+        cell=runtime_cell,
+        state=state,
+        rebuild_flags=all_systems,
+    )
+    old_topology = tuple(value[2:].clone() for value in first[:3])
+    old_distances = first[-2][2:].clone()
+    old_vectors = first[-1][2:].clone()
+
+    moved_positions = positions.clone()
+    moved_positions[:2] = torch.tensor(
+        [[2.1, 1.0, 1.0], [2.3, 1.0, 1.0]], dtype=torch.float32, device="cuda"
+    )
+    runtime_positions = moved_positions.requires_grad_()
+    second = neighbor_list(
+        runtime_positions,
+        cell=runtime_cell,
+        state=state,
+        rebuild_flags=selected_system_only,
+    )
+    for actual, expected in zip(
+        (value[2:] for value in second[:3]), old_topology, strict=True
+    ):
+        torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(second[-2][2:], old_distances)
+    torch.testing.assert_close(second[-1][2:], old_vectors)
+    assert state.neighbor_distances is second[-2]
+    assert state.neighbor_vectors is second[-1]
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize("strategy", ["atom_centric", "pair_centric"])
 def test_prepared_cell_list_rejects_insufficient_runtime_radius(

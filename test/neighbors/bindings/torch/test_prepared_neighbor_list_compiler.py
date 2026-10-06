@@ -103,6 +103,71 @@ def test_prepared_cluster_selective_coo_support_matrix(batched: bool) -> None:
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "cell_list"])
+def test_prepared_naive_and_cell_list_geometry_fullgraph_reuse(method: str) -> None:
+    """Fullgraph geometry matches direct results when reused across periodic images."""
+    positions = torch.tensor(
+        [[0.1, 1.0, 1.0], [3.9, 1.0, 1.0]], dtype=torch.float32, device="cuda"
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        max_neighbors=8,
+        return_vectors=True,
+        return_distances=True,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, cell=box, state=state)
+
+    frames = (
+        positions,
+        torch.tensor(
+            [[0.1, 1.0, 1.0], [0.5, 1.0, 1.0]],
+            dtype=torch.float32,
+            device="cuda",
+        ),
+    )
+    with torch.no_grad():
+        for index, frame in enumerate(frames):
+            result = run(frame, cell)
+            active = result[0] != state.fill_value
+            assert state.neighbor_distances is result[-2]
+            assert state.neighbor_vectors is result[-1]
+            if index == 0:
+                assert torch.count_nonzero(result[2][active]) > 0
+            else:
+                assert torch.count_nonzero(result[2][active]) == 0
+
+            reference = neighbor_list(
+                frame,
+                0.5,
+                cell=cell,
+                pbc=pbc,
+                method=method,
+                max_neighbors=8,
+                return_vectors=True,
+                return_distances=True,
+            )
+            assert_neighbor_matrix_equal(result[:3], reference[:3])
+            reference_active = reference[0] != state.fill_value
+            torch.testing.assert_close(
+                result[-2][active], reference[-2][reference_active]
+            )
+            torch.testing.assert_close(
+                result[-1][active], reference[-1][reference_active]
+            )
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_fullgraph_mirrors_6_to_2_to_0_and_preserves_old_results() -> None:
     """One compiled callable handles changing COO sizes and state references."""
     close, middle, far, cell = _inputs()

@@ -737,7 +737,12 @@ class NeighborListState:
         self._failed = True
         self._all_initialized = False
 
-    def _publish(self, output: tuple[torch.Tensor, ...]) -> None:
+    def _publish(
+        self,
+        output: tuple[torch.Tensor, ...],
+        *,
+        preserve_geometry_outputs: bool = False,
+    ) -> None:
         latest = {name: None for name in _RESULT_NAMES}
         for index, name in enumerate(self._public_output_names):
             if name is not None and index < len(output):
@@ -761,6 +766,12 @@ class NeighborListState:
                 if name in self._buffers:
                     latest[name] = self._buffers[name]
         for name, buffer in self._geometry_buffers.items():
+            if (
+                preserve_geometry_outputs
+                and name in ("neighbor_distances", "neighbor_vectors")
+                and latest[name] is not None
+            ):
+                continue
             if self.format == "coo" and latest["neighbor_list"] is not None:
                 pair_count = latest["neighbor_list"].shape[-1]
                 latest[name] = buffer[:pair_count]
@@ -1436,8 +1447,14 @@ def _execute_route(
     *,
     rebuild_flags: torch.Tensor | None,
     pair_params: torch.Tensor | None,
+    preserve_geometry_outputs: bool,
 ) -> tuple[torch.Tensor, ...]:
     kwargs = _route_kwargs(state, pair_params)
+    if preserve_geometry_outputs:
+        for name in ("neighbor_distances", "neighbor_vectors"):
+            buffer = kwargs.get(name)
+            if buffer is not None:
+                kwargs[name] = buffer.detach()
     if _is_cluster_route(state._route):
         if state._cluster_storage is None:
             raise RuntimeError("prepared cluster-tile state is missing private storage")
@@ -2340,6 +2357,13 @@ def _execute_prepared_neighbor_list(
                 # their four-cell minimum regardless of query strategy.
                 4,
             )
+        preserve_geometry_outputs = not _is_cluster_route(state._route) and (
+            torch.is_grad_enabled()
+            and (
+                call_positions.requires_grad
+                or (call_cell is not None and call_cell.requires_grad)
+            )
+        )
         output = _execute_route(
             call_positions,
             call_cell,
@@ -2347,8 +2371,9 @@ def _execute_prepared_neighbor_list(
             state,
             rebuild_flags=rebuild_flags,
             pair_params=pair_params,
+            preserve_geometry_outputs=preserve_geometry_outputs,
         )
-        state._publish(output)
+        state._publish(output, preserve_geometry_outputs=preserve_geometry_outputs)
         if state.selective:
             state.initialized.copy_(state.initialized | rebuild_flags)
         else:
