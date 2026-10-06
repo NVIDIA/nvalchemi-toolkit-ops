@@ -24,6 +24,9 @@ from __future__ import annotations
 import inspect
 import warnings
 
+from nvalchemiops.interactions.electrostatics._factory_common import (
+    electrostatics_uses_legacy_fp32,
+)
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
     infer_l_max,
     pack_multipole_moments,
@@ -44,6 +47,7 @@ from nvalchemiops.torch.interactions.electrostatics.ewald import (
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_ewald_miller_indices,
+    generate_k_squared_pme,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     k_vectors_from_miller_indices,
@@ -161,6 +165,8 @@ _preserve_deprecated_alias_metadata(
 
 
 __all__ = [
+    # Fast/legacy float32 execution mode
+    "electrostatics_uses_legacy_fp32",
     # Coulomb
     "coulomb_energy",
     "coulomb_forces",
@@ -183,6 +189,7 @@ __all__ = [
     "compute_bspline_moduli_1d",
     # K-vectors
     "generate_ewald_miller_indices",
+    "generate_k_squared_pme",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
     "k_vectors_from_miller_indices",
