@@ -727,10 +727,23 @@ def _check_naive_shift_coverage(
         OUTPUT: 1 for covered, 0 for insufficient coverage, and 2 for an
         invalid or singular runtime cell.
 
+    Returns
+    -------
+    None
+        Writes one coverage status for each system. Unselected systems receive
+        status 1; selected systems receive status 0 when the periodic image
+        range exceeds the prepared range, or status 2 when the runtime cell or
+        a computed range is invalid.
+
     Notes
     -----
     - Thread launch: one thread per prepared system.
     - Modifies: ``status``.
+
+    See Also
+    --------
+    get_check_naive_shift_coverage_kernel : Create the dtype-specific kernel.
+    check_naive_shift_coverage : Launch this coverage check.
     """
     tid = wp.tid()
     if not rebuild_flags[tid]:

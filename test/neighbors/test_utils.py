@@ -417,7 +417,7 @@ def brute_force_neighbors(
     if cell is not None:
         cell = cell.squeeze().cpu().numpy()
     else:
-        cell = np.eye(3)
+        cell = np.eye(3, dtype=positions.dtype)
     if pbc is not None:
         pbc = pbc.squeeze().cpu().numpy()
     else:

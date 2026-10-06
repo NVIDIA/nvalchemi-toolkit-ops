@@ -2150,10 +2150,22 @@ def _check_cell_list_radius_coverage(
         OUTPUT: 1 for covered, 0 for insufficient coverage, and 2 for an
         invalid or singular runtime cell.
 
+    Returns
+    -------
+    None
+        Writes one coverage status for each system. Unselected systems receive
+        status 1; selected systems receive status 0 when a required cell-list
+        radius exceeds the prepared radius, or status 2 when the runtime cell
+        or a computed radius is invalid.
+
     Notes
     -----
     - Thread launch: One thread per prepared system.
     - Modifies: ``status``.
+
+    See Also
+    --------
+    _get_check_cell_list_radius_coverage_kernel : Create the dtype-specific kernel.
     """
     system_idx = wp.tid()
     if not rebuild_flags[system_idx]:
