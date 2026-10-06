@@ -66,11 +66,15 @@ Environment variables for ``--backend jax``:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import numpy as np
 import torch
 
 __all__ = [
@@ -90,6 +94,7 @@ from benchmarks.config import (
 )
 from benchmarks.constants import DEFAULT_NL_SAFETY_FACTOR
 from benchmarks.suite_systems import (
+    benchmark_system_metadata,
     compute_atomic_density,
     configs_for_mode,
     configured_nh3_artifacts,
@@ -106,18 +111,24 @@ from benchmarks.suite_utils import (
     clean_jax,
     configure_input_provenance,
     create_run_directory,
-    cuda_timed_runs,
     current_alloc_gb,
-    ensure_jax_available,
     failure_error_type,
+    fixed_total_metadata,
     format_num,
+    jax_timed_batch,
     jax_timed_serial,
     lazy_import_jax,
     make_csv_name,
     make_row_meta,
     measure_memory_jax,
     measure_memory_torch,
+    measure_timing_batches,
+    neighbor_count_metadata,
     save_results,
+    summarize_timing_batches,
+)
+from nvalchemiops.interactions.electrostatics._pme_mesh import (
+    _DEFAULT_PME_FFT_PADDING_FRACTION,
 )
 from nvalchemiops.neighbors import estimate_max_neighbors
 from nvalchemiops.torch.interactions.electrostatics import (
@@ -127,8 +138,8 @@ from nvalchemiops.torch.interactions.electrostatics import (
     ewald_real_space,
     ewald_reciprocal_space,
     ewald_summation,
+    generate_k_squared_pme,
     generate_k_vectors_ewald_summation,
-    generate_k_vectors_pme,
     particle_mesh_ewald,
     pme_reciprocal_space,
 )
@@ -150,6 +161,84 @@ def merge_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
     if getattr(args, "profile_components", None) is not None:
         config["parameters"]["profile_components"] = args.profile_components
     return config
+
+
+def _configured_pme_cutoff(parameters: dict[str, Any]) -> float:
+    """Read the positive PME cutoff limit from the versioned configuration."""
+    cutoff = float(parameters["max_real_space_cutoff"])
+    if not math.isfinite(cutoff) or cutoff <= 0.0:
+        raise ValueError("PME max_real_space_cutoff must be positive and finite")
+    return cutoff
+
+
+def _prepare_el_families(
+    config: dict, *, plan_only: bool = False
+) -> dict[tuple[str, str], tuple[dict, ...]]:
+    """List configured physical cases without invoking a parameter search."""
+    families = {}
+    for sys_name, sys_config in config["systems"].items():
+        if not sys_config.get("enabled", True):
+            continue
+        nh3_dir = resolve_nh3_dir(sys_config)
+        for mode_name, mode_config in config["scaling"].items():
+            if not isinstance(mode_config, dict) or not mode_config.get(
+                "enabled", True
+            ):
+                continue
+            families[(sys_name, mode_name)] = tuple(
+                configs_for_mode(
+                    mode_name,
+                    mode_config,
+                    sys_name,
+                    sys_config,
+                    nh3_dir,
+                    plan_only=plan_only,
+                )
+            )
+    return families
+
+
+def _canonical_json(value: Any) -> str:
+    """Serialize one benchmark-planning value without platform-dependent spaces."""
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _canonical_pme_input_sha256(
+    positions: np.ndarray,
+    charges: np.ndarray,
+    cell: np.ndarray,
+    batch_idx: np.ndarray,
+    pbc: np.ndarray,
+) -> str:
+    """Hash exact canonical arrays with stable dtypes, shapes, and byte order."""
+    arrays = (
+        ("positions", np.asarray(positions, dtype="<f8")),
+        ("charges", np.asarray(charges, dtype="<f8")),
+        ("cell", np.asarray(cell, dtype="<f8")),
+        ("batch_idx", np.asarray(batch_idx, dtype="<i8")),
+        ("pbc", np.asarray(pbc, dtype=np.bool_)),
+    )
+    digest = hashlib.sha256()
+    digest.update(b"nvalchemiops-benchmark-pme-canonical-input-v1\0")
+    for name, array in arrays:
+        contiguous = np.ascontiguousarray(array)
+        header = _canonical_json(
+            {
+                "name": name,
+                "dtype": contiguous.dtype.str,
+                "shape": contiguous.shape,
+            }
+        ).encode("ascii")
+        digest.update(len(header).to_bytes(8, byteorder="big"))
+        digest.update(header)
+        digest.update(memoryview(contiguous).cast("B"))
+    return digest.hexdigest()
 
 
 # =============================================================================
@@ -222,6 +311,24 @@ def _torch_pme_static_metadata(
         moduli_y=moduli_y,
         moduli_z=moduli_z,
     )
+
+
+def _torch_pme_k_squared_metadata(
+    cell: torch.Tensor,
+    mesh_dims: tuple[int, int, int],
+) -> tuple[torch.Tensor, str]:
+    """Precompute PME magnitudes without retaining unused Cartesian vectors."""
+    cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
+    repeated_cells = cell_3d.shape[0] > 1 and torch.equal(
+        cell_3d, cell_3d[:1].expand_as(cell_3d)
+    )
+    metadata_cell = cell_3d[:1] if repeated_cells else cell_3d
+    k_squared = generate_k_squared_pme(metadata_cell, mesh_dims)
+    if repeated_cells:
+        k_squared = k_squared.unsqueeze(0).expand(cell_3d.shape[0], -1, -1, -1)
+        k_squared = k_squared.contiguous()
+    cache_mode = "shared_cell_k_squared" if repeated_cells else "k_squared_only"
+    return k_squared, cache_mode
 
 
 def _get_jax_el_kernels(jax_api: dict) -> dict[str, Any]:
@@ -509,6 +616,28 @@ def _energy_derivative_metadata(
     }
 
 
+def _el_row_meta(
+    sys_name: str,
+    mode_name: str,
+    mode_config: dict,
+    backend: str,
+    atoms_per_system: int,
+    batch_size: int,
+    total_atoms: int,
+) -> dict:
+    """Build common EL row identity plus fixed-N planning metadata."""
+    row_meta = make_row_meta(
+        sys_name,
+        mode_name,
+        backend,
+        atoms_per_system,
+        batch_size,
+        total_atoms,
+        mode_config=mode_config,
+    )
+    return row_meta
+
+
 def _torch_energy_forces_charge_gradients(
     energy_fn,
     positions: torch.Tensor,
@@ -534,12 +663,15 @@ def benchmark_pme(
     jax_api: dict | None = None,
     *,
     profile_components: bool = False,
+    timing_batches: int,
 ) -> dict:
     """Benchmark Particle Mesh Ewald for one config.
 
     Dispatches on ``inputs.backend``. Accepts pre-converted f64 tensors/arrays
     on ``inputs`` to avoid redundant GPU copies.
     """
+    if timing_batches <= 0:
+        raise ValueError("timing_batches must be positive")
     if inputs.backend == "jax":
         return _benchmark_pme_jax(
             inputs,
@@ -551,11 +683,12 @@ def benchmark_pme(
             warmup_runs,
             jax_api,
             profile_components=profile_components,
+            timing_batches=timing_batches,
         )
 
     positions = inputs.positions.detach().requires_grad_(True)
     charges = inputs.charges.detach().requires_grad_(True)
-    k_vectors, k_squared = generate_k_vectors_pme(inputs.cell, mesh_dims)
+    k_squared, pme_cache_mode = _torch_pme_k_squared_metadata(inputs.cell, mesh_dims)
     static_metadata = _torch_pme_static_metadata(
         inputs.cell,
         mesh_dims,
@@ -583,7 +716,7 @@ def benchmark_pme(
             mesh_dimensions=mesh_dims,
             spline_order=spline_order,
             batch_idx=inputs.batch_idx,
-            k_vectors=k_vectors,
+            k_vectors=None,
             k_squared=k_squared,
             volume=static_metadata.volume,
             cell_inv_t=static_metadata.cell_inv_t,
@@ -601,7 +734,7 @@ def benchmark_pme(
             mesh_dimensions=mesh_dims,
             spline_order=spline_order,
             batch_idx=inputs.batch_idx,
-            k_vectors=k_vectors,
+            k_vectors=None,
             k_squared=k_squared,
             volume=static_metadata.volume,
             cell_inv_t=static_metadata.cell_inv_t,
@@ -633,23 +766,55 @@ def benchmark_pme(
     time_reciprocal_sec = float("nan")
     timing_method_real = "not_measured"
     timing_method_reciprocal = "not_measured"
+    real_max_min_ratio: float | str = ""
+    real_samples_json = ""
+    reciprocal_max_min_ratio: float | str = ""
+    reciprocal_samples_json = ""
     if profile_components:
-        time_real_sec = cuda_timed_runs(run_real, num_runs, warmup_runs=warmup_runs)
-        time_reciprocal_sec = cuda_timed_runs(
-            run_reciprocal, num_runs, warmup_runs=warmup_runs
+        real_samples = measure_timing_batches(
+            run_real,
+            num_runs,
+            warmup_runs,
+            timing_batches,
+        )
+        reciprocal_samples = measure_timing_batches(
+            run_reciprocal,
+            num_runs,
+            warmup_runs,
+            timing_batches,
+        )
+        time_real_sec, real_max_min_ratio, real_samples_json = summarize_timing_batches(
+            real_samples
+        )
+        time_reciprocal_sec, reciprocal_max_min_ratio, reciprocal_samples_json = (
+            summarize_timing_batches(reciprocal_samples)
         )
         timing_method_real = "torch_cuda_events"
         timing_method_reciprocal = "torch_cuda_events"
-    time_sec = cuda_timed_runs(run_pme, num_runs, warmup_runs=warmup_runs)
+    timing_samples = measure_timing_batches(
+        run_pme,
+        num_runs,
+        warmup_runs,
+        timing_batches,
+    )
+    time_sec, max_min_ratio, samples_json = summarize_timing_batches(timing_samples)
     return {
         "time_seconds": time_sec,
         "time_real_seconds": time_real_sec,
         "time_reciprocal_seconds": time_reciprocal_sec,
         "mem_info": mem_info,
+        "timing_batches": timing_batches,
+        "timing_batch_aggregation": "arithmetic_mean",
+        "timing_batch_max_min_ratio": max_min_ratio,
+        "timing_batch_seconds_json": samples_json,
+        "timing_batch_real_max_min_ratio": real_max_min_ratio,
+        "timing_batch_real_seconds_json": real_samples_json,
+        "timing_batch_reciprocal_max_min_ratio": reciprocal_max_min_ratio,
+        "timing_batch_reciprocal_seconds_json": reciprocal_samples_json,
         "timing_method": "torch_cuda_events",
         "timing_method_real": timing_method_real,
         "timing_method_reciprocal": timing_method_reciprocal,
-        "pme_cache_mode": "full_static",
+        "pme_cache_mode": pme_cache_mode,
         "component_profiled": profile_components,
     }
 
@@ -664,8 +829,11 @@ def benchmark_ewald(
     jax_api: dict | None = None,
     *,
     profile_components: bool = False,
+    timing_batches: int,
 ) -> dict:
     """Benchmark Ewald summation for one config via the unified API."""
+    if timing_batches <= 0:
+        raise ValueError("timing_batches must be positive")
     if inputs.backend == "jax":
         return _benchmark_ewald_jax(
             inputs,
@@ -676,6 +844,7 @@ def benchmark_ewald(
             warmup_runs,
             jax_api,
             profile_components=profile_components,
+            timing_batches=timing_batches,
         )
 
     positions = inputs.positions.detach().requires_grad_(True)
@@ -683,6 +852,7 @@ def benchmark_ewald(
     k_vectors = generate_k_vectors_ewald_summation(inputs.cell, k_cutoff)
     if k_vectors.ndim == 2:
         k_vectors = k_vectors.unsqueeze(0)
+    num_k_vectors_per_system = int(k_vectors.shape[-2])
 
     def real_energy(pos, charge):
         return ewald_real_space(
@@ -742,45 +912,91 @@ def benchmark_ewald(
     time_reciprocal_sec = float("nan")
     timing_method_real = "not_measured"
     timing_method_reciprocal = "not_measured"
+    real_max_min_ratio: float | str = ""
+    real_samples_json = ""
+    reciprocal_max_min_ratio: float | str = ""
+    reciprocal_samples_json = ""
     if profile_components:
-        time_real_sec = cuda_timed_runs(run_real, num_runs, warmup_runs=warmup_runs)
-        time_reciprocal_sec = cuda_timed_runs(
-            run_reciprocal, num_runs, warmup_runs=warmup_runs
+        real_samples = measure_timing_batches(
+            run_real,
+            num_runs,
+            warmup_runs,
+            timing_batches,
+        )
+        reciprocal_samples = measure_timing_batches(
+            run_reciprocal,
+            num_runs,
+            warmup_runs,
+            timing_batches,
+        )
+        time_real_sec, real_max_min_ratio, real_samples_json = summarize_timing_batches(
+            real_samples
+        )
+        time_reciprocal_sec, reciprocal_max_min_ratio, reciprocal_samples_json = (
+            summarize_timing_batches(reciprocal_samples)
         )
         timing_method_real = "torch_cuda_events"
         timing_method_reciprocal = "torch_cuda_events"
-    time_sec = cuda_timed_runs(run_ewald, num_runs, warmup_runs=warmup_runs)
+    timing_samples = measure_timing_batches(
+        run_ewald,
+        num_runs,
+        warmup_runs,
+        timing_batches,
+    )
+    time_sec, max_min_ratio, samples_json = summarize_timing_batches(timing_samples)
     return {
         "time_seconds": time_sec,
         "time_real_seconds": time_real_sec,
         "time_reciprocal_seconds": time_reciprocal_sec,
         "mem_info": mem_info,
+        "timing_batches": timing_batches,
+        "timing_batch_aggregation": "arithmetic_mean",
+        "timing_batch_max_min_ratio": max_min_ratio,
+        "timing_batch_seconds_json": samples_json,
+        "timing_batch_real_max_min_ratio": real_max_min_ratio,
+        "timing_batch_real_seconds_json": real_samples_json,
+        "timing_batch_reciprocal_max_min_ratio": reciprocal_max_min_ratio,
+        "timing_batch_reciprocal_seconds_json": reciprocal_samples_json,
         "timing_method": "torch_cuda_events",
         "timing_method_real": timing_method_real,
         "timing_method_reciprocal": timing_method_reciprocal,
         "component_profiled": profile_components,
+        "num_k_vectors_per_system": num_k_vectors_per_system,
     }
 
 
-def _jax_timed_with_serial_fallback(
+def _jax_timing_batches(
     fn,
     num_runs: int,
     warmup_runs: int,
-) -> tuple[float, str]:
-    """Use batched JAX timing, falling back to per-call blocking on OOM."""
-    try:
-        time_sec = cuda_timed_runs(fn, num_runs, warmup_runs=warmup_runs, backend="jax")
-        return time_sec, "jax_wall_block_until_ready"
-    except Exception as e:
-        if failure_error_type(e) != "OutOfMemoryError":
-            raise
-        clean_gpu()
-        clean_jax(clear_executables=True)
-        print("      batched JAX timing OOM; retrying with per-call blocking")
-        return (
-            jax_timed_serial(fn, num_runs, warmup_runs=warmup_runs),
-            "jax_wall_block_each",
+    timing_batches: int,
+    *,
+    queued_timer: Callable[..., float] = jax_timed_batch,
+    serial_timer: Callable[..., float] = jax_timed_serial,
+    oom_cleanup: Callable[..., None] = clean_jax,
+) -> tuple[tuple[float, ...], str]:
+    """Measure one JAX row with a single timing method across every batch."""
+    if timing_batches <= 0:
+        raise ValueError("timing_batches must be positive")
+
+    def measure(timer: Callable[..., float]) -> tuple[float, ...]:
+        return tuple(
+            timer(
+                fn,
+                num_runs,
+                warmup_runs=warmup_runs if batch_index == 0 else None,
+            )
+            for batch_index in range(timing_batches)
         )
+
+    try:
+        return measure(queued_timer), "jax_wall_block_until_ready"
+    except Exception as error:
+        if failure_error_type(error) != "OutOfMemoryError":
+            raise
+
+    oom_cleanup(clear_executables=True)
+    return measure(serial_timer), "jax_wall_block_each"
 
 
 def _benchmark_pme_jax(
@@ -794,18 +1010,26 @@ def _benchmark_pme_jax(
     jax_api,
     *,
     profile_components=False,
+    timing_batches,
 ):
     """JAX backend implementation of :func:`benchmark_pme`."""
     jax = jax_api["jax"]
     jnp = jax_api["jnp"]
-    k_pme = jax_api["generate_k_vectors_pme"]
+    k_squared_pme = jax_api["generate_k_squared_pme"]
     compute_bspline_moduli_1d = jax_api["compute_bspline_moduli_1d"]
     kernels = _get_jax_el_kernels(jax_api)
 
-    k_vectors, k_squared = k_pme(inputs.cell, mesh_dims)
+    cell_3d = inputs.cell if inputs.cell.ndim == 3 else jnp.expand_dims(inputs.cell, 0)
+    repeated_cells = cell_3d.shape[0] > 1 and bool(
+        jax.device_get(jnp.all(cell_3d == cell_3d[:1]))
+    )
+    metadata_cell = cell_3d[:1] if repeated_cells else cell_3d
+    k_squared = k_squared_pme(metadata_cell, mesh_dims)
+    jax.block_until_ready(k_squared)
+    k_vectors = None
+    pme_cache_mode = "shared_cell_k_squared" if repeated_cells else "k_squared_only"
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
     dtype = inputs.positions.dtype
-    cell_3d = inputs.cell if inputs.cell.ndim == 3 else jnp.expand_dims(inputs.cell, 0)
     cell_inv_t = jnp.transpose(jnp.linalg.inv(cell_3d), (0, 2, 1)).astype(dtype)
     volume = jnp.abs(jnp.linalg.det(cell_3d)).astype(dtype)
     miller_x = jnp.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx).astype(dtype)
@@ -874,16 +1098,36 @@ def _benchmark_pme_jax(
     time_reciprocal_sec = float("nan")
     timing_method_real = "not_measured"
     timing_method_reciprocal = "not_measured"
+    real_max_min_ratio: float | str = ""
+    real_samples_json = ""
+    reciprocal_max_min_ratio: float | str = ""
+    reciprocal_samples_json = ""
     if profile_components:
-        time_real_sec, timing_method_real = _jax_timed_with_serial_fallback(
-            run_real, num_runs, warmup_runs
+        real_samples, timing_method_real = _jax_timing_batches(
+            run_real,
+            num_runs,
+            warmup_runs,
+            timing_batches,
         )
-        time_reciprocal_sec, timing_method_reciprocal = _jax_timed_with_serial_fallback(
-            run_reciprocal, num_runs, warmup_runs
+        reciprocal_samples, timing_method_reciprocal = _jax_timing_batches(
+            run_reciprocal,
+            num_runs,
+            warmup_runs,
+            timing_batches,
         )
-    time_sec, timing_method = _jax_timed_with_serial_fallback(
-        run_pme, num_runs, warmup_runs
+        time_real_sec, real_max_min_ratio, real_samples_json = summarize_timing_batches(
+            real_samples
+        )
+        time_reciprocal_sec, reciprocal_max_min_ratio, reciprocal_samples_json = (
+            summarize_timing_batches(reciprocal_samples)
+        )
+    timing_samples, timing_method = _jax_timing_batches(
+        run_pme,
+        num_runs,
+        warmup_runs,
+        timing_batches,
     )
+    time_sec, max_min_ratio, samples_json = summarize_timing_batches(timing_samples)
     return {
         "time_seconds": time_sec,
         "time_real_seconds": time_real_sec,
@@ -891,9 +1135,17 @@ def _benchmark_pme_jax(
         "timing_method": timing_method,
         "timing_method_real": timing_method_real,
         "timing_method_reciprocal": timing_method_reciprocal,
-        "pme_cache_mode": "full_static",
+        "pme_cache_mode": pme_cache_mode,
         "component_profiled": profile_components,
         "mem_info": mem_info,
+        "timing_batches": timing_batches,
+        "timing_batch_aggregation": "arithmetic_mean",
+        "timing_batch_max_min_ratio": max_min_ratio,
+        "timing_batch_seconds_json": samples_json,
+        "timing_batch_real_max_min_ratio": real_max_min_ratio,
+        "timing_batch_real_seconds_json": real_samples_json,
+        "timing_batch_reciprocal_max_min_ratio": reciprocal_max_min_ratio,
+        "timing_batch_reciprocal_seconds_json": reciprocal_samples_json,
     }
 
 
@@ -907,6 +1159,7 @@ def _benchmark_ewald_jax(
     jax_api,
     *,
     profile_components=False,
+    timing_batches,
 ):
     """JAX backend implementation of :func:`benchmark_ewald`."""
 
@@ -917,6 +1170,7 @@ def _benchmark_ewald_jax(
     k_vectors = k_ewald(inputs.cell, k_cutoff)
     if k_vectors.ndim == 2:
         k_vectors = jax_api["jnp"].expand_dims(k_vectors, 0)
+    num_k_vectors_per_system = int(k_vectors.shape[-2])
 
     def run_real():
         return kernels["ewald_real"](
@@ -964,16 +1218,36 @@ def _benchmark_ewald_jax(
     time_reciprocal_sec = float("nan")
     timing_method_real = "not_measured"
     timing_method_reciprocal = "not_measured"
+    real_max_min_ratio: float | str = ""
+    real_samples_json = ""
+    reciprocal_max_min_ratio: float | str = ""
+    reciprocal_samples_json = ""
     if profile_components:
-        time_real_sec, timing_method_real = _jax_timed_with_serial_fallback(
-            run_real, num_runs, warmup_runs
+        real_samples, timing_method_real = _jax_timing_batches(
+            run_real,
+            num_runs,
+            warmup_runs,
+            timing_batches,
         )
-        time_reciprocal_sec, timing_method_reciprocal = _jax_timed_with_serial_fallback(
-            run_reciprocal, num_runs, warmup_runs
+        reciprocal_samples, timing_method_reciprocal = _jax_timing_batches(
+            run_reciprocal,
+            num_runs,
+            warmup_runs,
+            timing_batches,
         )
-    time_sec, timing_method = _jax_timed_with_serial_fallback(
-        run_ewald, num_runs, warmup_runs
+        time_real_sec, real_max_min_ratio, real_samples_json = summarize_timing_batches(
+            real_samples
+        )
+        time_reciprocal_sec, reciprocal_max_min_ratio, reciprocal_samples_json = (
+            summarize_timing_batches(reciprocal_samples)
+        )
+    timing_samples, timing_method = _jax_timing_batches(
+        run_ewald,
+        num_runs,
+        warmup_runs,
+        timing_batches,
     )
+    time_sec, max_min_ratio, samples_json = summarize_timing_batches(timing_samples)
     return {
         "time_seconds": time_sec,
         "time_real_seconds": time_real_sec,
@@ -982,7 +1256,16 @@ def _benchmark_ewald_jax(
         "timing_method_real": timing_method_real,
         "timing_method_reciprocal": timing_method_reciprocal,
         "component_profiled": profile_components,
+        "num_k_vectors_per_system": num_k_vectors_per_system,
         "mem_info": mem_info,
+        "timing_batches": timing_batches,
+        "timing_batch_aggregation": "arithmetic_mean",
+        "timing_batch_max_min_ratio": max_min_ratio,
+        "timing_batch_seconds_json": samples_json,
+        "timing_batch_real_max_min_ratio": real_max_min_ratio,
+        "timing_batch_real_seconds_json": real_samples_json,
+        "timing_batch_reciprocal_max_min_ratio": reciprocal_max_min_ratio,
+        "timing_batch_reciprocal_seconds_json": reciprocal_samples_json,
     }
 
 
@@ -1013,33 +1296,91 @@ def _el_tensors_from_data(data, backend):
     return positions, charges, cell, pbc, batch_idx
 
 
-def _el_estimate_params(
+def _el_runtime_pme_input_metadata(
+    positions: Any,
+    charges: Any,
+    cell: Any,
+    batch_idx: Any,
+    pbc: Any,
+    *,
+    backend: str,
+    jax_api: dict | None,
+) -> dict[str, str]:
+    """Hash post-conversion PME inputs and require one normalized dtype layout."""
+    if backend == "torch":
+        arrays = {
+            "positions": positions.detach().cpu().numpy(),
+            "charges": charges.detach().cpu().numpy(),
+            "cell": cell.detach().cpu().numpy(),
+            "batch_idx": batch_idx.detach().cpu().numpy(),
+            "pbc": pbc.detach().cpu().numpy(),
+        }
+    elif backend == "jax":
+        if jax_api is None:
+            raise RuntimeError("JAX PME input validation requires the JAX API")
+        device_get = jax_api["jax"].device_get
+        arrays = {
+            "positions": np.asarray(device_get(positions)),
+            "charges": np.asarray(device_get(charges)),
+            "cell": np.asarray(device_get(cell)),
+            "batch_idx": np.asarray(device_get(batch_idx)),
+            "pbc": np.asarray(device_get(pbc)),
+        }
+    else:
+        raise ValueError(f"Unsupported electrostatics backend: {backend}")
+
+    dtype_signature = {name: array.dtype.name for name, array in arrays.items()}
+    expected_dtypes = {
+        "positions": "float64",
+        "charges": "float64",
+        "cell": "float64",
+        "batch_idx": "int32",
+        "pbc": "bool",
+    }
+    if dtype_signature != expected_dtypes:
+        raise TypeError(
+            "runtime PME input dtypes do not match the reportable layout: "
+            f"expected {expected_dtypes}, found {dtype_signature}"
+        )
+    return {
+        "pme_runtime_input_sha256": _canonical_pme_input_sha256(
+            arrays["positions"],
+            arrays["charges"],
+            arrays["cell"],
+            arrays["batch_idx"],
+            arrays["pbc"],
+        ),
+        "pme_runtime_dtype_signature": _canonical_json(dtype_signature),
+    }
+
+
+def _el_estimate_pme_params(
     positions,
     cell,
     batch_idx,
     backend,
     accuracy,
     jax_api,
-    max_pme_real_space_cutoff=9.0,
+    max_pme_real_space_cutoff,
+    spline_order,
 ):
-    """Estimate independent PME and Ewald parameters for one configuration.
+    """Preserve upstream cutoff/alpha setup and use the shared PME mesh selector.
 
-    PME retains the automatic estimate up to ``max_pme_real_space_cutoff`` and
-    is re-estimated at that cutoff when necessary. Direct Ewald always keeps
-    its own automatically balanced real- and reciprocal-space parameters.
+    The configured PME cutoff limit and spline order are benchmark methodology.
     """
     if backend == "torch":
         pme_estimator = estimate_pme_parameters
-        ewald_estimator = estimate_ewald_parameters
     else:
         pme_estimator = jax_api["estimate_pme_parameters"]
-        ewald_estimator = jax_api["estimate_ewald_parameters"]
 
-    pme_params = pme_estimator(positions, cell, batch_idx=batch_idx, accuracy=accuracy)
-    if backend == "torch":
-        estimated_cutoff = float(pme_params.real_space_cutoff.max().item())
-    else:
-        estimated_cutoff = float(pme_params.real_space_cutoff.max())
+    pme_params = pme_estimator(
+        positions,
+        cell,
+        batch_idx=batch_idx,
+        accuracy=accuracy,
+        spline_order=spline_order,
+    )
+    estimated_cutoff = float(pme_params.real_space_cutoff.max())
     if estimated_cutoff > max_pme_real_space_cutoff:
         pme_params = pme_estimator(
             positions,
@@ -1047,49 +1388,118 @@ def _el_estimate_params(
             batch_idx=batch_idx,
             accuracy=accuracy,
             real_space_cutoff=max_pme_real_space_cutoff,
+            spline_order=spline_order,
         )
-
-    ewald_params = ewald_estimator(
-        positions, cell, batch_idx=batch_idx, accuracy=accuracy
-    )
-    return pme_params, ewald_params
+    return pme_params
 
 
-def _el_unpack_params(pme_params, ewald_params, backend, method):
-    """Extract method-specific parameters from the estimator dataclasses.
-
-    Returns ``(alpha, real_cutoff, mesh_dims, k_cutoff)``. PME uses its capped
-    automatic ``alpha`` and real-space cutoff; Ewald uses its independent,
-    uncapped automatic ``alpha`` and real-/reciprocal-space cutoffs. ``alpha``
-    keeps the per-system tensor/array shape the component kernels consume.
-    """
-    if method not in {"pme", "ewald"}:
-        raise ValueError(f"Unsupported electrostatics method: {method}")
-
+def _el_estimate_ewald_params(
+    positions: Any,
+    cell: Any,
+    batch_idx: Any,
+    backend: str,
+    accuracy: float,
+    jax_api: dict | None,
+) -> tuple[Any, float, float]:
+    """Resolve only direct-Ewald parameters on the selected backend."""
     if backend == "torch":
-        selected_params = pme_params if method == "pme" else ewald_params
-        alpha = selected_params.alpha.clone()
-        real_cutoff = float(selected_params.real_space_cutoff.max().item())
-        mesh_dims = tuple(pme_params.mesh_dimensions)
-        k_cutoff = ewald_params.reciprocal_space_cutoff.max().item()
+        parameters = estimate_ewald_parameters(
+            positions,
+            cell,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+        )
+        return (
+            parameters.alpha.clone(),
+            float(parameters.real_space_cutoff.max().item()),
+            float(parameters.reciprocal_space_cutoff.max().item()),
+        )
+    if backend == "jax":
+        if jax_api is None:
+            raise RuntimeError("JAX Ewald parameter setup requires the JAX API")
+        parameters = jax_api["estimate_ewald_parameters"](
+            positions,
+            cell,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+        )
+        return (
+            parameters.alpha,
+            float(parameters.real_space_cutoff.max()),
+            float(parameters.reciprocal_space_cutoff.max()),
+        )
+    raise ValueError(f"Unsupported electrostatics backend: {backend}")
+
+
+def _el_parameter_metadata(
+    method: str,
+    alpha: Any,
+    real_cutoff: float,
+    mesh_dims: tuple[int, int, int],
+    *,
+    reciprocal_space_cutoff: float | None = None,
+) -> dict[str, float | int | str | None]:
+    """Return the selected setup parameters needed to audit an EL row."""
+    alpha_mean = alpha.mean() if hasattr(alpha, "mean") else alpha
+    if hasattr(alpha_mean, "item"):
+        alpha_mean = alpha_mean.item()
+    metadata: dict[str, float | int | str | None] = {
+        "alpha": float(alpha_mean),
+        "real_space_cutoff": float(real_cutoff),
+    }
+    if method == "pme":
+        mesh_nx, mesh_ny, mesh_nz = (int(value) for value in mesh_dims)
+        metadata.update(
+            {
+                "mesh_nx": mesh_nx,
+                "mesh_ny": mesh_ny,
+                "mesh_nz": mesh_nz,
+                "reciprocal_grid_points": mesh_nx * mesh_ny * (mesh_nz // 2 + 1),
+            }
+        )
+    elif method == "ewald":
+        if reciprocal_space_cutoff is None:
+            raise ValueError("Ewald metadata requires reciprocal_space_cutoff")
+        metadata["reciprocal_space_cutoff"] = float(reciprocal_space_cutoff)
     else:
-        selected_params = pme_params if method == "pme" else ewald_params
-        alpha = selected_params.alpha
-        real_cutoff = float(selected_params.real_space_cutoff.max())
-        md = pme_params.mesh_dimensions
-        mesh_dims = (int(md[0]), int(md[1]), int(md[2]))
-        k_cutoff = float(ewald_params.reciprocal_space_cutoff.max())
-    return alpha, real_cutoff, mesh_dims, k_cutoff
+        raise ValueError(f"Unsupported electrostatics method: {method}")
+    return metadata
 
 
-def _torch_neighbor_matrix_to_list_chunked(
+def _el_neighbor_capacity(positions, cell, batch_idx, real_cutoff) -> int:
+    """Estimate the per-atom neighbor limit used during EL setup."""
+    atomic_density = compute_atomic_density(
+        {
+            "positions": positions,
+            "cell": cell,
+            "batch_idx": batch_idx,
+        }
+    )
+    return int(
+        estimate_max_neighbors(
+            real_cutoff,
+            atomic_density=atomic_density * DEFAULT_NL_SAFETY_FACTOR,
+        )
+    )
+
+
+def _torch_neighbor_conversion_chunk_rows(width: int) -> int:
+    """Reuse the existing bounded Torch conversion chunks for both passes.
+
+    The retained int32 conversion cap bounds temporary indexing arrays. It
+    affects untimed copies; neighbor selection and physical cutoffs are fixed.
+    """
+    max_chunk_elements = torch.iinfo(torch.int32).max // 8
+    return max(1, max_chunk_elements // max(width, 1))
+
+
+def _torch_neighbor_matrix_indices_chunked(
     neighbor_matrix: torch.Tensor,
     num_neighbors: torch.Tensor,
-    neighbor_shift_matrix: torch.Tensor,
     *,
     fill_value: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Convert a large Torch neighbor matrix to COO/CSR in row chunks.
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert Torch neighbor indices to COO/CSR in row chunks.
 
     PyTorch's ``nonzero``/``where`` rejects tensors with more than INT_MAX
     elements. Large electrostatics reportable rows can exceed that matrix size
@@ -1105,13 +1515,7 @@ def _torch_neighbor_matrix_to_list_chunked(
             device=neighbor_matrix.device,
         )
         neighbor_ptr = torch.zeros(1, dtype=torch.int32, device=neighbor_matrix.device)
-        neighbor_list_shifts = torch.empty(
-            0,
-            3,
-            dtype=neighbor_shift_matrix.dtype,
-            device=neighbor_shift_matrix.device,
-        )
-        return neighbor_list, neighbor_ptr, neighbor_list_shifts
+        return neighbor_list, neighbor_ptr
 
     max_found = int(num_neighbors.max().item())
     if max_found > neighbor_matrix.shape[1]:
@@ -1132,15 +1536,7 @@ def _torch_neighbor_matrix_to_list_chunked(
         dtype=neighbor_matrix.dtype,
         device=neighbor_matrix.device,
     )
-    neighbor_list_shifts = torch.empty(
-        (total_pairs, 3),
-        dtype=neighbor_shift_matrix.dtype,
-        device=neighbor_shift_matrix.device,
-    )
-
-    max_neighbors = max(int(neighbor_matrix.shape[1]), 1)
-    max_chunk_elements = torch.iinfo(torch.int32).max // 8
-    chunk_rows = max(1, max_chunk_elements // max_neighbors)
+    chunk_rows = _torch_neighbor_conversion_chunk_rows(int(neighbor_matrix.shape[1]))
 
     for start in range(0, neighbor_matrix.shape[0], chunk_rows):
         end = min(start + chunk_rows, neighbor_matrix.shape[0])
@@ -1156,25 +1552,54 @@ def _torch_neighbor_matrix_to_list_chunked(
         neighbor_list[1, out_start:out_end] = matrix_chunk[active].to(
             neighbor_matrix.dtype
         )
-        neighbor_list_shifts[out_start:out_end] = neighbor_shift_matrix[start:end][
-            active
-        ]
-
-    return neighbor_list, neighbor_ptr, neighbor_list_shifts
+    return neighbor_list, neighbor_ptr
 
 
-def _el_build_nl(positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api):
-    """Build the real-space neighbor list in LIST (COO + ptr) format."""
-    atomic_density = compute_atomic_density(
-        {
-            "positions": positions,
-            "cell": cell,
-            "batch_idx": batch_idx,
-        }
+def _torch_neighbor_shift_matrix_to_list_chunked(
+    neighbor_shift_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+) -> torch.Tensor:
+    """Copy packed atom-centric row shifts after dense indices are released.
+
+    The public atom-centric builder writes every accepted pair to the next row
+    slot. Its count identifies the complete active prefix, including repeated
+    periodic images, in the same order used by the compact indices.
+    """
+    total_pairs = int(neighbor_ptr[-1].item())
+    shifts = torch.empty(
+        (total_pairs, 3),
+        dtype=neighbor_shift_matrix.dtype,
+        device=neighbor_shift_matrix.device,
     )
-    maxnb = estimate_max_neighbors(
-        real_cutoff,
-        atomic_density=atomic_density * DEFAULT_NL_SAFETY_FACTOR,
+    width = int(neighbor_shift_matrix.shape[1])
+    chunk_rows = _torch_neighbor_conversion_chunk_rows(width)
+    columns = torch.arange(width, device=num_neighbors.device, dtype=torch.int32)
+    for start in range(0, len(num_neighbors), chunk_rows):
+        end = min(start + chunk_rows, len(num_neighbors))
+        out_start = int(neighbor_ptr[start].item())
+        out_end = int(neighbor_ptr[end].item())
+        if out_start != out_end:
+            active = columns[None, :] < num_neighbors[start:end, None]
+            shifts[out_start:out_end] = neighbor_shift_matrix[start:end][active]
+    return shifts
+
+
+def _el_build_nl(
+    positions,
+    cell,
+    pbc,
+    batch_idx,
+    real_cutoff,
+    backend,
+    jax_api,
+    configured_max_neighbors=None,
+):
+    """Build the real-space neighbor list in LIST (COO + ptr) format."""
+    maxnb = (
+        _el_neighbor_capacity(positions, cell, batch_idx, real_cutoff)
+        if configured_max_neighbors is None
+        else int(configured_max_neighbors)
     )
     if backend == "torch":
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
@@ -1185,13 +1610,19 @@ def _el_build_nl(positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api)
             cell=cell,
             max_neighbors=maxnb,
             return_neighbor_list=False,
+            strategy="atom_centric",
+            atom_centric_path="direct",
         )
-        return _torch_neighbor_matrix_to_list_chunked(
+        neighbor_list, neighbor_ptr = _torch_neighbor_matrix_indices_chunked(
             neighbor_matrix,
             num_neighbors,
-            neighbor_matrix_shifts,
             fill_value=positions.shape[0],
         )
+        del neighbor_matrix
+        neighbor_shifts = _torch_neighbor_shift_matrix_to_list_chunked(
+            neighbor_matrix_shifts, num_neighbors, neighbor_ptr
+        )
+        return neighbor_list, neighbor_ptr, neighbor_shifts
     jnp = jax_api["jnp"]
     num_systems = int(cell.shape[0]) if cell.ndim == 3 else 1
     atoms_per_system = positions.shape[0] // max(num_systems, 1)
@@ -1243,6 +1674,43 @@ def _el_build_nl(positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api)
     return nl
 
 
+def _el_csr_neighbor_counts(
+    nl_data,
+    nl_ptr,
+    backend,
+    jax_api,
+    expected_atoms: int,
+) -> list[int]:
+    """Validate a compact neighbor list and return per-atom counts."""
+    if len(nl_data.shape) != 2 or int(nl_data.shape[0]) != 2:
+        raise ValueError(f"neighbor_list must have shape (2, P), got {nl_data.shape}")
+    if len(nl_ptr.shape) != 1:
+        raise ValueError(f"neighbor_ptr must be one-dimensional, got {nl_ptr.shape}")
+    if backend == "torch":
+        ptr_values = nl_ptr.detach().cpu().tolist()
+    else:
+        ptr_values = jax_api["jax"].device_get(nl_ptr).tolist()
+    ptr_values = [int(value) for value in ptr_values]
+
+    if not ptr_values or ptr_values[0] != 0:
+        raise ValueError("neighbor_ptr must start at zero")
+    if len(ptr_values) != int(expected_atoms) + 1:
+        raise ValueError(
+            "neighbor_ptr must contain one boundary per atom: "
+            f"got {len(ptr_values)}, expected {int(expected_atoms) + 1}"
+        )
+    if any(stop < start for start, stop in zip(ptr_values, ptr_values[1:])):
+        raise ValueError("neighbor_ptr must be nondecreasing")
+
+    observed_pairs = int(nl_data.shape[1])
+    if ptr_values[-1] != observed_pairs:
+        raise ValueError(
+            "neighbor_ptr must end at the compact neighbor-list size: "
+            f"ptr[-1]={ptr_values[-1]}, pairs={observed_pairs}"
+        )
+    return [stop - start for start, stop in zip(ptr_values, ptr_values[1:])]
+
+
 # =============================================================================
 # Config-Driven Runner
 # =============================================================================
@@ -1251,7 +1719,7 @@ def _el_build_nl(positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api)
 class ElConfigSetup(NamedTuple):
     """Method-specific return shape of :func:`_el_setup_config`.
 
-    Named over positional unpacking — the eight fields are a mix of
+    Named over positional unpacking. The fields are a mix of
     backend-polymorphic tensors (``inputs``, ``alpha``) and plain scalars
     that the method loop consumes.
     """
@@ -1261,9 +1729,11 @@ class ElConfigSetup(NamedTuple):
     real_cutoff: float
     mesh_dims: tuple[int, int, int]
     k_cutoff: float
+    spline_order: int | None
     atoms_per_system: int
     batch_size: int
     actual_total: int
+    row_metadata: dict[str, Any]
 
 
 class ElConfigFailure(NamedTuple):
@@ -1272,6 +1742,7 @@ class ElConfigFailure(NamedTuple):
     error: str
     error_type: str
     failure_stage: str
+    row_metadata: dict[str, Any]
 
 
 def _ordered_configs_for_backend(configs: list[dict], sys_name: str, backend: str):
@@ -1292,9 +1763,10 @@ def _el_setup_config(
     method: str,
     backend: str,
     jax_api: dict | None,
-    max_pme_real_space_cutoff: float = 9.0,
+    max_pme_real_space_cutoff: float,
+    spline_order: int,
 ) -> ElConfigSetup | ElConfigFailure:
-    """Build method-specific inputs and automatically derived parameters.
+    """Build backend inputs using upstream cutoff/alpha setup and the PME mesh selector.
 
     Returns an ``ElConfigFailure`` on expected failures (create_system error,
     params estimation failure, NL build failure) after printing a diagnostic
@@ -1308,7 +1780,9 @@ def _el_setup_config(
             pdb_path=cfg.get("pdb_path"),
             batch_size=bs,
             backend=backend,
+            cscl_replication_factors=cfg.get("cscl_replication_factors"),
         )
+        row_metadata = benchmark_system_metadata(data, sys_name)
     except Exception as e:
         error_type = failure_error_type(e)
         if error_type == "OutOfMemoryError":
@@ -1316,7 +1790,7 @@ def _el_setup_config(
             if backend == "jax":
                 clean_jax(clear_executables=True)
         print(f"    FAILED: {e}")
-        return ElConfigFailure(str(e), error_type, "system_setup")
+        return ElConfigFailure(str(e), error_type, "system_setup", {})
 
     atoms_per_system = data["atoms_per_system"]
     actual_total = data.get("total_atoms", atoms_per_system)
@@ -1329,16 +1803,44 @@ def _el_setup_config(
     positions, charges, cell, pbc, batch_idx = _el_tensors_from_data(data, backend)
     del data
 
+    runtime_pme_metadata: dict[str, str] = {}
     try:
-        pme_params, ewald_params = _el_estimate_params(
-            positions,
-            cell,
-            batch_idx,
-            backend,
-            accuracy,
-            jax_api,
-            max_pme_real_space_cutoff,
-        )
+        if method == "pme":
+            pme_params = _el_estimate_pme_params(
+                positions,
+                cell,
+                batch_idx,
+                backend,
+                accuracy,
+                jax_api,
+                max_pme_real_space_cutoff,
+                spline_order,
+            )
+            alpha = pme_params.alpha
+            real_cutoff = float(pme_params.real_space_cutoff.max())
+            mesh_dims = tuple(int(value) for value in pme_params.mesh_dimensions)
+            resolved_spline_order = spline_order
+            k_cutoff = 0.0
+            runtime_pme_metadata = _el_runtime_pme_input_metadata(
+                positions,
+                charges,
+                cell,
+                batch_idx,
+                pbc,
+                backend=backend,
+                jax_api=jax_api,
+            )
+        else:
+            alpha, real_cutoff, k_cutoff = _el_estimate_ewald_params(
+                positions,
+                cell,
+                batch_idx,
+                backend,
+                accuracy,
+                jax_api,
+            )
+            mesh_dims = (0, 0, 0)
+            resolved_spline_order = None
     except Exception as e:
         error_type = failure_error_type(e)
         if error_type == "OutOfMemoryError":
@@ -1346,16 +1848,50 @@ def _el_setup_config(
             if backend == "jax":
                 clean_jax(clear_executables=True)
         print(f"    FAILED (params): {e}")
-        return ElConfigFailure(str(e), error_type, "parameter_setup")
+        return ElConfigFailure(str(e), error_type, "parameter_setup", row_metadata)
 
-    alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
-        pme_params, ewald_params, backend, method
+    row_metadata.update(
+        _el_parameter_metadata(
+            method,
+            alpha,
+            real_cutoff,
+            mesh_dims,
+            reciprocal_space_cutoff=k_cutoff,
+        )
     )
-    del pme_params, ewald_params
+    if method == "pme":
+        row_metadata["spline_order"] = resolved_spline_order
+        row_metadata.update(runtime_pme_metadata)
+        row_metadata["pme_cutoff_policy"] = "capped_upstream_estimate"
+        row_metadata["pme_mesh_policy"] = "bounded_power_two_then_four_fft_snap"
+        row_metadata["pme_fft_padding_fraction"] = _DEFAULT_PME_FFT_PADDING_FRACTION
+        row_metadata["pme_max_real_space_cutoff"] = max_pme_real_space_cutoff
 
     try:
+        configured_max_neighbors = _el_neighbor_capacity(
+            positions, cell, batch_idx, real_cutoff
+        )
+        row_metadata["configured_max_neighbors"] = configured_max_neighbors
+        row_metadata["neighbor_capacity_safety_factor"] = DEFAULT_NL_SAFETY_FACTOR
         nl_data, nl_ptr, nl_shifts = _el_build_nl(
-            positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            real_cutoff,
+            backend,
+            jax_api,
+            configured_max_neighbors,
+        )
+        neighbor_counts = _el_csr_neighbor_counts(
+            nl_data,
+            nl_ptr,
+            backend,
+            jax_api,
+            expected_atoms=int(positions.shape[0]),
+        )
+        row_metadata.update(
+            neighbor_count_metadata(neighbor_counts, configured_max_neighbors)
         )
     except Exception as e:
         error_type = failure_error_type(e)
@@ -1364,7 +1900,12 @@ def _el_setup_config(
             if backend == "jax":
                 clean_jax(clear_executables=True)
         print(f"    FAILED (NL): {e}")
-        return ElConfigFailure(str(e), error_type, "neighbor_list_setup")
+        return ElConfigFailure(
+            str(e),
+            error_type,
+            "neighbor_list_setup",
+            row_metadata,
+        )
 
     inputs = ElectrostaticsInputs(
         positions=positions,
@@ -1384,9 +1925,11 @@ def _el_setup_config(
         real_cutoff=real_cutoff,
         mesh_dims=mesh_dims,
         k_cutoff=k_cutoff,
+        spline_order=resolved_spline_order,
         atoms_per_system=atoms_per_system,
         batch_size=batch_size,
         actual_total=actual_total,
+        row_metadata=row_metadata,
     )
 
 
@@ -1400,6 +1943,7 @@ def _el_run_method(
     accuracy,
     num_runs,
     warmup_runs,
+    timing_batches,
     profile_components,
     jax_api,
     row_meta,
@@ -1407,10 +1951,12 @@ def _el_run_method(
     """Run one method's energy, force, and charge-gradient workload.
 
     Catches OOM, ``NotImplementedError``, and other exceptions as
-    ``success=False`` rows for CSV visibility and plotter filtering.
+    ``success=False`` rows for CSV visibility and failed-case plot markers.
     ``row_meta`` carries the identity fields for :func:`build_result`.
     """
     label = method.upper()
+    if timing_batches <= 0:
+        raise ValueError("EL timing_batches must be positive")
     try:
         if method == "pme":
             r = benchmark_pme(
@@ -1423,6 +1969,7 @@ def _el_run_method(
                 warmup_runs,
                 jax_api=jax_api,
                 profile_components=profile_components,
+                timing_batches=timing_batches,
             )
         else:
             r = benchmark_ewald(
@@ -1434,6 +1981,12 @@ def _el_run_method(
                 warmup_runs,
                 jax_api=jax_api,
                 profile_components=profile_components,
+                timing_batches=timing_batches,
+            )
+        runtime_parameter_metadata = {}
+        if method == "ewald":
+            runtime_parameter_metadata["num_k_vectors_per_system"] = int(
+                r["num_k_vectors_per_system"]
             )
         result = build_result(
             method=method,
@@ -1442,6 +1995,20 @@ def _el_run_method(
             accuracy=accuracy,
             timing_runs=num_runs,
             warmup_runs=warmup_runs,
+            timing_batches=r["timing_batches"],
+            timing_batch_aggregation=r["timing_batch_aggregation"],
+            timing_batch_max_min_ratio=r["timing_batch_max_min_ratio"],
+            timing_batch_seconds_json=r["timing_batch_seconds_json"],
+            timing_batch_real_max_min_ratio=r.get(
+                "timing_batch_real_max_min_ratio", ""
+            ),
+            timing_batch_real_seconds_json=r.get("timing_batch_real_seconds_json", ""),
+            timing_batch_reciprocal_max_min_ratio=r.get(
+                "timing_batch_reciprocal_max_min_ratio", ""
+            ),
+            timing_batch_reciprocal_seconds_json=r.get(
+                "timing_batch_reciprocal_seconds_json", ""
+            ),
             timing_method=r.get("timing_method"),
             timing_method_real=r.get("timing_method_real"),
             timing_method_reciprocal=r.get("timing_method_reciprocal"),
@@ -1456,6 +2023,7 @@ def _el_run_method(
                 if row_meta["total_atoms"] > 0
                 else 0.0
             ),
+            **runtime_parameter_metadata,
             **_energy_derivative_metadata(profile_components),
             **row_meta,
         )
@@ -1471,6 +2039,8 @@ def _el_run_method(
             accuracy=accuracy,
             timing_runs=num_runs,
             warmup_runs=warmup_runs,
+            timing_batches=timing_batches,
+            timing_batch_aggregation="arithmetic_mean",
             error=str(e),
             error_type=type(e).__name__,
             failure_stage="method_unsupported",
@@ -1488,6 +2058,8 @@ def _el_run_method(
             failure_stage=f"{method}_timing",
             timing_runs=num_runs,
             warmup_runs=warmup_runs,
+            timing_batches=timing_batches,
+            timing_batch_aggregation="arithmetic_mean",
             **_energy_derivative_metadata(profile_components),
             **row_meta,
         )
@@ -1506,70 +2078,49 @@ def _el_run_method(
             failure_stage=f"{method}_timing",
             timing_runs=num_runs,
             warmup_runs=warmup_runs,
+            timing_batches=timing_batches,
+            timing_batch_aggregation="arithmetic_mean",
             **_energy_derivative_metadata(profile_components),
             **row_meta,
         )
 
 
 def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
-    """Print and return the expanded electrostatics plan without allocation."""
+    """List every configured electrostatics case without GPU setup."""
     params = config["parameters"]
     max_total_atoms = params.get("max_total_atoms")
     profile_components = bool(params.get("profile_components", False))
-    max_pme_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
-    if not math.isfinite(max_pme_real_space_cutoff) or max_pme_real_space_cutoff <= 0.0:
-        raise ValueError("PME max_real_space_cutoff must be positive and finite")
-    if max_pme_real_space_cutoff > 9.0:
-        raise ValueError("PME max_real_space_cutoff must not exceed 9 Angstrom")
-    accuracies = config["accuracies"]
+    accuracies = [float(value) for value in config["accuracies"]]
     method_names = [m["name"] for m in config["methods"] if m.get("enabled", True)]
     plan_output = config.get("runtime", {}).get("plan_output", "dry_run")
     if backend is None:
         backend = config.get("runtime", {}).get("backend", "torch")
+    prepared = _prepare_el_families(config, plan_only=True)
     rows = []
     for sys_name, sys_config in config["systems"].items():
         if not sys_config.get("enabled", True):
             continue
-        nh3_dir = resolve_nh3_dir(sys_config)
         for mode_name, mode_config in config["scaling"].items():
             if not isinstance(mode_config, dict) or not mode_config.get(
                 "enabled", True
             ):
                 continue
-            configs = configs_for_mode(
-                mode_name,
-                mode_config,
-                sys_name,
-                sys_config,
-                nh3_dir,
-                plan_only=True,
-            )
+            configs = list(prepared[(sys_name, mode_name)])
             configs, skipped = filter_configs_by_total_atoms(
                 configs, sys_name, max_total_atoms
             )
-            for cfg, total_atoms in skipped:
-                atoms_per_system, batch_size, _ = planned_atom_counts(sys_name, cfg)
-                rows.extend(
-                    {
-                        "benchmark": "el",
-                        "backend": backend,
-                        "system": sys_name,
-                        "mode": mode_name,
-                        "atoms_per_system": atoms_per_system,
-                        "batch_size": batch_size,
-                        "total_atoms": total_atoms,
-                        "method": method,
-                        "accuracy": accuracy,
-                        **_energy_derivative_metadata(profile_components),
-                        "reason": f">{max_total_atoms} max_total_atoms",
-                    }
-                    for accuracy in accuracies
-                    for method in method_names
-                )
-            for cfg in configs:
+            planned_configs = [
+                (cfg, f">{max_total_atoms} max_total_atoms") for cfg, _ in skipped
+            ] + [(cfg, "") for cfg in configs]
+            for cfg, reason in planned_configs:
                 atoms_per_system, batch_size, total_atoms = planned_atom_counts(
                     sys_name, cfg
                 )
+                fixed_total_row = fixed_total_metadata(
+                    mode_name,
+                    mode_config,
+                    total_atoms,
+                )
                 rows.extend(
                     {
                         "benchmark": "el",
@@ -1579,10 +2130,11 @@ def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
                         "atoms_per_system": atoms_per_system,
                         "batch_size": batch_size,
                         "total_atoms": total_atoms,
+                        **fixed_total_row,
                         "method": method,
                         "accuracy": accuracy,
                         **_energy_derivative_metadata(profile_components),
-                        "reason": "",
+                        "reason": reason,
                     }
                     for accuracy in accuracies
                     for method in method_names
@@ -1606,6 +2158,7 @@ def run_from_config(
     config: dict,
     output_dir: Path | str | None = None,
     backend: str | None = None,
+    config_dir: Path | str | None = None,
 ) -> list[dict]:
     """Run electrostatics benchmarks driven by YAML config.
 
@@ -1614,24 +2167,26 @@ def run_from_config(
     backend : str, optional
         ``'torch'`` or ``'jax'``. Pulled from ``config['runtime']['backend']``
         when None. Default is ``'torch'``.
+    config_dir : Path or str, optional
+        Retained for compatibility with the unified-suite runner.
+
+    Notes
+    -----
+    Configurations that omit ``parameters.timing_batches`` use one timing batch.
     """
     params = config["parameters"]
     num_runs = params["timing_runs"]
     warmup_runs = params["warmup_runs"]
+    timing_batches = int(params.get("timing_batches", 1))
+    if timing_batches <= 0:
+        raise ValueError("timing_batches must be positive")
     profile_components = bool(params.get("profile_components", False))
-    max_pme_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
-    if not math.isfinite(max_pme_real_space_cutoff) or max_pme_real_space_cutoff <= 0.0:
-        raise ValueError("PME max_real_space_cutoff must be positive and finite")
-    if max_pme_real_space_cutoff > 9.0:
-        raise ValueError("PME max_real_space_cutoff must not exceed 9 Angstrom")
     accuracies = config["accuracies"]
     max_total_atoms = params.get("max_total_atoms")
     methods_config = config["methods"]
     method_names = [m["name"] for m in methods_config if m.get("enabled", True)]
-    # YAML is authoritative for spline_order; None when PME isn't enabled.
-    pme_spline_order = next(
-        (m["spline_order"] for m in methods_config if m["name"] == "pme"),
-        None,
+    replace_methods = (
+        method_names if config.get("runtime", {}).get("explicit_methods") else None
     )
 
     if backend is None:
@@ -1642,7 +2197,17 @@ def run_from_config(
         )
     if config.get("runtime", {}).get("dry_run", False):
         return dry_run_from_config(config, backend=backend)
-    jax_api = lazy_import_jax(need_electrostatics=True) if backend == "jax" else None
+
+    prepared = _prepare_el_families(config)
+    max_pme_real_space_cutoff = _configured_pme_cutoff(params)
+    pme_spline_order = next(
+        (
+            method["spline_order"]
+            for method in methods_config
+            if method["name"] == "pme"
+        ),
+        None,
+    )
 
     if output_dir is None:
         output_dir = create_run_directory(config["output"]["base_dir"], prefix="el")
@@ -1652,6 +2217,7 @@ def run_from_config(
         configured_nh3_artifacts(config),
         metadata_values={"benchmark": "el"},
     )
+    jax_api = lazy_import_jax(need_electrostatics=True) if backend == "jax" else None
 
     try:
         gpu_name = torch.cuda.get_device_name(0)
@@ -1660,11 +2226,12 @@ def run_from_config(
     print(f"Electrostatics Benchmark | GPU: {gpu_name}")
     print(f"Backend: {backend}")
     print(f"Methods: {method_names} | Accuracies: {accuracies}")
+    print(f"Maximum PME real-space cutoff: {max_pme_real_space_cutoff:g} Angstrom")
+    print("Direct Ewald parameters: automatic")
     print(
-        f"Maximum PME real-space cutoff: {max_pme_real_space_cutoff:g} Angstrom; "
-        "Ewald cutoff: automatic"
+        f"Timing: {timing_batches} batches × {num_runs} calls | "
+        f"component profiling: {profile_components}"
     )
-    print(f"Timing: {num_runs} runs | component profiling: {profile_components}")
     print(f"Output: {output_dir}")
 
     all_results = []
@@ -1672,7 +2239,6 @@ def run_from_config(
     for sys_name, sys_config in config["systems"].items():
         if not sys_config.get("enabled", True):
             continue
-        nh3_dir = resolve_nh3_dir(sys_config)
 
         for mode_name, mode_config in config["scaling"].items():
             if not isinstance(mode_config, dict) or not mode_config.get(
@@ -1683,14 +2249,25 @@ def run_from_config(
             print(f"ELECTROSTATICS: {sys_name.upper()} / {mode_name}")
             print(f"{'=' * 70}")
 
-            configs = configs_for_mode(
-                mode_name, mode_config, sys_name, sys_config, nh3_dir
-            )
+            configs = list(prepared[(sys_name, mode_name)])
             configs, skipped = filter_configs_by_total_atoms(
                 configs, sys_name, max_total_atoms
             )
             configs = _ordered_configs_for_backend(configs, sys_name, backend)
             results = []
+            csv_name = make_csv_name("el", sys_name, mode_name)
+            csv_path = output_dir / csv_name
+
+            def save_progress() -> None:
+                """Atomically preserve rows completed in this CSV shard."""
+                if results:
+                    save_results(
+                        results,
+                        csv_path,
+                        replace_backend=backend,
+                        replace_methods=replace_methods,
+                    )
+
             for cfg, skipped_total in skipped:
                 print(
                     f"  SKIP total atoms {format_num(skipped_total)} "
@@ -1699,9 +2276,10 @@ def run_from_config(
                 atoms_per_system, batch_size, total_atoms = planned_atom_counts(
                     sys_name, cfg
                 )
-                row_meta = make_row_meta(
+                row_meta = _el_row_meta(
                     sys_name,
                     mode_name,
+                    mode_config,
                     backend,
                     atoms_per_system,
                     batch_size,
@@ -1715,18 +2293,18 @@ def run_from_config(
                         reason=reason,
                         timing_runs=num_runs,
                         warmup_runs=warmup_runs,
+                        timing_batches=timing_batches,
+                        timing_batch_aggregation="arithmetic_mean",
                         **_energy_derivative_metadata(profile_components),
                         **row_meta,
                     )
                     for accuracy in accuracies
                     for method in method_names
                 )
+            save_progress()
             if not configs:
                 if results:
-                    csv_name = make_csv_name("el", sys_name, mode_name)
-                    save_results(
-                        results, output_dir / csv_name, replace_backend=backend
-                    )
+                    save_progress()
                     all_results.extend(results)
                 continue
             for accuracy in accuracies:
@@ -1736,9 +2314,10 @@ def run_from_config(
                     atoms_per_system, batch_size, total_atoms = planned_atom_counts(
                         sys_name, cfg
                     )
-                    row_meta = make_row_meta(
+                    row_meta = _el_row_meta(
                         sys_name,
                         mode_name,
+                        mode_config,
                         backend,
                         atoms_per_system,
                         batch_size,
@@ -1756,6 +2335,7 @@ def run_from_config(
                             backend,
                             jax_api,
                             max_pme_real_space_cutoff,
+                            pme_spline_order,
                         )
                         if isinstance(setup, ElConfigFailure):
                             result = build_failure_result(
@@ -1766,10 +2346,14 @@ def run_from_config(
                                 failure_stage=setup.failure_stage,
                                 timing_runs=num_runs,
                                 warmup_runs=warmup_runs,
+                                timing_batches=timing_batches,
+                                timing_batch_aggregation="arithmetic_mean",
                                 **_energy_derivative_metadata(profile_components),
+                                **setup.row_metadata,
                                 **row_meta,
                             )
                             results.append(result)
+                            save_progress()
                             if backend == "jax":
                                 clean_jax(
                                     clear_executables=(
@@ -1793,6 +2377,8 @@ def run_from_config(
                                         failure_stage="post_oom_containment",
                                         timing_runs=num_runs,
                                         warmup_runs=warmup_runs,
+                                        timing_batches=timing_batches,
+                                        timing_batch_aggregation="arithmetic_mean",
                                         **_energy_derivative_metadata(
                                             profile_components
                                         ),
@@ -1800,6 +2386,7 @@ def run_from_config(
                                     )
                                     for next_method in method_names[idx + 1 :]
                                 )
+                                save_progress()
                                 break
                             continue
 
@@ -1809,30 +2396,34 @@ def run_from_config(
                             f"r_cut={setup.real_cutoff:.2f}Å, "
                             f"NL pairs={setup.inputs.nl_data.shape[1]:,}"
                         )
-                        row_meta = make_row_meta(
+                        row_meta = _el_row_meta(
                             sys_name,
                             mode_name,
+                            mode_config,
                             backend,
                             setup.atoms_per_system,
                             setup.batch_size,
                             setup.actual_total,
                         )
+                        method_row_meta = {**row_meta, **setup.row_metadata}
                         result = _el_run_method(
                             method,
                             setup.inputs,
                             setup.alpha,
                             setup.mesh_dims,
                             setup.k_cutoff,
-                            pme_spline_order,
+                            setup.spline_order,
                             accuracy,
                             num_runs,
                             warmup_runs,
+                            timing_batches,
                             profile_components,
                             jax_api,
-                            row_meta,
+                            method_row_meta,
                         )
                         if result is not None:
                             results.append(result)
+                            save_progress()
                         del setup
                         if (
                             backend == "jax"
@@ -1854,18 +2445,20 @@ def run_from_config(
                                     failure_stage="post_oom_containment",
                                     timing_runs=num_runs,
                                     warmup_runs=warmup_runs,
+                                    timing_batches=timing_batches,
+                                    timing_batch_aggregation="arithmetic_mean",
                                     **_energy_derivative_metadata(profile_components),
                                     **row_meta,
                                 )
                                 for next_method in method_names[idx + 1 :]
                             )
+                            save_progress()
                             break
                         if backend == "jax":
                             clean_jax()
 
             if results:
-                csv_name = make_csv_name("el", sys_name, mode_name)
-                save_results(results, output_dir / csv_name, replace_backend=backend)
+                save_progress()
                 all_results.extend(results)
 
     print(f"\nCOMPLETE: {len(all_results)} results in {output_dir}")
@@ -1891,7 +2484,7 @@ def parse_args():
         type=float,
         nargs="+",
         default=None,
-        help="Override target relative error tolerances (dimensionless)",
+        help="Override the configured per-method accuracy targets",
     )
     parser.add_argument(
         "--profile-components",
@@ -1912,15 +2505,12 @@ def main():
     config = merge_cli_overrides(config, args)
 
     backend = args.backend or config.get("runtime", {}).get("backend", "torch")
-    plan_only = (
-        getattr(args, "dry_run", False)
-        or getattr(args, "list_plan", False)
-        or getattr(args, "count_plan", False)
+    results = run_from_config(
+        config,
+        output_dir=args.output_dir,
+        backend=backend,
+        config_dir=args.config.parent,
     )
-    if backend == "jax" and not plan_only:
-        ensure_jax_available(need_electrostatics=True)
-
-    results = run_from_config(config, output_dir=args.output_dir, backend=backend)
     if not results:
         return 1
     if not any(row.get("success", True) is not False for row in results):

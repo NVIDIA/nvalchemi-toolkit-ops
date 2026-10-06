@@ -45,6 +45,7 @@ from nvalchemiops.torch.interactions.electrostatics import (
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import ewald_real_space
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+    generate_k_squared_pme,
     generate_k_vectors_pme,
 )
 from nvalchemiops.torch.interactions.electrostatics.pme import (
@@ -440,6 +441,42 @@ def create_dipole_system(
     return positions, charges, cell
 
 
+def create_parameter_execution_system(
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Create a deterministic neutral system for parameter resolution tests."""
+    positions = torch.tensor(
+        [
+            [x, y, z]
+            for x in (2.0, 8.0)
+            for y in (2.0, 8.0)
+            for z in (1.0, 4.0, 7.0, 10.0)
+        ],
+        dtype=torch.float64,
+        device=device,
+    )
+    charges = torch.tensor(
+        [1.0, -1.0] * 8,
+        dtype=torch.float64,
+        device=device,
+    )
+    cell = torch.eye(3, dtype=torch.float64, device=device) * 12.0
+    return positions, charges, cell
+
+
+@pytest.fixture(scope="module")
+def pme_execution_parameters():
+    """Estimate parameters for order-six PME using the configured cutoff."""
+    positions, _, cell = create_parameter_execution_system(torch.device("cpu"))
+    return estimate_pme_parameters(
+        positions,
+        cell,
+        accuracy=1e-4,
+        real_space_cutoff=8.0,
+        spline_order=6,
+    )
+
+
 def calculate_pme_reciprocal_energy_torchpme(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -728,7 +765,7 @@ class TestPMEReciprocalSpaceAPI:
         assert energies.shape == (0,)
         assert forces.shape == (0, 3)
 
-    @pytest.mark.parametrize("spline_order", [2, 3, 4])
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5])
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_different_spline_orders(self, spline_order, device):
         """Test that different spline orders produce valid results."""
@@ -2151,6 +2188,74 @@ class TestPrecomputedKVectors:
         assert torch.allclose(energies1, energies2, rtol=1e-6)
         assert torch.allclose(forces1, forces2, rtol=1e-6)
 
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_k_squared_only_autograd_matches_full_metadata(self, device):
+        """Test the reduced-memory cache path for benchmark derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+        k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dims)
+        direct_k_squared = generate_k_squared_pme(cell, mesh_dims)
+
+        def energy_and_grads(pos, charge, *, vectors, squared):
+            pos = pos.detach().requires_grad_(True)
+            charge = charge.detach().requires_grad_(True)
+            energies = pme_reciprocal_space(
+                positions=pos,
+                charges=charge,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=mesh_dims,
+                k_vectors=vectors,
+                k_squared=squared,
+            )
+            grads = torch.autograd.grad(energies.sum(), (pos, charge))
+            return energies, grads
+
+        expected_energy, expected_grads = energy_and_grads(
+            positions, charges, vectors=k_vectors, squared=k_squared
+        )
+        actual_energy, actual_grads = energy_and_grads(
+            positions, charges, vectors=None, squared=direct_k_squared
+        )
+
+        torch.testing.assert_close(actual_energy, expected_energy)
+        torch.testing.assert_close(actual_grads[0], expected_grads[0])
+        torch.testing.assert_close(actual_grads[1], expected_grads[1])
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_k_squared_only_regenerates_vectors_for_virial(self, device):
+        """Test that the virial path still obtains Cartesian vectors."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+        k_squared = generate_k_squared_pme(cell, mesh_dims)
+
+        expected = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_virial=True,
+        )
+        actual = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            k_squared=k_squared,
+            compute_virial=True,
+        )
+
+        torch.testing.assert_close(actual[0], expected[0])
+        torch.testing.assert_close(actual[-1], expected[-1])
+
 
 class TestSplineOrders:
     """Test different spline interpolation orders."""
@@ -2468,40 +2573,99 @@ class TestPMEMeshDimensionErrors:
         assert torch.isfinite(energies).all()
 
 
-class TestParticleMeshEwaldAutoEstimation:
-    """Test particle_mesh_ewald auto-estimation paths for coverage."""
+class TestParticleMeshEwaldParameterResolution:
+    """Test full-PME parameter resolution from estimated and explicit values."""
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_auto_estimate_alpha(self, device):
-        """Test auto-estimation of alpha in particle_mesh_ewald (lines 1463-1466)."""
+    def test_estimated_fields_execute_and_match_explicit_values(
+        self, pme_execution_parameters, device
+    ):
+        """Estimated fields and matching explicit values drive the same PME call."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
+        positions, charges, cell = create_parameter_execution_system(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            cutoff=float(pme_execution_parameters.real_space_cutoff[0]),
+            cell=cell,
+            pbc=torch.ones(3, dtype=torch.bool, device=device),
+            return_neighbor_list=True,
+        )
+        common = {
+            "neighbor_list": neighbor_list,
+            "neighbor_ptr": neighbor_ptr,
+            "neighbor_shifts": neighbor_shifts,
+        }
 
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        assert pme_execution_parameters.mesh_dimensions == (32, 32, 32)
+
+        resolved = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=pme_execution_parameters.alpha.to(dtype=torch.float64, device=device),
+            mesh_dimensions=pme_execution_parameters.mesh_dimensions,
+            spline_order=6,
+            **common,
+        )
+        explicit = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=float(pme_execution_parameters.alpha[0]),
+            mesh_dimensions=(32, 32, 32),
+            spline_order=6,
+            **common,
+        )
+        assert torch.isfinite(resolved).all()
+        torch.testing.assert_close(resolved, explicit)
+
+        default_order = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=pme_execution_parameters.alpha.to(explicit),
+            mesh_dimensions=pme_execution_parameters.mesh_dimensions,
+            **common,
+        )
+        alternate_mesh = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=pme_execution_parameters.alpha.to(explicit),
+            mesh_dimensions=(16, 16, 16),
+            spline_order=6,
+            **common,
+        )
+        assert not torch.allclose(resolved, default_order, rtol=1e-10, atol=1e-12)
+        assert not torch.allclose(resolved, alternate_mesh, rtol=1e-10, atol=1e-12)
+
+    def test_alpha_less_call_estimates_alpha_and_mesh(self):
+        """The alpha-less call continues to estimate alpha and the mesh."""
+        positions, charges, cell = create_simple_system(
+            torch.device("cpu"), num_atoms=5
+        )
         neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
             positions,
             cutoff=5.0,
             cell=cell,
-            pbc=torch.tensor([True, True, True], dtype=torch.bool, device=device),
+            pbc=torch.tensor([True, True, True], dtype=torch.bool),
             return_neighbor_list=True,
         )
-        # Call without alpha - should auto-estimate
-        energies, forces = particle_mesh_ewald(
+
+        energies = particle_mesh_ewald(
             positions,
             charges,
             cell,
-            alpha=None,  # Auto-estimate
+            alpha=None,
             neighbor_list=neighbor_list,
             neighbor_ptr=neighbor_ptr,
             neighbor_shifts=neighbor_shifts,
-            compute_forces=True,
         )
 
         assert energies.shape == (5,)
-        assert forces.shape == (5, 3)
         assert torch.isfinite(energies).all()
-        assert torch.isfinite(forces).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_mesh_spacing_in_particle_mesh_ewald(self, device):
@@ -2511,9 +2675,10 @@ class TestParticleMeshEwaldAutoEstimation:
         device = torch.device(device)
 
         positions, charges, cell = create_simple_system(device, num_atoms=5)
+        cutoff = 5.0
         neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
             positions,
-            cutoff=5.0,
+            cutoff=cutoff,
             cell=cell,
             pbc=torch.tensor([True, True, True], dtype=torch.bool, device=device),
             return_neighbor_list=True,
@@ -2536,42 +2701,31 @@ class TestParticleMeshEwaldAutoEstimation:
         assert torch.isfinite(energies).all()
         assert torch.isfinite(forces).all()
 
-    @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_accuracy_based_mesh_estimation(self, device):
-        """Test accuracy-based mesh dimension estimation (lines 1478-1480)."""
-        if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
-        device = torch.device(device)
-
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+    def test_explicit_alpha_estimates_mesh_when_no_control_is_supplied(self):
+        """An explicit alpha still estimates the mesh when no control is supplied."""
+        positions, charges, cell = create_simple_system(
+            torch.device("cpu"), num_atoms=5
+        )
         neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
             positions,
             cutoff=5.0,
             cell=cell,
-            pbc=torch.tensor([True, True, True], dtype=torch.bool, device=device),
+            pbc=torch.tensor([True, True, True], dtype=torch.bool),
             return_neighbor_list=True,
         )
 
-        # Provide alpha but no mesh_dimensions or mesh_spacing
-        # Should use accuracy-based estimation
-        energies, forces = particle_mesh_ewald(
+        energies = particle_mesh_ewald(
             positions,
             charges,
             cell,
             alpha=0.3,
-            mesh_dimensions=None,
-            mesh_spacing=None,
             neighbor_list=neighbor_list,
             neighbor_ptr=neighbor_ptr,
             neighbor_shifts=neighbor_shifts,
-            compute_forces=True,
-            accuracy=1e-4,
         )
 
         assert energies.shape == (5,)
-        assert forces.shape == (5, 3)
         assert torch.isfinite(energies).all()
-        assert torch.isfinite(forces).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_default_mask_value_pme(self, device):
@@ -2608,40 +2762,44 @@ class TestParticleMeshEwaldAutoEstimation:
         assert torch.isfinite(forces).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_auto_mesh_from_alpha_estimation(self, device):
-        """Test mesh_dimensions auto-derived from alpha estimation (lines 1465-1467)."""
+    def test_explicit_path_defaults_spline_order_to_five(self, device):
+        """Omitting the order uses the shared order-five PME default."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
         positions, charges, cell = create_simple_system(device, num_atoms=5)
+        cutoff = 5.0
         neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
             positions,
-            cutoff=5.0,
+            cutoff=cutoff,
             cell=cell,
             pbc=torch.tensor([True, True, True], dtype=torch.bool, device=device),
             return_neighbor_list=True,
         )
 
-        # alpha=None triggers estimate_pme_parameters which sets alpha AND mesh_dimensions
-        # Neither mesh_dimensions nor mesh_spacing provided
-        energies, forces = particle_mesh_ewald(
+        common = {
+            "alpha": 0.3,
+            "mesh_dimensions": (16, 16, 16),
+            "neighbor_list": neighbor_list,
+            "neighbor_ptr": neighbor_ptr,
+            "neighbor_shifts": neighbor_shifts,
+        }
+        default_order = particle_mesh_ewald(
             positions,
             charges,
             cell,
-            alpha=None,  # Triggers auto-estimation
-            mesh_dimensions=None,  # Will be set from params
-            mesh_spacing=None,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
-            compute_forces=True,
+            **common,
+        )
+        explicit_order = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            spline_order=5,
+            **common,
         )
 
-        assert energies.shape == (5,)
-        assert forces.shape == (5, 3)
-        assert torch.isfinite(energies).all()
-        assert torch.isfinite(forces).all()
+        torch.testing.assert_close(default_order, explicit_order)
 
 
 class TestBatchPMEShapePaths:
@@ -5666,7 +5824,7 @@ class TestPMECachedEvalFastPath:
             cell,
             alpha,
             _MESH,
-            4,
+            5,
             batch_idx,
             compute_forces=False,
             compute_charge_gradients=False,
@@ -6998,7 +7156,7 @@ class TestPMEDoubleBackward:
                 c,
                 alpha,
                 _MESH,
-                4,
+                5,
                 None,
             )
             if which == "recip":

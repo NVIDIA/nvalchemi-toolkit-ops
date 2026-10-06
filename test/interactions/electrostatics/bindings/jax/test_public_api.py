@@ -26,6 +26,39 @@ from typing import Literal, get_type_hints
 import pytest
 
 import nvalchemiops.jax.interactions.electrostatics as electrostatics
+from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+    generate_k_squared_pme,
+)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        name
+        for name in electrostatics.__all__
+        if callable(getattr(electrostatics, name))
+        and "spline_order"
+        in inspect.signature(getattr(electrostatics, name)).parameters
+        and inspect.signature(getattr(electrostatics, name))
+        .parameters["spline_order"]
+        .default
+        is not inspect.Parameter.empty
+    ],
+)
+def test_public_pme_defaults_use_order_five(name: str) -> None:
+    """Setup, execution, and cache APIs share the validated PME default."""
+    assert (
+        inspect.signature(getattr(electrostatics, name))
+        .parameters["spline_order"]
+        .default
+        == 5
+    )
+
+
+def test_top_level_exports_k_squared_pme_generator() -> None:
+    """The memory-saving reciprocal-grid helper is available at the public level."""
+    assert electrostatics.generate_k_squared_pme is generate_k_squared_pme
+    assert "generate_k_squared_pme" in electrostatics.__all__
 
 
 def test_import_enables_jax_x64_when_initially_disabled() -> None:
@@ -57,7 +90,10 @@ def test_pme_metadata_preserves_legacy_positional_flag_order() -> None:
     reciprocal_names = list(
         inspect.signature(electrostatics.pme_reciprocal_space).parameters
     )
-    full_names = list(inspect.signature(electrostatics.particle_mesh_ewald).parameters)
+    full_signature = inspect.signature(electrostatics.particle_mesh_ewald)
+    assert full_signature.parameters["spline_order"].default == 5
+    assert get_type_hints(electrostatics.particle_mesh_ewald)["spline_order"] is int
+    full_names = list(full_signature.parameters)
     legacy_flags = [
         "compute_forces",
         "compute_charge_gradients",

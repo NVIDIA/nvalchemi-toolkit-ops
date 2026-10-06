@@ -71,10 +71,29 @@
   passes.
 - Added multi-channel B-spline Warp launchers used by FourierD3.
 
+- Added `generate_k_squared_pme` to the Torch and JAX electrostatics namespaces
+  for reciprocal paths that use squared magnitudes.
+
 ### Changed
 
+- Torch and JAX PME mesh estimation now covers the requested spline support.
+  The default spline order is five, with accuracy-based dimensions rounded
+  upward to 2/3/5/7-smooth FFT sizes. The selector prefers power-of-two meshes,
+  then smooth dimensions divisible by four, within a 25% total-point budget.
+  Public sizing APIs expose `fft_padding_fraction=0.25`; `0` keeps the smallest
+  smooth mesh. Explicit other orders retain upstream power-of-two accuracy
+  sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
+  explicit mesh dimensions remain caller-controlled.
+  Cutoff and splitting-parameter formulas are preserved.
+  Calls that omit `spline_order` now use 5 instead of 4, which can change
+  numerical results and automatically selected meshes. Pass `spline_order=4`
+  to retain the previous interpolation order. To reproduce the previous PME
+  configuration, also pass the previous `mesh_dimensions` explicitly.
 - Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
   `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
+- Torch and JAX PME energy and force paths generate only the squared reciprocal
+  grid when Cartesian reciprocal vectors are unused, reducing peak memory.
+  Virial and cell-gradient paths generate the Cartesian vectors they require.
 
 ### Notes
 

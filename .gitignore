@@ -42,6 +42,7 @@ htmlcov/
 .coverage.*
 .cache
 .tmp/
+/tmp/
 nosetests.xml
 coverage.xml
 nvalchemiops.coverage.xml

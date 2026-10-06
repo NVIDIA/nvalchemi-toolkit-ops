@@ -995,13 +995,7 @@ class TestTorchCompile:
         )
 
     def test_compile_one_shot_energy(self, device):
-        """One-shot binding survives ``torch.compile`` with <=1-ULP drift.
-
-        The one-shot path rebuilds the SCF cache on every call (including a
-        scipy ``compute_overlap_constants`` call that causes dynamo graph
-        breaks), so a few trailing ULPs of summation-order noise slip in. The
-        step-level tests above reuse a pre-built cache and stay bit-exact.
-        """
+        """One-shot binding survives ``torch.compile`` with <=1-ULP drift."""
         td = _torch_device(device)
         positions, _, _, cell, source_feats = _build_test_system(
             seed=2, n_atoms=4, box_len=5.0, device=td
@@ -1081,7 +1075,7 @@ class TestSymbolicExplicitKEnergy:
 
     @pytest.mark.parametrize("l_max", [0, 1, 2])
     def test_single_explicit_k_symbolic_and_gradient_parity(self, device, l_max):
-        """Trace explicit source-only inputs and match prepared-cache values/grads."""
+        """Trace overlap paths and replay automatic overlap graphs with new values."""
         from torch.fx.experimental.proxy_tensor import make_fx
 
         td = _es_torch_device(device)
@@ -1119,7 +1113,16 @@ class TestSymbolicExplicitKEnergy:
             device=positions.device,
         )
 
-        def fn(pos, mm, c, kv, overlap):
+        def fn_auto(pos, mm, c, kv):
+            return multipole_electrostatic_energy(
+                pos,
+                mm,
+                c,
+                sigma=sigma,
+                k_vectors=kv,
+            ).sum()
+
+        def fn_supplied(pos, mm, c, kv, overlap):
             return multipole_electrostatic_energy(
                 pos,
                 mm,
@@ -1129,7 +1132,8 @@ class TestSymbolicExplicitKEnergy:
                 source_overlap_constants=overlap,
             ).sum()
 
-        actual = fn(
+        actual_auto = fn_auto(positions, moments, cell, k_vectors)
+        actual_supplied = fn_supplied(
             positions,
             moments,
             cell,
@@ -1137,21 +1141,48 @@ class TestSymbolicExplicitKEnergy:
             prepared.source_overlap_constants,
         )
         expected = multipole_scf_step_energy(prepared, positions, moments).sum()
-        torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
-        actual_grads = torch.autograd.grad(
-            actual, (positions, moments, cell, k_vectors), retain_graph=True
+        torch.testing.assert_close(actual_auto, expected, rtol=1e-12, atol=1e-12)
+        torch.testing.assert_close(actual_supplied, expected, rtol=1e-12, atol=1e-12)
+        actual_auto_grads = torch.autograd.grad(
+            actual_auto, (positions, moments, cell, k_vectors), retain_graph=True
+        )
+        actual_supplied_grads = torch.autograd.grad(
+            actual_supplied, (positions, moments, cell, k_vectors), retain_graph=True
         )
         expected_grads = torch.autograd.grad(
-            expected, (positions, moments, cell, k_vectors)
+            expected, (positions, moments, cell, k_vectors), retain_graph=True
         )
-        for actual_grad, expected_grad in zip(
-            actual_grads, expected_grads, strict=True
+        for actual_grad, supplied_grad, expected_grad in zip(
+            actual_auto_grads, actual_supplied_grads, expected_grads, strict=True
         ):
             torch.testing.assert_close(
                 actual_grad, expected_grad, rtol=1e-11, atol=1e-12
             )
+            torch.testing.assert_close(
+                supplied_grad, expected_grad, rtol=1e-11, atol=1e-12
+            )
 
-        traced = make_fx(fn, tracing_mode="symbolic")(
+        traced_auto = make_fx(fn_auto, tracing_mode="symbolic")(
+            positions,
+            moments,
+            cell,
+            k_vectors,
+        )
+        traced_auto_energy = traced_auto(positions, moments, cell, k_vectors)
+        torch.testing.assert_close(
+            traced_auto_energy,
+            actual_auto,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        traced_supplied = make_fx(fn_supplied, tracing_mode="symbolic")(
+            positions,
+            moments,
+            cell,
+            k_vectors,
+            prepared.source_overlap_constants,
+        )
+        traced_supplied_energy = traced_supplied(
             positions,
             moments,
             cell,
@@ -1159,17 +1190,97 @@ class TestSymbolicExplicitKEnergy:
             prepared.source_overlap_constants,
         )
         torch.testing.assert_close(
-            traced(
-                positions,
-                moments,
-                cell,
-                k_vectors,
-                prepared.source_overlap_constants,
-            ),
-            actual,
+            traced_supplied_energy,
+            actual_supplied,
             rtol=1e-12,
             atol=1e-12,
         )
+
+        def fn_auto_with_grad(pos, mm, c, kv):
+            energy = fn_auto(pos, mm, c, kv)
+            gradients = torch.autograd.grad(energy, (pos, mm, c, kv))
+            return (energy, *gradients)
+
+        def fn_supplied_with_grad(pos, mm, c, kv, overlap):
+            energy = fn_supplied(pos, mm, c, kv, overlap)
+            gradients = torch.autograd.grad(energy, (pos, mm, c, kv))
+            return (energy, *gradients)
+
+        # Default make_fx forward traces replace detach with alias. Capture the
+        # backward here to preserve the energy's volume gradient.
+        traced_auto_with_grad = make_fx(fn_auto_with_grad, tracing_mode="symbolic")(
+            positions, moments, cell, k_vectors
+        )
+        traced_auto_outputs = traced_auto_with_grad(positions, moments, cell, k_vectors)
+        torch.testing.assert_close(
+            traced_auto_outputs[0], actual_auto, rtol=1e-12, atol=1e-12
+        )
+        for traced_grad, expected_grad in zip(
+            traced_auto_outputs[1:], expected_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                traced_grad, expected_grad, rtol=1e-11, atol=1e-12
+            )
+
+        # Reuse the traced automatic-overlap graphs with fresh values and compare
+        # against eager energy and gradients at those values.
+        replay_positions = (positions.detach() * 1.07).requires_grad_()
+        replay_moments = (moments.detach() * 1.13).requires_grad_()
+        replay_cell = (cell.detach() * 1.08).requires_grad_()
+        replay_k_vectors = (k_vectors.detach() * 0.93).requires_grad_()
+        replay_energy = fn_auto(
+            replay_positions, replay_moments, replay_cell, replay_k_vectors
+        )
+        replay_grads = torch.autograd.grad(
+            replay_energy,
+            (replay_positions, replay_moments, replay_cell, replay_k_vectors),
+        )
+        torch.testing.assert_close(
+            traced_auto(
+                replay_positions, replay_moments, replay_cell, replay_k_vectors
+            ),
+            replay_energy,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        replay_outputs = traced_auto_with_grad(
+            replay_positions, replay_moments, replay_cell, replay_k_vectors
+        )
+        torch.testing.assert_close(
+            replay_outputs[0], replay_energy, rtol=1e-12, atol=1e-12
+        )
+        for replay_grad, expected_grad in zip(
+            replay_outputs[1:], replay_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                replay_grad, expected_grad, rtol=1e-11, atol=1e-12
+            )
+
+        traced_supplied_with_grad = make_fx(
+            fn_supplied_with_grad, tracing_mode="symbolic"
+        )(
+            positions,
+            moments,
+            cell,
+            k_vectors,
+            prepared.source_overlap_constants,
+        )
+        traced_supplied_outputs = traced_supplied_with_grad(
+            positions,
+            moments,
+            cell,
+            k_vectors,
+            prepared.source_overlap_constants,
+        )
+        torch.testing.assert_close(
+            traced_supplied_outputs[0], actual_supplied, rtol=1e-12, atol=1e-12
+        )
+        for traced_grad, expected_grad in zip(
+            traced_supplied_outputs[1:], expected_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                traced_grad, expected_grad, rtol=1e-11, atol=1e-12
+            )
 
     def test_batched_padded_explicit_k_symbolic(self, device):
         """Trace one padded batch and match independent valid-grid systems."""
@@ -1208,7 +1319,18 @@ class TestSymbolicExplicitKEnergy:
             device=positions.device,
         )
 
-        def fn(pos, mm, c, kv, counts, overlap, bi):
+        def fn_auto(pos, mm, c, kv, counts, bi):
+            return multipole_electrostatic_energy(
+                pos,
+                mm,
+                c,
+                batch_idx=bi,
+                sigma=1.0,
+                k_vectors=kv,
+                valid_k_counts=counts,
+            )
+
+        def fn_supplied(pos, mm, c, kv, counts, overlap, bi):
             return multipole_electrostatic_energy(
                 pos,
                 mm,
@@ -1220,7 +1342,15 @@ class TestSymbolicExplicitKEnergy:
                 source_overlap_constants=overlap,
             )
 
-        actual = fn(
+        actual = fn_auto(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            batch_idx,
+        )
+        actual_supplied = fn_supplied(
             positions,
             moments,
             cells,
@@ -1249,22 +1379,62 @@ class TestSymbolicExplicitKEnergy:
             )
         expected = torch.cat(expected_parts)
         torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+        torch.testing.assert_close(actual_supplied, expected, rtol=1e-12, atol=1e-12)
         actual_grads = torch.autograd.grad(
             actual.sum(),
             (positions, moments, cells, k_vectors),
             retain_graph=True,
         )
-        expected_grads = torch.autograd.grad(
-            expected.sum(), (positions, moments, cells, k_vectors)
+        supplied_grads = torch.autograd.grad(
+            actual_supplied.sum(),
+            (positions, moments, cells, k_vectors),
+            retain_graph=True,
         )
-        for actual_grad, expected_grad in zip(
-            actual_grads, expected_grads, strict=True
+        expected_grads = torch.autograd.grad(
+            expected.sum(), (positions, moments, cells, k_vectors), retain_graph=True
+        )
+        for actual_grad, supplied_grad, expected_grad in zip(
+            actual_grads, supplied_grads, expected_grads, strict=True
         ):
             torch.testing.assert_close(
                 actual_grad, expected_grad, rtol=1e-10, atol=1e-11
             )
+            torch.testing.assert_close(
+                supplied_grad, expected_grad, rtol=1e-10, atol=1e-11
+            )
 
-        traced = make_fx(fn, tracing_mode="symbolic")(
+        traced = make_fx(fn_auto, tracing_mode="symbolic")(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            batch_idx,
+        )
+        traced_actual = traced(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            batch_idx,
+        )
+        torch.testing.assert_close(
+            traced_actual,
+            actual,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        traced_supplied = make_fx(fn_supplied, tracing_mode="symbolic")(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            reference.source_overlap_constants,
+            batch_idx,
+        )
+        traced_supplied_actual = traced_supplied(
             positions,
             moments,
             cells,
@@ -1274,19 +1444,67 @@ class TestSymbolicExplicitKEnergy:
             batch_idx,
         )
         torch.testing.assert_close(
-            traced(
-                positions,
-                moments,
-                cells,
-                k_vectors,
-                valid_counts,
-                reference.source_overlap_constants,
-                batch_idx,
-            ),
-            actual,
+            traced_supplied_actual,
+            actual_supplied,
             rtol=1e-12,
             atol=1e-12,
         )
+
+        def fn_auto_with_grad(pos, mm, c, kv, counts, bi):
+            energy = fn_auto(pos, mm, c, kv, counts, bi)
+            gradients = torch.autograd.grad(energy.sum(), (pos, mm, c, kv))
+            return (energy, *gradients)
+
+        def fn_supplied_with_grad(pos, mm, c, kv, counts, overlap, bi):
+            energy = fn_supplied(pos, mm, c, kv, counts, overlap, bi)
+            gradients = torch.autograd.grad(energy.sum(), (pos, mm, c, kv))
+            return (energy, *gradients)
+
+        traced_auto_with_grad = make_fx(fn_auto_with_grad, tracing_mode="symbolic")(
+            positions, moments, cells, k_vectors, valid_counts, batch_idx
+        )
+        traced_auto_outputs = traced_auto_with_grad(
+            positions, moments, cells, k_vectors, valid_counts, batch_idx
+        )
+        torch.testing.assert_close(
+            traced_auto_outputs[0], actual, rtol=1e-12, atol=1e-12
+        )
+        for traced_grad, expected_grad in zip(
+            traced_auto_outputs[1:], expected_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                traced_grad, expected_grad, rtol=1e-10, atol=1e-11
+            )
+
+        traced_supplied_with_grad = make_fx(
+            fn_supplied_with_grad, tracing_mode="symbolic"
+        )(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            reference.source_overlap_constants,
+            batch_idx,
+        )
+        traced_supplied_outputs = traced_supplied_with_grad(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            reference.source_overlap_constants,
+            batch_idx,
+        )
+        torch.testing.assert_close(
+            traced_supplied_outputs[0], actual_supplied, rtol=1e-12, atol=1e-12
+        )
+        for traced_grad, expected_grad in zip(
+            traced_supplied_outputs[1:], expected_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                traced_grad, expected_grad, rtol=1e-10, atol=1e-11
+            )
 
     def test_prepared_features_and_ewald_wrappers_trace(self, device):
         """Prepared feature/Ewald wrappers reuse their cache during tracing."""
