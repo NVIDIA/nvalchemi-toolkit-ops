@@ -1109,6 +1109,92 @@ def test_prepared_cluster_tile_output_requires_cluster_and_is_public() -> None:
         )
 
 
+def test_prepared_cluster_tile_capacity_defaults_and_validation() -> None:
+    """Cluster tile output uses the default group bound and rejects invalid bounds."""
+    positions = jnp.zeros((40, 3), dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32) * 20.0
+    pbc = jnp.ones((3,), dtype=jnp.bool_)
+
+    for max_tiles_per_group in (0, -1):
+        with pytest.raises(ValueError, match="max_tiles_per_group must be positive"):
+            prepare_neighbor_list(
+                positions,
+                1.0,
+                cell=cell,
+                pbc=pbc,
+                method="cluster_tile",
+                format="tile",
+                max_tiles_per_group=max_tiles_per_group,
+            )
+
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        method="cluster_tile",
+        format="tile",
+    )
+    result, successor = neighbor_list(positions, state=state)
+    assert len(result) == 7
+    # Forty atoms require two groups. The omitted per-group bound defaults to
+    # two, so the tile arrays can hold all four group-pair combinations.
+    assert result[1].shape == (4,)
+    assert result[2].shape == (4,)
+    assert bool(jnp.all(successor.valid))
+
+
+def test_prepared_cluster_coo_omitted_capacity_preserves_active_geometry() -> None:
+    """Omitted cluster COO capacity defaults to N times row width."""
+    positions_np, cell_np, cutoff = _fixed_cluster_geometry_case(
+        "orthogonal_nonzero_image"
+    )
+    positions = jnp.asarray(positions_np)
+    cell = jnp.asarray(cell_np)
+    state = prepare_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=jnp.ones((3,), dtype=jnp.bool_),
+        method="cluster_tile",
+        return_neighbor_list=True,
+        max_neighbors=1,
+        max_tiles_per_group=1,
+        return_distances=True,
+        return_vectors=True,
+    )
+
+    expected_capacity = len(positions_np)
+    assert state.coo_layout == "compact"
+    result, successor = neighbor_list(positions, state=state)
+    assert len(result) == 5
+    assert bool(jnp.all(successor.valid))
+
+    active_pairs = int(np.asarray(result[1])[-1])
+    pairs, shifts = (
+        np.asarray(result[0])[:, :active_pairs],
+        np.asarray(result[2])[:active_pairs],
+    )
+    expected = _fixed_cluster_expected_geometry(positions_np, cell_np, cutoff)
+    assert active_pairs == len(expected) == expected_capacity
+    np.testing.assert_array_equal(
+        np.diff(np.asarray(result[1])),
+        np.bincount(pairs[0], minlength=len(positions_np)),
+    )
+    geometry = {
+        (int(pair[0]), int(pair[1]), *(int(value) for value in shift)): (
+            np.asarray(result[4])[index].copy(),
+            float(np.asarray(result[3])[index]),
+        )
+        for index, (pair, shift) in enumerate(zip(pairs.T, shifts, strict=True))
+    }
+    assert geometry.keys() == expected.keys()
+    for key, (expected_vector, expected_distance) in expected.items():
+        actual_vector, actual_distance = geometry[key]
+        np.testing.assert_allclose(actual_vector, expected_vector, atol=3e-5)
+        np.testing.assert_allclose(actual_distance, expected_distance, atol=3e-5)
+
+
 def test_prepared_atomic_density_none_preserves_atom_count_default() -> None:
     """Omitting or explicitly clearing density keeps the atom-count width."""
     positions, _cell, _pbc = _cell_inputs(4)
@@ -1808,6 +1894,177 @@ def test_prepared_selective_fixed_coo_compiled_branch_transitions() -> None:
     assert state4.valid.tolist() == [True, True]
 
 
+@pytest.mark.parametrize(
+    "fixed_cell", [False, True], ids=["default-cell", "fixed-cell"]
+)
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batched"])
+def test_prepared_selective_cell_list_jit_preserves_successor(
+    fixed_cell: bool, batched: bool
+) -> None:
+    """Jitted selective cell-list execution preserves a successor when skipped."""
+    if batched:
+        positions = jnp.array(
+            [
+                [0.2, 0.1, 0.2],
+                [0.4, 0.1, 0.2],
+                [3.0, 0.1, 0.2],
+                [3.2, 0.1, 0.2],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 2)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32) * 8.0, (2, 3, 3))
+        pbc = jnp.broadcast_to(jnp.array([True, False, True], dtype=jnp.bool_), (2, 3))
+        options = {
+            "cell": cell,
+            "pbc": pbc,
+            "batch_idx": batch_idx,
+            "batch_ptr": batch_ptr,
+            "method": "batch_cell_list",
+            "strategy": "atom_centric",
+            "max_neighbors": 8,
+            "max_total_cells": 512,
+            "selective": True,
+            "fixed_cell": fixed_cell,
+        }
+    else:
+        positions = jnp.array(
+            [
+                [0.2, 0.1, 0.2],
+                [7.8, 0.1, 0.2],
+                [3.0, 1.0, 1.0],
+                [3.4, 1.0, 1.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = None
+        batch_ptr = None
+        cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+        pbc = jnp.array([True, False, True], dtype=jnp.bool_)
+        options = {
+            "cell": cell,
+            "pbc": pbc,
+            "method": "cell_list",
+            "strategy": "atom_centric",
+            "max_neighbors": 8,
+            "max_total_cells": 512,
+            "selective": True,
+            "fixed_cell": fixed_cell,
+        }
+    state = prepare_neighbor_list(positions, 0.7, **options)
+    assert state.supports_compilation
+    assert state.fixed_cell is fixed_cell
+    compiled = jax.jit(
+        lambda current_positions, current_state, flags: neighbor_list(
+            current_positions,
+            state=current_state,
+            rebuild_flags=flags,
+        )
+    )
+
+    if batched:
+
+        def direct(values: jax.Array) -> tuple[jax.Array, ...]:
+            return batch_cell_list(
+                values,
+                0.7,
+                cell,
+                pbc,
+                batch_idx,
+                batch_ptr,
+                max_neighbors=8,
+                max_total_cells=512,
+                strategy="atom_centric",
+            )
+
+        all_systems = jnp.ones((2,), dtype=jnp.bool_)
+        preserve_all = jnp.zeros((2,), dtype=jnp.bool_)
+        initial_result, initialized = compiled(positions, state, all_systems)
+        _assert_active_cell_topology_equal(initial_result, direct(positions))
+        assert initialized.initialized.tolist() == [True, True]
+        assert initialized.valid.tolist() == [True, True]
+
+        moved = positions.at[1].set(jnp.array([1.2, 0.1, 0.2], dtype=jnp.float32))
+        moved = moved.at[3].set(jnp.array([4.2, 0.1, 0.2], dtype=jnp.float32))
+        fresh_moved = direct(moved)
+        assert int(jnp.sum(fresh_moved[1])) < int(jnp.sum(initial_result[1]))
+
+        preserved_result, preserved = compiled(moved, initialized, preserve_all)
+        _assert_active_cell_topology_equal(preserved_result, initial_result)
+        assert preserved.initialized.tolist() == [True, True]
+        assert preserved.valid.tolist() == [True, True]
+
+        rebuild_first = jnp.array([True, False], dtype=jnp.bool_)
+        mixed_result, mixed = compiled(moved, preserved, rebuild_first)
+        hybrid_positions = moved.at[2:].set(positions[2:])
+        _assert_active_cell_topology_equal(
+            mixed_result, direct(hybrid_positions), rows={0, 1}
+        )
+        _assert_active_cell_topology_equal(mixed_result, initial_result, rows={2, 3})
+        assert int(jnp.sum(mixed_result[1][:2])) < int(jnp.sum(initial_result[1][:2]))
+        assert int(jnp.sum(mixed_result[1][2:])) == int(jnp.sum(initial_result[1][2:]))
+        assert mixed.initialized.tolist() == [True, True]
+        assert mixed.valid.tolist() == [True, True]
+
+        reused_result, reused = compiled(moved, mixed, preserve_all)
+        _assert_active_cell_topology_equal(reused_result, mixed_result)
+        assert reused.initialized.tolist() == [True, True]
+        assert reused.valid.tolist() == [True, True]
+
+        rebuilt_result, rebuilt = compiled(moved, reused, all_systems)
+        _assert_active_cell_topology_equal(rebuilt_result, fresh_moved)
+        assert int(jnp.sum(rebuilt_result[1])) < int(jnp.sum(mixed_result[1]))
+        assert rebuilt.initialized.tolist() == [True, True]
+        assert rebuilt.valid.tolist() == [True, True]
+        assert rebuilt.fixed_cell is fixed_cell
+        return
+
+    moved = positions.at[1].set(jnp.array([6.8, 0.1, 0.2], dtype=jnp.float32))
+    initial_result, initialized = compiled(
+        positions, state, jnp.ones((1,), dtype=jnp.bool_)
+    )
+    direct = cell_list(
+        positions,
+        0.7,
+        cell,
+        pbc,
+        max_neighbors=8,
+        max_total_cells=512,
+        strategy="atom_centric",
+    )
+    _assert_active_cell_topology_equal(initial_result, direct)
+    assert bool(jnp.all(initialized.initialized))
+    assert bool(jnp.all(initialized.valid))
+
+    preserved_result, successor = compiled(
+        moved, initialized, jnp.zeros((1,), dtype=jnp.bool_)
+    )
+    for expected, actual in zip(initial_result, preserved_result, strict=True):
+        np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+    assert bool(jnp.all(successor.initialized))
+    assert bool(jnp.all(successor.valid))
+    assert successor.fixed_cell is fixed_cell
+
+    rebuilt_result, rebuilt = compiled(
+        moved, successor, jnp.ones((1,), dtype=jnp.bool_)
+    )
+    direct_moved = cell_list(
+        moved,
+        0.7,
+        cell,
+        pbc,
+        max_neighbors=8,
+        max_total_cells=512,
+        strategy="atom_centric",
+    )
+    _assert_active_cell_topology_equal(rebuilt_result, direct_moved)
+    assert int(jnp.sum(rebuilt_result[1])) != int(jnp.sum(initial_result[1]))
+    assert bool(jnp.all(rebuilt.initialized))
+    assert bool(jnp.all(rebuilt.valid))
+    assert rebuilt.fixed_cell is fixed_cell
+
+
 def test_prepared_fixed_cell_api_cache_leaf_and_tree_round_trip() -> None:
     """Fixed geometry is a read-only state option and a dynamic cache child."""
     positions, cell, pbc = _cell_inputs(4)
@@ -2426,6 +2683,65 @@ def test_prepared_fixed_cell_list_routes_match_direct(
             _matrix_to_pair_set_full(*expected[:3], len(positions))
         )
         np.testing.assert_array_equal(np.asarray(actual[1]), np.asarray(expected[1]))
+
+
+def test_prepared_pair_centric_cell_list_jit_threads_live_positions() -> None:
+    """Compilation-eligible pair-centric state threads positions and shifts."""
+    positions = jnp.array(
+        [
+            [0.2, 0.1, 0.2],
+            [7.8, 0.1, 0.2],
+            [3.0, 1.0, 1.0],
+            [3.4, 1.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+    moved = positions.at[1].set(jnp.array([6.8, 0.1, 0.2], dtype=jnp.float32))
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.array([True, False, True], dtype=jnp.bool_)
+    state = prepare_neighbor_list(
+        positions,
+        0.7,
+        cell=cell,
+        pbc=pbc,
+        method="cell_list",
+        strategy="pair_centric",
+        max_neighbors=8,
+        max_total_cells=512,
+        fixed_cell=True,
+    )
+    assert state.supports_compilation
+    assert state.compilation_blocker is None
+    compiled = jax.jit(
+        lambda current_positions, current_state: neighbor_list(
+            current_positions, state=current_state
+        )
+    )
+
+    first, state1 = compiled(positions, state)
+    direct_first = cell_list(
+        positions,
+        0.7,
+        cell,
+        pbc,
+        max_neighbors=8,
+        max_total_cells=512,
+        strategy="pair_centric",
+    )
+    _assert_active_cell_topology_equal(first, direct_first)
+    second, state2 = compiled(moved, state1)
+    direct_second = cell_list(
+        moved,
+        0.7,
+        cell,
+        pbc,
+        max_neighbors=8,
+        max_total_cells=512,
+        strategy="pair_centric",
+    )
+    _assert_active_cell_topology_equal(second, direct_second)
+    assert bool(jnp.all(state2.valid))
+    assert state2.fixed_cell
 
 
 def test_prepared_fixed_cell_list_rebuilds_occupancy_under_jit_and_default_mode() -> (

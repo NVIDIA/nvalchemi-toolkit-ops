@@ -174,6 +174,7 @@ NEIGHBORS_MIN_FILES := test/neighbors/test_cell_list_kernel_getters.py \
 	test/neighbors/test_cluster_tile_kernels.py \
 	test/neighbors/test_compat_imports.py \
 	test/neighbors/test_pair_outputs.py \
+	test/neighbors/test_fixed_cell_core.py \
 	test/neighbors/bindings/jax/test_batch_cluster_tile.py \
 	test/neighbors/bindings/jax/test_batch_naive.py \
 	test/neighbors/bindings/jax/test_cluster_tile.py \
@@ -181,6 +182,8 @@ NEIGHBORS_MIN_FILES := test/neighbors/test_cell_list_kernel_getters.py \
 	test/neighbors/bindings/jax/test_naive_dual_cutoff.py \
 	test/neighbors/bindings/jax/test_neighborlist.py \
 	test/neighbors/bindings/jax/test_rebuild_detection.py \
+	test/neighbors/bindings/jax/test_prepared_neighbor_list.py \
+	test/neighbors/bindings/jax/test_prepared_neighbor_list_status.py \
 	test/neighbors/bindings/torch/test_base_dispatch.py \
 	test/neighbors/bindings/torch/test_batch_cell_list.py \
 	test/neighbors/bindings/torch/test_batch_cluster_tile.py \
@@ -192,7 +195,9 @@ NEIGHBORS_MIN_FILES := test/neighbors/test_cell_list_kernel_getters.py \
 	test/neighbors/bindings/torch/test_naive.py \
 	test/neighbors/bindings/torch/test_naive_dual_cutoff.py \
 	test/neighbors/bindings/torch/test_neighborlist.py \
-	test/neighbors/bindings/torch/test_rebuild_detection.py
+	test/neighbors/bindings/torch/test_rebuild_detection.py \
+	test/neighbors/bindings/torch/test_prepared_neighbor_list.py \
+	test/neighbors/bindings/torch/test_prepared_neighbor_list_compiler.py
 ARGS_neighbors_min := $(filter-out test/neighbors/bindings/jax/% test/neighbors/bindings/torch/%,$(NEIGHBORS_MIN_FILES))
 ARGS_neighbors_jax_min := $(filter test/neighbors/bindings/jax/%,$(NEIGHBORS_MIN_FILES))
 ARGS_neighbors_torch_min := $(filter test/neighbors/bindings/torch/%,$(NEIGHBORS_MIN_FILES))

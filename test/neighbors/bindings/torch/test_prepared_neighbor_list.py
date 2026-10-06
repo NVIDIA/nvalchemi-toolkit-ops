@@ -66,15 +66,15 @@ def _assert_cluster_route_equal(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("format", ["matrix", "tile", "coo"])
-@pytest.mark.parametrize("cutoff2", [None, 1.25])
+@pytest.mark.parametrize(
+    ("format", "cutoff2"),
+    [("matrix", None), ("tile", None), ("coo", None), ("matrix", 1.25)],
+)
 @pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_single_cluster_route_matches_direct(
     format: str, cutoff2: float | None, fixed_cell: bool
 ) -> None:
     """Supported single prepared cluster outputs match the direct route."""
-    if cutoff2 is not None and format != "matrix":
-        pytest.skip("dual cutoff is matrix-only")
     positions, _, _, cell = _inputs()
     pbc = torch.ones(3, dtype=torch.bool, device="cuda")
     kwargs = dict(
@@ -105,15 +105,15 @@ def test_prepared_single_cluster_route_matches_direct(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("format", ["matrix", "tile", "coo"])
-@pytest.mark.parametrize("cutoff2", [None, 1.25])
+@pytest.mark.parametrize(
+    ("format", "cutoff2"),
+    [("matrix", None), ("tile", None), ("coo", None), ("matrix", 1.25)],
+)
 @pytest.mark.parametrize("fixed_cell", [False, True])
 def test_prepared_batch_cluster_route_matches_direct(
     format: str, cutoff2: float | None, fixed_cell: bool
 ) -> None:
     """Supported batched prepared cluster outputs match the direct route."""
-    if cutoff2 is not None and format != "matrix":
-        pytest.skip("dual cutoff is matrix-only")
     positions, _, _, single_cell = _inputs()
     positions = torch.cat((positions[:2], positions[:2] + 4.0))
     batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
@@ -170,6 +170,41 @@ def test_prepared_batch_cluster_route_matches_direct(
             torch.testing.assert_close(prepared[3][begin:end], direct[3][begin:end])
         return
     _assert_cluster_route_equal(prepared, direct, format)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("format", ["tile", "coo"])
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_prepared_cluster_dual_cutoff_rejects_non_matrix_formats(
+    batched: bool, format: str, fixed_cell: bool
+) -> None:
+    """Cluster preparation rejects dual cutoffs outside matrix output."""
+    positions, _, _, cell = _inputs()
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs: dict[str, object] = {
+        "cell": cell,
+        "pbc": pbc,
+        "method": "cluster_tile",
+        "format": format,
+        "return_neighbor_list": format == "coo",
+        "cutoff2": 1.25,
+        "fixed_cell": fixed_cell,
+    }
+    if batched:
+        positions = torch.cat((positions[:2], positions[:2] + 4.0))
+        kwargs.update(
+            cell=cell.repeat(2, 1, 1),
+            pbc=pbc.repeat(2, 1),
+            batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda"),
+            method="batch_cluster_tile",
+        )
+
+    with pytest.raises(
+        ValueError, match="cluster_tile cutoff2 is supported only with format='matrix'"
+    ):
+        prepare_neighbor_list(positions, 1.0, **kwargs)
 
 
 def test_generic_public_workflow_exports() -> None:
@@ -284,6 +319,102 @@ def test_public_contract_rejects_non_state_and_caller_storage() -> None:
     with pytest.raises(ValueError, match="positions shape does not match"):
         neighbor_list(close[:-1], cell=cell, state=state)
     assert neighbor_list(close, cell=cell, state=state)
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("half_fill", 1, "half_fill and wrap_positions must be Boolean values"),
+        ("wrap_positions", 1, "half_fill and wrap_positions must be Boolean values"),
+        (
+            "return_vectors",
+            1,
+            "return_vectors and return_distances must be Boolean values",
+        ),
+        (
+            "return_distances",
+            1,
+            "return_vectors and return_distances must be Boolean values",
+        ),
+        ("selective", 1, "selective must be a Boolean"),
+        ("fixed_cell", 1, "fixed_cell must be a Boolean"),
+        ("fill_value", True, "fill_value must be an integer"),
+    ],
+)
+def test_preparation_rejects_invalid_public_options(
+    option: str, value: object, message: str
+) -> None:
+    """Preparation rejects malformed option types before allocating state."""
+    positions = torch.zeros((2, 3), dtype=torch.float32)
+    cell = torch.eye(3, dtype=torch.float32)
+    pbc = torch.ones(3, dtype=torch.bool)
+    with pytest.raises(ValueError, match=message):
+        prepare_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            method="naive",
+            **{option: value},
+        )
+
+
+def test_preparation_rejects_missing_or_inconsistent_geometry_metadata() -> None:
+    """Prepared routes validate cells, periodicity, batches, and span bounds."""
+    positions = torch.zeros((2, 3), dtype=torch.float32)
+    cell = torch.eye(3, dtype=torch.float32)
+    pbc = torch.ones(3, dtype=torch.bool)
+
+    with pytest.raises(ValueError, match="cutoff must be positive"):
+        prepare_neighbor_list(positions, None, method="naive")
+    with pytest.raises(ValueError, match="batch metadata is required"):
+        prepare_neighbor_list(positions, 1.0, cell=cell, pbc=pbc, method="batch_naive")
+    with pytest.raises(ValueError, match="cell-list preparation requires pbc"):
+        prepare_neighbor_list(positions, 1.0, cell=cell, method="cell_list")
+    with pytest.raises(ValueError, match="pbc is required when cell is provided"):
+        prepare_neighbor_list(positions, 1.0, cell=cell, method="naive")
+    with pytest.raises(ValueError, match="cell is required when pbc is provided"):
+        prepare_neighbor_list(positions, 1.0, pbc=pbc, method="naive")
+    with pytest.raises(ValueError, match="cell must match positions dtype and device"):
+        prepare_neighbor_list(
+            positions, 1.0, cell=cell.double(), pbc=pbc, method="naive"
+        )
+    with pytest.raises(ValueError, match="nonzero span_margin requires cell=None"):
+        prepare_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
+            span_margin=0.5,
+        )
+    with pytest.raises(ValueError, match="nonzero span_margin requires cell=None"):
+        prepare_neighbor_list(positions, 1.0, method="naive", span_margin=0.5)
+
+
+@pytest.mark.parametrize("invalid_target", ["dtype", "rank"])
+def test_preparation_rejects_invalid_target_indices(invalid_target: str) -> None:
+    """Prepared partial-row indices require one-dimensional int32 input."""
+    positions = torch.zeros((2, 3), dtype=torch.float32)
+    cell = torch.eye(3, dtype=torch.float32)
+    pbc = torch.ones(3, dtype=torch.bool)
+    target_indices = (
+        torch.tensor([0], dtype=torch.int64)
+        if invalid_target == "dtype"
+        else torch.tensor([[0]], dtype=torch.int32)
+    )
+    with pytest.raises(
+        ValueError,
+        match="target_indices must be an int32 tensor on the prepared device",
+    ):
+        prepare_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
+            target_indices=target_indices,
+        )
 
 
 @pytest.mark.gpu
@@ -941,7 +1072,7 @@ def test_prepared_geometry_clone_survives_changed_pairs_before_backward(
     frame0_cell = cell.clone().requires_grad_()
     first = neighbor_list(frame0, cell=frame0_cell, state=state)
     first_active = (first[0] != state.fill_value).clone()
-    assert torch.count_nonzero(first[2]) > 0
+    assert torch.count_nonzero(first[2][first_active]) > 0
     saved_distances = first[-2].clone()
     saved_vectors = first[-1].clone()
     saved_loss = (
@@ -957,7 +1088,7 @@ def test_prepared_geometry_clone_survives_changed_pairs_before_backward(
     second = neighbor_list(frame1, cell=frame0_cell, state=state)
     second_active = second[0] != state.fill_value
     assert int(second_active.sum()) != int(first_active.sum())
-    assert torch.count_nonzero(second[2]) == 0
+    assert torch.count_nonzero(second[2][second_active]) == 0
     assert state.neighbor_distances is second[-2]
     assert state.neighbor_vectors is second[-1]
     saved_loss.backward()
@@ -1430,7 +1561,6 @@ def test_prepared_cluster_dual_omitted_capacity_uses_larger_cutoff(
         "method": "cluster_tile",
         "cutoff2": cutoff2,
         "format": "matrix",
-        "max_tiles_per_group": 1,
     }
     direct = cluster_tile_neighbor_list
     direct_args: tuple[torch.Tensor, ...] = (positions, cutoff, cell)
@@ -1452,7 +1582,6 @@ def test_prepared_cluster_dual_omitted_capacity_uses_larger_cutoff(
         *direct_args,
         cutoff2=cutoff2,
         max_neighbors=state.neighbor_matrix1.shape[1],
-        max_tiles_per_group=1,
         format="matrix",
     )
     _assert_cluster_route_equal(prepared, expected, "matrix")
@@ -2954,7 +3083,6 @@ def test_fixed_cell_cluster_skew_geometry_matches_lattice_oracle(rotated: bool) 
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("method", ["naive", "cell_list", "cluster_tile"])
 def test_fixed_cell_fullgraph_accepts_fixed_and_dynamic_states(method: str) -> None:
@@ -3011,7 +3139,6 @@ def _fixed_cell_compile_inputs(
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("method", ["naive", "cluster_tile"])
 def test_fixed_cell_cuda_graph_replay_rebuilds_positions(method: str) -> None:

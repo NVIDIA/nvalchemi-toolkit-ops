@@ -101,7 +101,6 @@ def test_prepared_cluster_selective_coo_support_matrix(batched: bool) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize(
     ("method", "batched"),
@@ -241,7 +240,6 @@ def test_prepared_naive_and_cell_list_geometry_fullgraph_reuse(
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_fullgraph_mirrors_6_to_2_to_0_and_preserves_old_results() -> None:
     """One compiled callable handles changing COO sizes and state references."""
@@ -291,7 +289,6 @@ def test_prepared_fullgraph_mirrors_6_to_2_to_0_and_preserves_old_results() -> N
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_dual_fullgraph_reuses_larger_cutoff_shift_storage() -> None:
     """Dual naive fullgraph execution uses coverage sized for the larger cutoff."""
@@ -334,7 +331,6 @@ def test_prepared_naive_dual_fullgraph_reuses_larger_cutoff_shift_storage() -> N
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_compiled_coverage_failure_isolated_process() -> None:
     """Compiled insufficient periodic-image coverage fails in a fresh process."""
@@ -372,7 +368,6 @@ torch.cuda.synchronize()
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_cell_list_compiled_coverage_failure_isolated_process() -> None:
     """Compiled insufficient cell-list radius fails in a fresh process."""
@@ -412,8 +407,11 @@ torch.cuda.synchronize()
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_prepared_batch_cell_list_fullgraph_guards_selected_systems() -> None:
-    """Compiled selected rebuilds accept covered changes and preserve others."""
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_prepared_batch_cell_list_fullgraph_guards_selected_systems(
+    fixed_cell: bool,
+) -> None:
+    """Compiled selected rebuilds update geometry and preserve other systems."""
     positions = torch.tensor(
         [[0.1, 0.1, 0.1], [0.4, 0.1, 0.1], [0.1, 0.1, 0.1], [0.4, 0.1, 0.1]],
         dtype=torch.float32,
@@ -432,6 +430,7 @@ def test_prepared_batch_cell_list_fullgraph_guards_selected_systems() -> None:
         strategy="atom_centric",
         max_neighbors=32,
         selective=True,
+        fixed_cell=fixed_cell,
     )
     flags = torch.ones(2, dtype=torch.bool, device="cuda")
 
@@ -442,17 +441,25 @@ def test_prepared_batch_cell_list_fullgraph_guards_selected_systems() -> None:
         return neighbor_list(values, cell=boxes, state=state, rebuild_flags=rebuild)
 
     initial = run(positions, cell, flags)
-    preserved_rows = tuple(value[2:].clone() for value in initial[:3])
-    runtime_cell = cell.clone()
-    runtime_cell[0].mul_(0.5)
-    runtime_cell[1, 0, 0] = 0.8
+    initial_snapshot = tuple(value.clone() for value in initial[:3])
+    if fixed_cell:
+        runtime_positions = positions.clone()
+        runtime_positions[1, 0] = 3.4
+        runtime_cell = cell
+    else:
+        runtime_positions = positions
+        runtime_cell = cell.clone()
+        runtime_cell[0].mul_(0.5)
+        runtime_cell[1, 0, 0] = 0.8
     selected = run(
-        positions,
+        runtime_positions,
         runtime_cell,
         torch.tensor([True, False], dtype=torch.bool, device="cuda"),
     )
+    if fixed_cell:
+        assert not torch.equal(selected[1][:2], initial_snapshot[1][:2])
     direct = neighbor_list(
-        positions,
+        runtime_positions,
         1.0,
         cell=runtime_cell,
         pbc=pbc,
@@ -470,14 +477,76 @@ def test_prepared_batch_cell_list_fullgraph_guards_selected_systems() -> None:
         (selected_matrix, selected[1][:2], selected[2][:2]),
         (direct_matrix, direct[1][:2], direct[2][:2]),
     )
-    for actual, expected in zip(
-        (value[2:] for value in selected[:3]), preserved_rows, strict=True
-    ):
-        torch.testing.assert_close(actual, expected)
+    assert_neighbor_matrix_equal(
+        tuple(value[2:] for value in selected[:3]),
+        tuple(value[2:] for value in initial_snapshot),
+    )
+
+    selected_snapshot = tuple(value.clone() for value in selected[:3])
+    all_false = run(
+        runtime_positions,
+        runtime_cell,
+        torch.zeros(2, dtype=torch.bool, device="cuda"),
+    )
+    assert_neighbor_matrix_equal(all_false[:3], selected_snapshot)
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_pair_centric_cell_list_fullgraph(batched: bool) -> None:
+    """Pair-centric cell-list preparation supports compiled public execution."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.1, 0.1],
+            [0.5, 0.1, 0.1],
+            [4.1, 4.1, 4.1],
+            [4.5, 4.1, 4.1],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    pbc = torch.zeros(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    method = "cell_list"
+    reference_method = "cell_list_pair_centric"
+    if batched:
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+        method = "batch_cell_list"
+        reference_method = "batch_cell_list_pair_centric"
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        strategy="pair_centric",
+        max_neighbors=8,
+    )
+    assert state.supports_compilation and state.compilation_blocker is None
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, cell=box, state=state)
+
+    result = run(positions, cell)
+    direct = neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=reference_method,
+        max_neighbors=8,
+    )
+    assert_neighbor_matrix_equal(result[:3], direct[:3])
+
+
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_guard_preserves_geometry_backward() -> None:
     """The periodic coverage guard preserves eager coordinate gradients."""
@@ -516,7 +585,6 @@ def test_prepared_naive_guard_preserves_geometry_backward() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_single_cluster_coo_fullgraph_accepts_batched_cell_shape() -> None:
     """Single prepared COO compilation accepts the public ``(1, 3, 3)`` cell form."""
@@ -533,7 +601,6 @@ def test_prepared_single_cluster_coo_fullgraph_accepts_batched_cell_shape() -> N
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_synthesized_batch_cell_list_fullgraph_and_validation_is_recoverable() -> (
     None
@@ -563,7 +630,6 @@ def test_prepared_synthesized_batch_cell_list_fullgraph_and_validation_is_recove
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_synthesized_batch_cell_list_rounding_bound_fullgraph() -> None:
     """Fullgraph execution accepts span growth at the inclusive rounding bound."""
@@ -602,7 +668,6 @@ def test_prepared_synthesized_batch_cell_list_rounding_bound_fullgraph() -> None
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_batched_cluster_tile_fullgraph_smoke() -> None:
     """The batched cluster-tile state supports fullgraph execution."""
@@ -630,7 +695,6 @@ def test_prepared_batched_cluster_tile_fullgraph_smoke() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_batched_cluster_coo_fullgraph_publishes_tile_segments() -> None:
     """Batched compact COO keeps its tile segments inside the compiled boundary."""
@@ -663,7 +727,6 @@ def test_prepared_batched_cluster_coo_fullgraph_publishes_tile_segments() -> Non
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_batched_cluster_coo_geometry_fullgraph() -> None:
     """Batched compact COO geometry outputs stay within the compiled boundary."""
@@ -697,7 +760,6 @@ def test_prepared_batched_cluster_coo_geometry_fullgraph() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_cluster_matrix_cuda_graph_replay() -> None:
     """A warmed general prepared matrix route supports CUDA Graph replay."""
@@ -731,7 +793,6 @@ def test_prepared_cluster_matrix_cuda_graph_replay() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize(
     ("batched", "dual_cutoff", "selective"),
@@ -871,7 +932,6 @@ def test_prepared_cluster_matrix_fullgraph_cuda_graph_contract(
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_cluster_cuda_graph_replay_reads_updated_boundary_cell() -> None:
     """CUDA Graph replay uses the current cell for minimum-image topology."""
@@ -916,7 +976,6 @@ def test_prepared_cluster_cuda_graph_replay_reads_updated_boundary_cell() -> Non
 
 
 @pytest.mark.gpu
-@pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize(
     ("batched", "partial", "capture", "single_batched_cell"),
