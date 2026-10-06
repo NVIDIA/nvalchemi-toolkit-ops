@@ -1411,6 +1411,110 @@ def _(
     return None
 
 
+@torch.library.custom_op(
+    "nvalchemiops::_batch_query_cell_list_geometry_metadata",
+    mutates_args=(
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _batch_query_cell_list_geometry_metadata_op(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cutoff: float,
+    batch_idx: torch.Tensor,
+    cell_list_cache: list[torch.Tensor],
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    target_indices: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    half_fill: bool,
+    fill_value: int | None,
+    strategy: str,
+    atom_centric_path: str,
+    return_vectors: bool,
+    return_distances: bool,
+    cached_cell_offsets: torch.Tensor | None,
+    cached_cells_per_system: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Query geometry and snapshot topology together for compiled backward.
+
+    Keeping the snapshots in the query op prevents AOT from moving their
+    construction into backward and saving the reusable query buffers.
+    """
+    _batch_query_cell_list_optional_no_pair_fn_op(
+        positions,
+        cell,
+        pbc,
+        cutoff,
+        batch_idx,
+        *cell_list_cache,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        rebuild_flags,
+        target_indices,
+        neighbor_vectors,
+        neighbor_distances,
+        half_fill,
+        fill_value,
+        strategy,
+        atom_centric_path,
+        return_vectors,
+        return_distances,
+        cached_cell_offsets,
+        cached_cells_per_system,
+    )
+    slots = torch.arange(
+        neighbor_matrix.shape[1], device=neighbor_matrix.device, dtype=torch.int32
+    )
+    active = slots[None, :] < num_neighbors[:, None]
+    return (
+        torch.where(active, neighbor_matrix, 0).reshape(-1),
+        torch.where(active.unsqueeze(-1), neighbor_matrix_shifts, 0).reshape(-1, 3),
+        active,
+    )
+
+
+@_batch_query_cell_list_geometry_metadata_op.register_fake
+def _(
+    positions,
+    cell,
+    pbc,
+    cutoff,
+    batch_idx,
+    cell_list_cache,
+    neighbor_matrix,
+    neighbor_matrix_shifts,
+    num_neighbors,
+    rebuild_flags,
+    target_indices,
+    neighbor_vectors,
+    neighbor_distances,
+    half_fill,
+    fill_value,
+    strategy,
+    atom_centric_path,
+    return_vectors,
+    return_distances,
+    cached_cell_offsets,
+    cached_cells_per_system,
+):
+    n_pairs = neighbor_matrix.numel()
+    return (
+        neighbor_matrix.new_empty((n_pairs,)),
+        neighbor_matrix_shifts.new_empty((n_pairs, 3)),
+        neighbor_matrix.new_empty(neighbor_matrix.shape, dtype=torch.bool),
+    )
+
+
 def _register_compiled_batch_query_cell_list_optional_pair_op(compiled: CompiledPairFn):
     """Register a pair_fn-specialized batch cell-list query custom op."""
 
@@ -2320,41 +2424,79 @@ def _batch_cell_list_query_forward(
     cached_cells_per_system: torch.Tensor | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure consumed by ``_NeighborDistanceVectorFn`` (batched)."""
-    batch_query_cell_list(
-        positions,
-        cell,
-        pbc,
-        cutoff,
-        batch_idx,
-        *cell_list_cache,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        num_neighbors,
-        half_fill,
-        rebuild_flags,
-        fill_value,
-        strategy,
-        atom_centric_path,
-        target_indices=target_indices,
-        return_vectors=return_vectors,
-        return_distances=return_distances,
-        pair_fn=pair_fn,
-        pair_params=pair_params,
-        neighbor_vectors=neighbor_vectors,
-        neighbor_distances=neighbor_distances,
-        pair_energies=pair_energies,
-        pair_forces=pair_forces,
-        cached_cell_offsets=cached_cell_offsets,
-        cached_cells_per_system=cached_cells_per_system,
-    )
-    i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
-        neighbor_matrix,
-        num_neighbors,
-        neighbor_matrix_shifts,
-        target_indices=target_indices,
-        batch_idx=batch_idx,
-    )
     K, M = neighbor_matrix.shape
+    if (
+        torch.compiler.is_compiling()
+        and pair_fn is None
+        and pair_params is None
+        and pair_energies is None
+        and pair_forces is None
+    ):
+        j_idx, shifts_flat, mask = _batch_query_cell_list_geometry_metadata_op(
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            batch_idx,
+            list(cell_list_cache),
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            rebuild_flags,
+            target_indices,
+            neighbor_vectors,
+            neighbor_distances,
+            half_fill,
+            fill_value,
+            strategy,
+            atom_centric_path,
+            return_vectors,
+            return_distances,
+            cached_cell_offsets,
+            cached_cells_per_system,
+        )
+        row_to_atom_i = (
+            target_indices.to(torch.int32)
+            if target_indices is not None
+            else torch.arange(K, device=positions.device, dtype=torch.int32)
+        )
+        i_idx = row_to_atom_i.unsqueeze(-1).expand(-1, M).reshape(-1)
+        batch_idx_flat = batch_idx.to(torch.int32)[i_idx]
+    else:
+        batch_query_cell_list(
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            batch_idx,
+            *cell_list_cache,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            half_fill,
+            rebuild_flags,
+            fill_value,
+            strategy,
+            atom_centric_path,
+            target_indices=target_indices,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            pair_fn=pair_fn,
+            pair_params=pair_params,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            pair_energies=pair_energies,
+            pair_forces=pair_forces,
+            cached_cell_offsets=cached_cell_offsets,
+            cached_cells_per_system=cached_cells_per_system,
+        )
+        i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            target_indices=target_indices,
+            batch_idx=batch_idx,
+        )
     return _NeighborForwardOutput(
         distances=neighbor_distances,
         vectors=neighbor_vectors,

@@ -103,66 +103,141 @@ def test_prepared_cluster_selective_coo_support_matrix(batched: bool) -> None:
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("method", ["naive", "cell_list"])
-def test_prepared_naive_and_cell_list_geometry_fullgraph_reuse(method: str) -> None:
-    """Fullgraph geometry matches direct results when reused across periodic images."""
+@pytest.mark.parametrize(
+    ("method", "batched"),
+    [
+        ("naive", False),
+        ("batch_naive", True),
+        ("cell_list", False),
+        ("batch_cell_list", True),
+    ],
+)
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_prepared_naive_and_cell_list_geometry_fullgraph_reuse(
+    method: str, batched: bool, fixed_cell: bool
+) -> None:
+    """Fullgraph backward keeps each frame's geometry across state reuse."""
     positions = torch.tensor(
         [[0.1, 1.0, 1.0], [3.9, 1.0, 1.0]], dtype=torch.float32, device="cuda"
     )
     cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
     pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    batch_ptr = None
+    if batched:
+        positions = torch.cat((positions, positions + 4.0))
+        cell = cell.repeat(2, 1, 1)
+        pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
     state = prepare_neighbor_list(
         positions,
         0.5,
         cell=cell,
         pbc=pbc,
+        batch_ptr=batch_ptr,
         method=method,
+        fixed_cell=fixed_cell,
         max_neighbors=8,
         return_vectors=True,
         return_distances=True,
     )
+    assert state.supports_compilation and state.compilation_blocker is None
 
     @torch.compile(fullgraph=True)
     def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
         return neighbor_list(values, cell=box, state=state)
 
-    frames = (
-        positions,
-        torch.tensor(
-            [[0.1, 1.0, 1.0], [0.5, 1.0, 1.0]],
-            dtype=torch.float32,
-            device="cuda",
-        ),
+    moved_positions = torch.tensor(
+        [[0.1, 1.0, 1.0], [0.5, 1.0, 1.0]], dtype=torch.float32, device="cuda"
     )
-    with torch.no_grad():
-        for index, frame in enumerate(frames):
-            result = run(frame, cell)
-            active = result[0] != state.fill_value
-            assert state.neighbor_distances is result[-2]
-            assert state.neighbor_vectors is result[-1]
-            if index == 0:
-                assert torch.count_nonzero(result[2][active]) > 0
-            else:
-                assert torch.count_nonzero(result[2][active]) == 0
+    if batched:
+        moved_positions = torch.cat((moved_positions, moved_positions + 4.0))
 
-            reference = neighbor_list(
-                frame,
-                0.5,
-                cell=cell,
-                pbc=pbc,
-                method=method,
-                max_neighbors=8,
-                return_vectors=True,
-                return_distances=True,
-            )
-            assert_neighbor_matrix_equal(result[:3], reference[:3])
-            reference_active = reference[0] != state.fill_value
-            torch.testing.assert_close(
-                result[-2][active], reference[-2][reference_active]
-            )
-            torch.testing.assert_close(
-                result[-1][active], reference[-1][reference_active]
-            )
+    first_positions = positions.clone().requires_grad_()
+    first_cell = cell.clone().requires_grad_()
+    first = run(first_positions, first_cell)
+    first_active = (first[0] != state.fill_value).clone()
+    assert torch.count_nonzero(first[2][first_active]) > 0
+    first_topology = tuple(value.detach().clone() for value in first[:3])
+    first_distances = first[-2].clone()
+    first_vectors = first[-1].clone()
+    first_loss = (
+        first_distances[first_active].sum() + first_vectors[first_active].square().sum()
+    )
+
+    second_positions = moved_positions.clone().requires_grad_()
+    second_cell = cell.clone().requires_grad_()
+    second = run(second_positions, second_cell)
+    second_active = second[0] != state.fill_value
+    assert torch.count_nonzero(second[2][second_active]) == 0
+    assert state.neighbor_distances is second[-2]
+    assert state.neighbor_vectors is second[-1]
+
+    def direct_reference(
+        values: torch.Tensor, box: torch.Tensor
+    ) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(
+            values,
+            0.5,
+            cell=box,
+            pbc=pbc,
+            batch_ptr=batch_ptr,
+            method=method,
+            max_neighbors=8,
+            return_vectors=True,
+            return_distances=True,
+        )
+
+    reference_first_positions = positions.clone().requires_grad_()
+    reference_first_cell = cell.clone().requires_grad_()
+    reference_first = direct_reference(reference_first_positions, reference_first_cell)
+    reference_first_active = reference_first[0] != state.fill_value
+    assert_neighbor_matrix_equal(first_topology, reference_first[:3])
+    torch.testing.assert_close(
+        first_distances[first_active], reference_first[-2][reference_first_active]
+    )
+    torch.testing.assert_close(
+        first_vectors[first_active], reference_first[-1][reference_first_active]
+    )
+
+    reference_second_positions = moved_positions.clone().requires_grad_()
+    reference_second_cell = cell.clone().requires_grad_()
+    reference_second = direct_reference(
+        reference_second_positions, reference_second_cell
+    )
+    reference_second_active = reference_second[0] != state.fill_value
+    assert_neighbor_matrix_equal(second[:3], reference_second[:3])
+    torch.testing.assert_close(
+        second[-2][second_active], reference_second[-2][reference_second_active]
+    )
+    torch.testing.assert_close(
+        second[-1][second_active], reference_second[-1][reference_second_active]
+    )
+
+    first_loss.backward()
+    reference_first_loss = reference_first[-2][reference_first_active].sum() + (
+        reference_first[-1][reference_first_active].square().sum()
+    )
+    reference_first_loss.backward()
+    assert first_positions.grad is not None
+    assert first_positions.grad.abs().sum() > 0
+    assert first_cell.grad is not None
+    assert first_cell.grad.abs().sum() > 0
+    torch.testing.assert_close(first_positions.grad, reference_first_positions.grad)
+    torch.testing.assert_close(first_cell.grad, reference_first_cell.grad)
+
+    second_loss = (
+        second[-2][second_active].sum() + second[-1][second_active].square().sum()
+    )
+    second_loss.backward()
+    reference_second_loss = reference_second[-2][reference_second_active].sum() + (
+        reference_second[-1][reference_second_active].square().sum()
+    )
+    reference_second_loss.backward()
+    assert second_positions.grad is not None
+    assert second_positions.grad.abs().sum() > 0
+    assert second_cell.grad is not None
+    torch.testing.assert_close(second_positions.grad, reference_second_positions.grad)
+    torch.testing.assert_close(second_cell.grad, reference_second_cell.grad)
 
 
 @pytest.mark.gpu
