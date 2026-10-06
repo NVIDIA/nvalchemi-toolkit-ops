@@ -1587,19 +1587,142 @@ def test_prepared_nonperiodic_span_margin_is_translation_invariant() -> None:
     for row, count in enumerate(prepared[1].tolist()):
         torch.testing.assert_close(prepared[0][row, :count], eager[0][row, :count])
         torch.testing.assert_close(prepared[2][row, :count], eager[2][row, :count])
-    with pytest.raises(
-        ValueError,
-        match="prepared nonperiodic span exceeded for system 0 on axis 0",
-    ):
-        neighbor_list(
-            torch.tensor(
-                [[0.0, 0.0, 0.0], [1.6, 1.0, 1.0]],
-                dtype=torch.float32,
-                device="cuda",
-            ),
-            state=state,
+    for rejected_span in (1.55, 1.7):
+        rejected_state = prepare_neighbor_list(
+            positions,
+            1.0,
+            method="cell_list",
+            max_neighbors=8,
+            span_margin=0.5,
         )
-    assert not state.initialized.any()
+        with pytest.raises(
+            ValueError,
+            match="prepared nonperiodic span exceeded for system 0 on axis 0",
+        ):
+            neighbor_list(
+                torch.tensor(
+                    [[0.0, 0.0, 0.0], [rejected_span, 1.0, 1.0]],
+                    dtype=torch.float32,
+                    device="cuda",
+                ),
+                state=rejected_state,
+            )
+        assert not rejected_state.initialized.any()
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["cell_list", "batch_cell_list"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("offset", [100.0, -100.0])
+@pytest.mark.parametrize("span_margin", [0.0, 0.25])
+def test_prepared_nonperiodic_span_rounding_is_offset_and_dtype_aware(
+    method: str, dtype: torch.dtype, offset: float, span_margin: float
+) -> None:
+    """Translated decimal coordinates allow a small real span expansion."""
+    base = torch.tensor(
+        [[0.1, 0.1, 0.1], [1.3, 0.1, 0.1], [0.5, 0.4, 0.1]],
+        dtype=dtype,
+        device="cuda",
+    )
+    batched = method == "batch_cell_list"
+    exemplar = torch.cat((base, base + 3.0)) if batched else base
+    kwargs: dict[str, object] = {"method": method, "max_neighbors": 8}
+    if batched:
+        kwargs["batch_ptr"] = torch.tensor(
+            [0, base.shape[0], 2 * base.shape[0]], dtype=torch.int32, device="cuda"
+        )
+    state = prepare_neighbor_list(
+        exemplar,
+        2.0,
+        **kwargs,
+        span_margin=span_margin,
+        return_vectors=True,
+        return_distances=True,
+    )
+
+    def assert_matches_direct(values: torch.Tensor) -> None:
+        prepared = neighbor_list(values, state=state)
+        direct = neighbor_list(
+            values,
+            2.0,
+            **kwargs,
+            return_vectors=True,
+            return_distances=True,
+        )
+        assert_neighbor_matrix_equal(prepared[:3], direct[:3])
+        for row, count in enumerate(prepared[1].tolist()):
+            prepared_order = torch.argsort(prepared[0][row, :count], stable=True)
+            direct_order = torch.argsort(direct[0][row, :count], stable=True)
+            torch.testing.assert_close(
+                prepared[-2][row, :count][prepared_order],
+                direct[-2][row, :count][direct_order],
+            )
+            torch.testing.assert_close(
+                prepared[-1][row, :count][prepared_order],
+                direct[-1][row, :count][direct_order],
+            )
+
+    # Rigid translation consumes no span margin, even when translated decimal
+    # coordinates round to a slightly different represented span.
+    moved = exemplar + offset
+    assert_matches_direct(moved)
+
+    expansion = 2 * torch.finfo(dtype).eps * abs(offset)
+    growth = span_margin + expansion
+    if offset > 0:
+        moved[1, 0] += growth
+        if batched:
+            moved[base.shape[0] + 1, 0] += growth
+    else:
+        moved[0, 0] -= growth
+        if batched:
+            moved[base.shape[0], 0] -= growth
+    assert_matches_direct(moved)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_nonperiodic_span_rounding_boundary_and_headroom_cap() -> None:
+    """The rounding bound is inclusive and limited by synthesized-cell headroom."""
+    exemplar = torch.tensor(
+        [[-0.5, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=torch.float32, device="cuda"
+    )
+    state = prepare_neighbor_list(exemplar, 1.0, method="cell_list", max_neighbors=8)
+    epsilon = torch.finfo(exemplar.dtype).eps
+    tolerance = 4 * epsilon * 128.0
+    at_tolerance = torch.tensor(
+        [[127.5 - tolerance, 0.0, 0.0], [128.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    result = neighbor_list(at_tolerance, state=state)
+    assert result[1].tolist() == [1, 1]
+
+    over_tolerance_state = prepare_neighbor_list(
+        exemplar, 1.0, method="cell_list", max_neighbors=8
+    )
+    over_tolerance = torch.tensor(
+        [[127.5 - (tolerance + epsilon * 128.0), 0.0, 0.0], [128.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    with pytest.raises(ValueError, match="prepared nonperiodic span exceeded"):
+        neighbor_list(over_tolerance, state=over_tolerance_state)
+
+    headroom_exemplar = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.3125, 0.0, 0.0]], dtype=torch.float32, device="cuda"
+    )
+    headroom_state = prepare_neighbor_list(
+        headroom_exemplar, 1.0, method="cell_list", max_neighbors=8
+    )
+    beyond_half_headroom = torch.tensor(
+        [[524288.0, 0.0, 0.0], [524288.375, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    with pytest.raises(ValueError, match="prepared nonperiodic span exceeded"):
+        neighbor_list(beyond_half_headroom, state=headroom_state)
 
 
 @pytest.mark.gpu
@@ -1612,6 +1735,30 @@ def test_prepared_span_margin_empty_zero_span_and_geometry_gradient_parity() -> 
     )
     assert empty_state.span_margin == 0.25
     neighbor_list(empty, state=empty_state)
+
+    batched = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    batch_ptr = torch.tensor([0, 2, 2, 4], dtype=torch.int32, device="cuda")
+    empty_system_state = prepare_neighbor_list(
+        batched,
+        1.0,
+        method="batch_cell_list",
+        batch_ptr=batch_ptr,
+        max_neighbors=8,
+        span_margin=0.25,
+    )
+    batched_result = neighbor_list(batched, state=empty_system_state)
+    batched_direct = neighbor_list(
+        batched,
+        1.0,
+        method="batch_cell_list",
+        batch_ptr=batch_ptr,
+        max_neighbors=8,
+    )
+    assert_neighbor_matrix_equal(batched_result[:3], batched_direct[:3])
 
     zero_span = torch.zeros((2, 3), dtype=torch.float32, device="cuda")
     zero_state = prepare_neighbor_list(

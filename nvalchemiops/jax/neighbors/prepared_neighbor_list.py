@@ -867,15 +867,20 @@ def _synthetic_geometry(
     num_systems: int,
     span_capacity: jax.Array,
     cutoff: float,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Translate each nonperiodic system and return its fixed prepared cell."""
     if positions.shape[0] == 0:
         shifted = positions
+        minimum = jnp.zeros((num_systems, 3), dtype=positions.dtype)
+        maximum = jnp.zeros((num_systems, 3), dtype=positions.dtype)
         spans = jnp.zeros((num_systems, 3), dtype=positions.dtype)
     elif num_systems == 1:
         minimum = jnp.min(positions, axis=0)
+        maximum = jnp.max(positions, axis=0)
         shifted = positions - minimum
-        spans = (jnp.max(shifted, axis=0)).reshape(1, 3)
+        spans = (maximum - minimum).reshape(1, 3)
+        minimum = minimum.reshape(1, 3)
+        maximum = maximum.reshape(1, 3)
     else:
         minimum = jax.ops.segment_min(positions, batch_idx, num_segments=num_systems)
         maximum = jax.ops.segment_max(positions, batch_idx, num_segments=num_systems)
@@ -884,13 +889,32 @@ def _synthetic_geometry(
             if batch_ptr is not None
             else jnp.bincount(batch_idx, length=num_systems)
         )
-        spans = jnp.where(
-            counts[:, None] > 0, maximum - minimum, jnp.zeros_like(minimum)
-        )
+        nonempty = counts[:, None] > 0
+        minimum = jnp.where(nonempty, minimum, jnp.zeros_like(minimum))
+        maximum = jnp.where(nonempty, maximum, jnp.zeros_like(maximum))
+        spans = jnp.where(nonempty, maximum - minimum, jnp.zeros_like(minimum))
         shifted = positions - minimum[batch_idx]
     cell_lengths = span_capacity + jnp.asarray(0.1 * cutoff, dtype=positions.dtype)
+    headroom = jnp.maximum(cell_lengths - span_capacity, 0)
+    magnitude = jnp.maximum(
+        jnp.maximum(jnp.abs(minimum), jnp.abs(maximum)), span_capacity
+    )
+    tolerance = jnp.minimum(
+        jnp.asarray(4 * jnp.finfo(positions.dtype).eps, dtype=positions.dtype)
+        * magnitude,
+        jnp.asarray(0.5, dtype=positions.dtype) * headroom,
+    )
+    span_failure_axes = ~(
+        (spans <= span_capacity)
+        | ((spans - span_capacity <= tolerance) & (spans <= cell_lengths))
+    )
     cell = cell_lengths[:, :, None] * jnp.eye(3, dtype=positions.dtype)
-    return shifted, cell if num_systems > 1 else cell.reshape(1, 3, 3), spans
+    return (
+        shifted,
+        cell if num_systems > 1 else cell.reshape(1, 3, 3),
+        spans,
+        span_failure_axes,
+    )
 
 
 def _prepare_cluster_state(
@@ -1726,10 +1750,11 @@ def prepare_neighbor_list(
         :func:`neighbor_list`.
     span_margin : float, default=0.0
         Finite nonnegative per-axis span-growth allowance for a synthesized
-        nonperiodic cell. For each axis, runtime span may not exceed exemplar
-        span plus this value; equality is allowed. A nonzero value requires
-        ``cell=None`` and a resolved cell-list route. This is not a
-        neighbor-list skin.
+        nonperiodic cell-list cell. Runtime span is bounded by exemplar span
+        plus this value, with a small dtype-dependent rounding allowance
+        capped by the synthesized cell's remaining headroom. Equally small
+        real expansion can also pass. A nonzero value requires ``cell=None``
+        and a resolved cell-list route. This is not a neighbor-list skin.
     fixed_cell : bool, default=False
         Reuse cell-dependent topology geometry prepared from ``cell``. When
         true, the caller promises that runtime cell values remain unchanged;
@@ -2048,7 +2073,7 @@ def _build_noncluster_state(
         )
     if method in {"cell_list", "batch_cell_list"}:
         if synthesized:
-            shifted_positions, cell, spans = _synthetic_geometry(
+            shifted_positions, cell, spans, _span_failure_axes = _synthetic_geometry(
                 positions,
                 resolved_batch_idx,
                 batch_ptr,
@@ -2534,7 +2559,7 @@ def _prepare_noncluster_route_execution(
     )
 
     if state._spec.synthesized_cell:
-        positions, resolved_cell, spans = _synthetic_geometry(
+        positions, resolved_cell, spans, span_failure_axes = _synthetic_geometry(
             positions,
             leaf_view.batch_idx,
             leaf_view.batch_ptr,
@@ -2542,7 +2567,6 @@ def _prepare_noncluster_route_execution(
             state._span_capacity,
             state.cutoff,
         )
-        span_failure_axes = spans > state._span_capacity
         cell = resolved_cell
     else:
         spans = jnp.zeros((state.num_systems, 3), dtype=positions.dtype)

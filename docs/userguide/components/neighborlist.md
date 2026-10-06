@@ -1383,17 +1383,27 @@ a particular speedup or allocation-free execution.
 
 ##### Bounded nonperiodic reuse
 
-For a synthesized nonperiodic cell-list state (`cell=None`), the bound is
+For a synthesized nonperiodic cell-list state (`cell=None`), each axis uses the
+following bound, with arithmetic in the positions' dtype (`eps` is its machine
+epsilon):
 
 ```text
-current_span[system, axis] <= exemplar_span[system, axis] + span_margin
+capacity = exemplar_span + span_margin
+cell_length = capacity + 0.1 * cutoff
+scale = max(abs(current_min), abs(current_max), capacity)
+tolerance = min(4 * eps * scale, 0.5 * max(cell_length - capacity, 0))
+accept = (current_span <= capacity) or (
+    current_span - capacity <= tolerance and current_span <= cell_length
+)
 ```
 
 `span_margin` is finite, nonnegative, inclusive at the boundary, and measured
-in coordinate units. Rigid translation does not consume it; zero permits
-translation but no span growth. Only selected systems are checked. It is a
-span-growth allowance—not a neighbor-list skin or padding on each side—and a
-nonzero value is supported only by synthesized nonperiodic cell-list routes.
+in coordinate units. Translation does not consume the margin. The bounded
+rounding allowance also accepts equally small real expansion, even with zero
+margin; it cannot recover coordinate precision lost at very large offsets.
+Only selected systems are checked. This is a span-growth allowance, not a
+neighbor-list skin or padding on each side. A nonzero margin is supported only
+by synthesized nonperiodic cell-list routes.
 
 Naive routes do not use a synthesized cell, so they have no corresponding span
 bound and do not accept a nonzero `span_margin`.

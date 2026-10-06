@@ -1030,33 +1030,59 @@ def _prepared_synthetic_geometry(
         if state._batch_ptr is None:
             raise RuntimeError("prepared batched state is missing batch_ptr")
         shifted = positions.clone()
-        required: list[torch.Tensor] = []
+        minima: list[torch.Tensor] = []
+        maxima: list[torch.Tensor] = []
         if state._batch_ranges is None:
             raise RuntimeError("prepared batched state is missing batch ranges")
         for start, stop in state._batch_ranges:
             segment = positions[start:stop]
             if segment.shape[0]:
                 minimum = segment.min(dim=0).values
-                span = segment.max(dim=0).values - minimum
+                maximum = segment.max(dim=0).values
                 shifted[start:stop] = segment - minimum
             else:
-                span = positions.new_zeros(3)
-            required.append(span)
-        required_tensor = torch.stack(required)
+                minimum = positions.new_zeros(3)
+                maximum = positions.new_zeros(3)
+            minima.append(minimum)
+            maxima.append(maximum)
+        minimum_tensor = torch.stack(minima)
+        maximum_tensor = torch.stack(maxima)
+        required_tensor = maximum_tensor - minimum_tensor
     else:
         if positions.shape[0]:
             minimum = positions.min(dim=0).values
-            required_tensor = (positions.max(dim=0).values - minimum).reshape(1, 3)
+            maximum = positions.max(dim=0).values
+            minimum_tensor = minimum.reshape(1, 3)
+            maximum_tensor = maximum.reshape(1, 3)
+            required_tensor = maximum_tensor - minimum_tensor
             shifted = positions - minimum
         else:
+            minimum_tensor = positions.new_zeros((1, 3))
+            maximum_tensor = positions.new_zeros((1, 3))
             required_tensor = positions.new_zeros((1, 3))
             shifted = positions
+    capacity = state._span_capacity
+    cell_lengths = capacity + 0.1 * state.cutoff
+    scale = torch.maximum(
+        torch.maximum(minimum_tensor.abs(), maximum_tensor.abs()), capacity
+    )
+    headroom = (cell_lengths - capacity).clamp_min(0)
+    tolerance = torch.minimum(
+        4.0 * torch.finfo(positions.dtype).eps * scale,
+        0.5 * headroom,
+    )
+    exceeded = ~(
+        (required_tensor <= capacity)
+        | (
+            (required_tensor - capacity <= tolerance)
+            & (required_tensor <= cell_lengths)
+        )
+    )
     active = (
         torch.ones(state.num_systems, dtype=torch.bool, device=positions.device)
         if rebuild_flags is None
         else rebuild_flags
     )
-    exceeded = required_tensor > state._span_capacity
     if torch.compiler.is_compiling():
         torch._assert_async(
             torch.all(~(exceeded & active[:, None])),
@@ -1064,13 +1090,13 @@ def _prepared_synthetic_geometry(
         )
     elif bool((exceeded & active[:, None]).any().item()):
         system, axis = (exceeded & active[:, None]).nonzero(as_tuple=False)[0].tolist()
-        capacity = float(state._span_capacity[system, axis].item())
+        capacity_value = float(capacity[system, axis].item())
         required_value = float(required_tensor[system, axis].item())
         raise ValueError(
             f"prepared nonperiodic span exceeded for system {system} on axis {axis}: "
-            f"capacity {capacity}, required {required_value}"
+            f"capacity {capacity_value}, required {required_value}"
         )
-    cell = torch.diag_embed(state._span_capacity + 0.1 * state.cutoff)
+    cell = torch.diag_embed(cell_lengths)
     return shifted, cell if state.is_batched else cell.reshape(1, 3, 3)
 
 
@@ -1770,10 +1796,11 @@ def prepare_neighbor_list(
         Runtime ``pair_params`` are supplied to :func:`neighbor_list`.
     span_margin : float, default=0.0
         Finite nonnegative per-axis span-growth allowance for a synthesized
-        nonperiodic cell-list cell. For each axis, runtime span may not exceed
-        exemplar span plus this value; equality is allowed. A nonzero value
-        requires ``cell=None`` and a resolved cell-list route. This is not a
-        neighbor-list skin.
+        nonperiodic cell-list cell. Runtime span is bounded by exemplar span
+        plus this value, with a small dtype-dependent rounding allowance
+        capped by the synthesized cell's remaining headroom. Equally small
+        real expansion can also pass. A nonzero value requires ``cell=None``
+        and a resolved cell-list route. This is not a neighbor-list skin.
     target_indices : torch.Tensor, shape (num_rows,), dtype=int32, optional
         Fixed compact source-row selection on the prepared device for routes
         that support partial rows.

@@ -77,6 +77,72 @@ def _cell_inputs(num_atoms: int = 4) -> tuple[jax.Array, jax.Array, jax.Array]:
     return positions, cell, pbc
 
 
+def _assert_active_cell_results_equal(
+    actual: tuple[jax.Array, ...],
+    expected: tuple[jax.Array, ...],
+    rows: set[int] | None = None,
+) -> None:
+    """Compare active cell-list pairs, shifts, counts, and pair geometry."""
+    actual_counts, expected_counts = np.asarray(actual[1]), np.asarray(expected[1])
+    if rows is None:
+        rows = set(range(len(actual_counts)))
+    row_indices = sorted(rows)
+    np.testing.assert_array_equal(
+        actual_counts[row_indices], expected_counts[row_indices]
+    )
+    actual_pairs = {
+        key: value
+        for key, value in _matrix_geometry_by_pair(actual).items()
+        if key[0] in rows
+    }
+    expected_pairs = {
+        key: value
+        for key, value in _matrix_geometry_by_pair(expected).items()
+        if key[0] in rows
+    }
+    assert actual_pairs.keys() == expected_pairs.keys()
+    for key in actual_pairs:
+        actual_vectors, actual_distances = actual_pairs[key]
+        expected_vectors, expected_distances = expected_pairs[key]
+        np.testing.assert_allclose(actual_vectors, expected_vectors, atol=3e-6)
+        np.testing.assert_allclose(actual_distances, expected_distances, atol=3e-6)
+
+
+def _assert_active_cell_topology_equal(
+    actual: tuple[jax.Array, ...],
+    expected: tuple[jax.Array, ...],
+    rows: set[int] | None = None,
+) -> None:
+    """Compare active cell-list pairs, shifts, and counts without pair outputs."""
+    actual_matrix, actual_counts = np.asarray(actual[0]), np.asarray(actual[1])
+    expected_matrix, expected_counts = np.asarray(expected[0]), np.asarray(expected[1])
+    if rows is None:
+        rows = set(range(len(actual_counts)))
+    row_indices = sorted(rows)
+    np.testing.assert_array_equal(
+        actual_counts[row_indices], expected_counts[row_indices]
+    )
+
+    def pair_keys(
+        matrix: np.ndarray, counts: np.ndarray, result: tuple[jax.Array, ...]
+    ):
+        shifts = np.asarray(result[2]) if len(result) > 2 else None
+        keys = set()
+        for row in row_indices:
+            for slot in range(int(counts[row])):
+                shift = (
+                    tuple(int(value) for value in shifts[row, slot])
+                    if shifts is not None
+                    else (0, 0, 0)
+                )
+                keys.add((row, int(matrix[row, slot]), *shift))
+        return keys
+
+    assert pair_keys(actual_matrix, actual_counts, actual) == pair_keys(
+        expected_matrix, expected_counts, expected
+    )
+
+
 def test_prepared_state_is_immutable_single_leaf_pytree() -> None:
     """Prepared state has static auxiliary configuration and unique leaves."""
     positions, cell, pbc = _cell_inputs()
@@ -242,6 +308,220 @@ def test_prepared_selective_fixed_coo_fit_then_atomic_rollback() -> None:
     np.testing.assert_array_equal(np.asarray(state3.valid), np.array([False, True]))
     with pytest.raises(NeighborOverflowError, match=r"systems \[0\]"):
         check_neighbor_list_state(state3)
+
+
+@pytest.mark.parametrize(
+    ("method", "dtype", "offset", "span_margin"),
+    [
+        ("cell_list", jnp.float32, 100.0, 0.0),
+        ("batch_cell_list", jnp.float32, -100.0, 0.2),
+        ("cell_list", jnp.float64, -100.0, 0.0),
+        ("batch_cell_list", jnp.float64, 100.0, 0.2),
+    ],
+)
+def test_prepared_synthesized_decimal_translation_matches_fresh_route(
+    method: str, dtype: Any, offset: float, span_margin: float
+) -> None:
+    """Translated decimal coordinates match a fresh synthesized cell-list call."""
+    base_positions = jnp.array(
+        [[0.1, -0.3, 0.15], [1.3, 0.8, 0.47], [0.7, 0.2, -0.25]], dtype=dtype
+    )
+    positions = (
+        jnp.concatenate((base_positions, base_positions + 5.0), axis=0)
+        if method == "batch_cell_list"
+        else base_positions
+    )
+    translation = jnp.asarray([offset, -offset, offset], dtype=dtype)
+    translated = positions + translation
+    options = {
+        "method": method,
+        "strategy": "atom_centric",
+        "max_neighbors": 8,
+        "max_total_cells": 128,
+        "return_vectors": True,
+        "return_distances": True,
+    }
+    if method == "batch_cell_list":
+        options["batch_idx"] = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 3)
+        options["batch_ptr"] = jnp.array([0, 3, 6], dtype=jnp.int32)
+    state = prepare_neighbor_list(positions, 2.0, span_margin=span_margin, **options)
+    execute = jax.jit(lambda values, prepared: neighbor_list(values, state=prepared))
+    actual, successor = execute(translated, state)
+    assert bool(jnp.all(successor.valid))
+    reused, successor2 = execute(translated, successor)
+    assert bool(jnp.all(successor2.valid))
+    direct_options = {key: value for key, value in options.items() if key != "strategy"}
+    expected = neighbor_list(translated, 2.0, **direct_options)
+    assert int(jnp.sum(actual[1])) > 0
+    _assert_active_cell_results_equal(actual, expected)
+    _assert_active_cell_results_equal(reused, expected)
+
+
+@pytest.mark.parametrize(
+    ("method", "dtype", "offset", "span_margin"),
+    [
+        ("cell_list", jnp.float32, 100.0, 0.0),
+        ("batch_cell_list", jnp.float32, -100.0, 0.2),
+        ("cell_list", jnp.float64, -100.0, 0.0),
+        ("batch_cell_list", jnp.float64, 100.0, 0.2),
+    ],
+)
+def test_prepared_synthesized_span_accepts_tiny_real_expansion(
+    method: str, dtype: Any, offset: float, span_margin: float
+) -> None:
+    """A one-step represented expansion beyond capacity stays within tolerance."""
+    base_positions = jnp.array(
+        [[0.1, -0.3, 0.15], [1.3, 0.8, 0.47], [0.7, 0.2, -0.25]], dtype=dtype
+    )
+    positions = (
+        jnp.concatenate((base_positions, base_positions + 5.0), axis=0)
+        if method == "batch_cell_list"
+        else base_positions
+    )
+    translation = jnp.asarray([offset, -offset, offset], dtype=dtype)
+    translated = positions + translation
+    exemplar_span = jnp.max(base_positions, axis=0) - jnp.min(base_positions, axis=0)
+    span_capacity = exemplar_span + jnp.asarray(span_margin, dtype=dtype)
+    translated_minimum = jnp.min(translated[:3, 0])
+    boundary = translated_minimum + span_capacity[0]
+    expanded_maximum = jnp.nextafter(boundary, jnp.asarray(jnp.inf, dtype=dtype))
+    expanded = translated.at[1, 0].set(expanded_maximum)
+    current_span = jnp.max(expanded[:3, 0]) - jnp.min(expanded[:3, 0])
+    cell_length = span_capacity[0] + jnp.asarray(0.2, dtype=dtype)
+    assert bool(current_span > span_capacity[0])
+    assert bool(current_span <= cell_length)
+
+    options = {
+        "method": method,
+        "strategy": "atom_centric",
+        "max_neighbors": 8,
+        "max_total_cells": 128,
+        "return_vectors": True,
+        "return_distances": True,
+    }
+    if method == "batch_cell_list":
+        options["batch_idx"] = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 3)
+        options["batch_ptr"] = jnp.array([0, 3, 6], dtype=jnp.int32)
+    state = prepare_neighbor_list(positions, 2.0, span_margin=span_margin, **options)
+    execute = jax.jit(lambda values, prepared: neighbor_list(values, state=prepared))
+    actual, successor = execute(expanded, state)
+    assert bool(jnp.all(successor.valid))
+    direct_options = {key: value for key, value in options.items() if key != "strategy"}
+    expected = neighbor_list(expanded, 2.0, **direct_options)
+    assert int(jnp.sum(actual[1])) > 0
+    _assert_active_cell_results_equal(actual, expected)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+def test_prepared_synthesized_span_skips_unselected_growth_and_latches_selected(
+    dtype: Any,
+) -> None:
+    """Selective span checks ignore an unselected grown system and stay sticky."""
+    positions = jnp.array(
+        [
+            [0.1, -0.3, 0.15],
+            [1.3, 0.8, 0.47],
+            [5.1, 0.2, -0.25],
+            [6.4, 0.7, 0.3],
+        ],
+        dtype=dtype,
+    )
+    batch_ptr = jnp.array([0, 2, 2, 4], dtype=jnp.int32)
+    batch_idx = jnp.array([0, 0, 2, 2], dtype=jnp.int32)
+    options = {
+        "batch_idx": batch_idx,
+        "batch_ptr": batch_ptr,
+        "method": "batch_cell_list",
+        "strategy": "atom_centric",
+        "max_neighbors": 8,
+        "max_total_cells": 128,
+        "selective": True,
+    }
+    state = prepare_neighbor_list(positions, 2.0, **options)
+    execute = jax.jit(
+        lambda values, prepared, flags: neighbor_list(
+            values, state=prepared, rebuild_flags=flags
+        )
+    )
+    all_systems = jnp.ones((3,), dtype=jnp.bool_)
+    initial_result, initialized = execute(positions, state, all_systems)
+    translated_selected = positions.at[:2, :].add(
+        jnp.asarray([100.0, -100.0, 100.0], dtype=dtype)
+    )
+    grown_unselected = translated_selected.at[3, 0].add(0.5)
+    selected_systems = jnp.array([True, True, False], dtype=jnp.bool_)
+    actual, successor = execute(grown_unselected, initialized, selected_systems)
+    assert successor.valid.tolist() == [True, True, True]
+    repeated, successor2 = execute(grown_unselected, successor, selected_systems)
+    assert successor2.valid.tolist() == [True, True, True]
+    direct_options = {
+        key: value
+        for key, value in options.items()
+        if key not in {"selective", "strategy"}
+    }
+    expected = neighbor_list(grown_unselected, 2.0, **direct_options)
+    assert int(jnp.sum(actual[1])) > 0
+    _assert_active_cell_topology_equal(actual, expected, rows={0, 1})
+    _assert_active_cell_topology_equal(actual, initial_result, rows={2, 3})
+    _assert_active_cell_topology_equal(repeated, expected, rows={0, 1})
+    _assert_active_cell_topology_equal(repeated, initial_result, rows={2, 3})
+
+    failed, failed_state = execute(
+        grown_unselected,
+        successor2,
+        jnp.array([False, False, True], dtype=jnp.bool_),
+    )
+    del failed
+    assert failed_state.valid.tolist() == [True, True, False]
+    with pytest.raises(
+        RuntimeError, match="prepared nonperiodic span exceeded.*system 2"
+    ):
+        check_neighbor_list_state(failed_state)
+    _restored, sticky = execute(positions, failed_state, all_systems)
+    assert sticky.valid.tolist() == [True, True, False]
+    with pytest.raises(
+        RuntimeError, match="prepared nonperiodic span exceeded.*system 2"
+    ):
+        check_neighbor_list_state(sticky)
+
+
+def test_prepared_synthesized_span_rejects_over_tolerance_and_cell_bounds() -> None:
+    """Real growth beyond tolerance or the represented cell bound stays sticky."""
+    positions = jnp.array(
+        [[0.1, -0.3, 0.15], [1.3, 0.8, 0.47], [0.7, 0.2, -0.25]],
+        dtype=jnp.float32,
+    )
+    translated = positions + jnp.array([100.0, -100.0, 100.0], dtype=jnp.float32)
+    exemplar_span = jnp.max(positions[:, 0]) - jnp.min(positions[:, 0])
+    span_capacity = exemplar_span + jnp.asarray(0.2, dtype=jnp.float32)
+    cell_length = span_capacity + jnp.asarray(0.075, dtype=jnp.float32)
+    translated_minimum = jnp.min(translated[:, 0])
+    options = {
+        "method": "cell_list",
+        "strategy": "atom_centric",
+        "max_neighbors": 8,
+        "max_total_cells": 128,
+    }
+    state = prepare_neighbor_list(positions, 0.75, span_margin=0.2, **options)
+    execute = jax.jit(lambda values, prepared: neighbor_list(values, state=prepared))
+
+    for increment, crosses_cell_bound in ((0.04, False), (0.08, True)):
+        expanded_maximum = (
+            translated_minimum
+            + span_capacity
+            + jnp.asarray(increment, dtype=jnp.float32)
+        )
+        expanded = translated.at[1, 0].set(expanded_maximum)
+        current_span = jnp.max(expanded[:, 0]) - jnp.min(expanded[:, 0])
+        assert bool(current_span > cell_length) is crosses_cell_bound
+        _result, failed = execute(expanded, state)
+        assert failed.valid.tolist() == [False]
+        with pytest.raises(RuntimeError, match="prepared nonperiodic span exceeded"):
+            check_neighbor_list_state(failed)
+        _restored, sticky = execute(positions, failed)
+        assert sticky.valid.tolist() == [False]
+        with pytest.raises(RuntimeError, match="prepared nonperiodic span exceeded"):
+            check_neighbor_list_state(sticky)
 
 
 def test_prepared_synthesized_span_is_translation_invariant_and_selected() -> None:

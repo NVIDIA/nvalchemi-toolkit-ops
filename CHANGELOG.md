@@ -43,7 +43,9 @@
   resolved configuration, applicable latest results, and compilation
   eligibility; JAX additionally provides sticky per-system validity and
   ``check_neighbor_list_state(...)``. Synthesized nonperiodic cell-list states
-  accept a bounded, translation-invariant ``span_margin``.
+  accept a bounded, translation-invariant ``span_margin``. Their span checks
+  tolerate bounded floating-point rounding, which can also admit equally small
+  real expansion.
 - Prepared Torch and JAX neighbor states accept ``fixed_cell=True`` to cache
   cell-dependent search geometry, including inverse cells, cell-list grids,
   and cluster-tile lattice factors and cutoff certificates. The option requires

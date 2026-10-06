@@ -490,6 +490,45 @@ def test_prepared_synthesized_batch_cell_list_fullgraph_and_validation_is_recove
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_synthesized_batch_cell_list_rounding_bound_fullgraph() -> None:
+    """Fullgraph execution accepts span growth at the inclusive rounding bound."""
+    exemplar = torch.tensor(
+        [[-0.5, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=torch.float32, device="cuda"
+    )
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        torch.cat((exemplar, exemplar)),
+        1.0,
+        method="batch_cell_list",
+        batch_ptr=batch_ptr,
+        max_neighbors=8,
+    )
+    tolerance = 4 * torch.finfo(exemplar.dtype).eps * 128.0
+    expanded = torch.tensor(
+        [[127.5 - tolerance, 0.0, 0.0], [128.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    moved = torch.cat((expanded, expanded))
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, state=state)
+
+    compiled = run(moved)
+    direct = neighbor_list(
+        moved,
+        1.0,
+        method="batch_cell_list",
+        batch_ptr=batch_ptr,
+        max_neighbors=8,
+    )
+    assert_neighbor_matrix_equal(compiled[:3], direct[:3])
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_batched_cluster_tile_fullgraph_smoke() -> None:
     """The batched cluster-tile state supports fullgraph execution."""
     positions = torch.rand((32, 3), dtype=torch.float32, device="cuda") * 4.0
