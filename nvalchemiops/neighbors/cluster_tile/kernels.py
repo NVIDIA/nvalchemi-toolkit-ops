@@ -277,6 +277,18 @@ def _triclinic_qr_height_is_certified(
     rounding then minimizes the remaining q0 component. The relative margin
     protects the float32 comparisons. Axis-aligned cells use their direct
     componentwise path and do not have QR heights populated.
+
+    Parameters
+    ----------
+    qr : _TriclinicQR
+        QR factors for the lattice basis.
+    outer_cutoff : wp.float32
+        Largest query cutoff the certificate must hold for.
+
+    Returns
+    -------
+    wp.bool
+        Whether the lattice heights exceed twice ``outer_cutoff``.
     """
     if qr.axis_aligned:
         return wp.bool(False)

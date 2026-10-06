@@ -38,6 +38,7 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
     _DerivState,
     _ewald_half_force_scale,
     _ewald_half_force_scale_deriv,
+    electrostatics_uses_legacy_fp32,
     get_backward_scale_kernel,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -78,6 +79,24 @@ _REAL_SYSTEM_SINGLE: dict[str, object] | None = None
 _REAL_SYSTEM_BATCH: dict[str, object] | None = None
 _LITERAL_CELL_GRAD: dict[str, object] | None = None
 _EWALD_REAL_OPS_REGISTERED = False
+
+
+def _resolve_real_space_core_scalar(
+    wp_scalar: type, torch_device: torch.device
+) -> type:
+    """Device-aware precision for the real-space per-pair scalar cores.
+
+    float64 callers always evaluate in float64. float32 CUDA callers do too,
+    unless :func:`electrostatics_uses_legacy_fp32` forces the legacy float64
+    core. float32 CPU callers always get float64 -- the fast core path is
+    CUDA-only, matching the reciprocal no-store path's own device gate
+    (:func:`nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain._can_use_fp32_nostore`).
+    """
+    if wp_scalar is wp.float64:
+        return wp.float64
+    if torch_device.type != "cuda":
+        return wp.float64
+    return wp.float64 if electrostatics_uses_legacy_fp32() else wp_scalar
 
 
 def _wp(tensor: torch.Tensor, dtype):
@@ -335,6 +354,7 @@ def _forward_impl(
         tiled=use_matrix,
         cell_literal=use_cell_literal,
         energy_layout=energy_layout,
+        core_scalar=_resolve_real_space_core_scalar(wp_scalar, positions.device),
     )
     wp_batch = _wp(batch_idx, wp.int32) if batched else sentinels["batch_id"]
     # The forward kernel writes the physical force F only for force-bearing
@@ -616,6 +636,7 @@ def _double_backward_impl(
         cell_grad=bool(need_cell),
         order="double_backward",
         tiled=use_matrix,
+        core_scalar=_resolve_real_space_core_scalar(wp_scalar, positions.device),
     )
     wp_batch = _wp(batch_idx, wp.int32) if batched else sentinels["batch_id"]
     zero_v_cell = torch.zeros(

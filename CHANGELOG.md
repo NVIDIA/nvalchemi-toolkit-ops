@@ -4,6 +4,15 @@
 
 ### Changed
 
+- Recalibrated neighbor-list strategy selection. Free-boundary systems no longer
+  double-count the periodic-image saving, cluster-tile is selected where it wins
+  rather than across its whole eligibility region, and float64 work is scaled by
+  the device's FP64 rate (overridable via
+  `NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`). `neighbor_list(method=None)` may now
+  resolve to a different, faster strategy; explicit `method=` is unaffected.
+- JAX `estimate_neighbor_list_costs` and `suggest_neighbor_list_method` now take
+  optional `cell`/`pbc`, with `positions` supplied instead for free-boundary
+  systems, matching the Torch signature.
 - Torch and JAX PME mesh estimation now covers the requested spline support.
   The default spline order is five, with accuracy-based dimensions rounded
   upward to 2/3/5/7-smooth FFT sizes. The selector snaps to power-of-two meshes
@@ -214,6 +223,35 @@
   `ewald_summation(k_vectors=...)` semantics are unchanged.
 - `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
   `dict`, so type checkers no longer reject valid keyword options.
+
+### Changed
+
+- Monopole electrostatics (Ewald real-space per-pair cores and the reciprocal
+  no-store structure-factor path) now default to float32 evaluation for
+  float32 CUDA inputs, instead of promoting to float64 internally. Both real
+  and reciprocal space are affected -- real space is shared by Ewald and PME.
+  CPU execution is unchanged either way; the fast path is CUDA-only. Set
+  `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
+  (always float64-core) behavior. Changes float32 results at the ~1e-07 level
+  and float32 Hessian-vector products at ~7e-07, the latter also 2.5-3.2x
+  faster.
+
+### Added
+
+- `electrostatics_uses_legacy_fp32()` reports whether the legacy float64-core
+  path is forced, for callers that want to confirm which mode is active.
+- `nvalchemiops.math.wp_erfc_f32_fast` and `nvalchemiops.math.wp_erfc_input_precision`:
+  an explicitly float32-grade `erfc` approximation, and a dispatcher that uses
+  native `wp.erfc` at float64 and the approximation at float32.
+
+### Deprecated
+
+- `nvalchemiops.math.wp_erfc` is deprecated in favor of
+  `wp_erfc_input_precision` (dispatches by input dtype) or
+  `wp_erfc_f32_fast` (the float32-grade approximation explicitly). `wp_erfc`
+  keeps its original behavior -- including evaluating the float32-grade
+  approximation at float64 -- for backward compatibility; it is not being
+  changed underneath existing callers.
 
 ### Notes
 
