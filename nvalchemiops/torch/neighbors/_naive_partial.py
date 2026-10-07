@@ -98,8 +98,6 @@ def _prepare_partial_outputs(
     num_rows = int(target_indices.shape[0])
     if max_neighbors is None and neighbor_matrix is not None:
         max_neighbors = int(neighbor_matrix.shape[1])
-    if max_neighbors is None and cutoff <= 0:
-        max_neighbors = 0
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
     if fill_value is None:

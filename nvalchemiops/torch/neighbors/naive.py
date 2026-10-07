@@ -927,38 +927,6 @@ def _naive_pair_outputs_forward(
     forward-only (matching the cell-list binding).
     """
     is_partial = target_indices is not None
-    if cutoff <= 0:
-        # The public caller has reset the topology and output buffers. Return
-        # empty active-pair metadata through the same custom autograd route as
-        # positive cutoffs so zero geometry remains connected to positions and
-        # cell, with exactly zero derivatives.
-        shifts_arg = (
-            neighbor_matrix_shifts
-            if neighbor_matrix_shifts is not None
-            else torch.zeros(
-                (*neighbor_matrix.shape, 3),
-                dtype=torch.int32,
-                device=neighbor_matrix.device,
-            )
-        )
-        i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
-            neighbor_matrix,
-            num_neighbors,
-            shifts_arg,
-            target_indices=target_indices,
-        )
-        rows, width = neighbor_matrix.shape
-        return _NeighborForwardOutput(
-            distances=neighbor_distances,
-            vectors=neighbor_vectors,
-            extra_outputs=(neighbor_matrix, num_neighbors, shifts_arg),
-            i_idx_flat=i_idx,
-            j_idx_flat=j_idx,
-            shifts_flat=shifts_flat,
-            batch_idx_flat=batch_idx_flat,
-            active_mask=mask,
-            matrix_shape=(rows, width),
-        )
     if is_compiled_pair_fn(pair_fn):
         if pbc is None:
             op = pair_fn.get_or_register(
@@ -1299,6 +1267,7 @@ def naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        Eager calls with zero or negative cutoffs raise ``ValueError``.
     pbc : torch.Tensor, shape (1, 3), dtype=torch.bool, optional
         Periodic boundary condition flags for each dimension.
         True enables periodicity in that direction. Default is None (no PBC).
@@ -1486,6 +1455,9 @@ def naive_neighbor_list(
     nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc : Core warp launcher (with PBC)
     cell_list : O(N) cell list method for larger systems
     """
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
     if pbc is not None and cell is None:
@@ -1550,7 +1522,7 @@ def naive_neighbor_list(
             num_neighbors=num_neighbors,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
-        if cutoff > 0 and num_rows > 0:
+        if num_rows > 0:
             if pbc is None:
                 _naive_neighbor_matrix_no_pbc(
                     positions=positions,
@@ -1776,43 +1748,6 @@ def naive_neighbor_list(
                 dtype=positions.dtype,
                 device=positions.device,
             )
-        if cutoff <= 0:
-            neighbor_distances.zero_()
-            neighbor_vectors.zero_()
-            if pair_energies is not None:
-                pair_energies.zero_()
-            if pair_forces is not None:
-                pair_forces.zero_()
-            if not return_distances and not return_vectors:
-                if return_neighbor_list:
-                    if pbc is None:
-                        base = get_neighbor_list_from_neighbor_matrix(
-                            neighbor_matrix,
-                            num_neighbors=num_neighbors,
-                            fill_value=fill_value,
-                        )
-                    else:
-                        base = get_neighbor_list_from_neighbor_matrix(
-                            neighbor_matrix,
-                            num_neighbors=num_neighbors,
-                            neighbor_shift_matrix=neighbor_matrix_shifts,
-                            fill_value=fill_value,
-                        )
-                    active = neighbor_matrix != fill_value
-                    neighbor_distances, neighbor_vectors = coo_pack_pair_geometry(
-                        active, neighbor_distances, neighbor_vectors
-                    )
-                    pair_energies, pair_forces = coo_pack_pair_geometry(
-                        active, pair_energies, pair_forces
-                    )
-                elif pbc is None:
-                    base = (neighbor_matrix, num_neighbors)
-                else:
-                    base = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
-                tail = []
-                if pair_fn is not None:
-                    tail.extend((pair_energies, pair_forces))
-                return (*base, *tail)
         forward_kwargs = {
             "cutoff": cutoff,
             "pbc": pbc,
@@ -1923,33 +1858,6 @@ def naive_neighbor_list(
             shift_range_per_dimension, num_shifts_per_system, max_shifts_per_system = (
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
-
-    if cutoff <= 0:
-        if return_neighbor_list:
-            if pbc is not None:
-                return (
-                    torch.zeros((2, 0), dtype=torch.int32, device=positions.device),
-                    torch.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=torch.int32,
-                        device=positions.device,
-                    ),
-                    torch.zeros((0, 3), dtype=torch.int32, device=positions.device),
-                )
-            else:
-                return (
-                    torch.zeros((2, 0), dtype=torch.int32, device=positions.device),
-                    torch.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=torch.int32,
-                        device=positions.device,
-                    ),
-                )
-        else:
-            if pbc is not None:
-                return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
-            else:
-                return neighbor_matrix, num_neighbors
 
     if pbc is None:
         _naive_neighbor_matrix_no_pbc(

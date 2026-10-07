@@ -21,7 +21,6 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.torch.neighbors.batch_naive import batch_naive_neighbor_list
 from nvalchemiops.torch.neighbors.naive import (
     _naive_neighbor_matrix_no_pbc,
     _naive_neighbor_matrix_pbc,
@@ -40,18 +39,6 @@ from ...test_utils import (
     create_simple_cubic_system,
 )
 from .conftest import requires_vesin
-
-
-@wp.func
-def _nonpositive_cutoff_pair_fn(
-    r_ij: wp.vec3f,
-    distance: wp.float32,
-    pair_params: wp.array2d(dtype=wp.float32),
-    i: int,
-    j: int,
-):
-    """Return simple outputs for nonpositive-cutoff callback contract tests."""
-    return pair_params[i, 0] + pair_params[j, 0] + distance, -r_ij
 
 
 def _sorted_row_multisets(
@@ -822,20 +809,44 @@ class TestNaiveEdgeCases:
         )
         assert num_neighbors[0].item() == 0, "Single atom should have no neighbors"
 
-    def test_zero_cutoff(self, device, dtype, half_fill):
-        """Test that zero cutoff produces no neighbors."""
-        positions, _, _ = create_simple_cubic_system(
-            num_atoms=4, dtype=dtype, device=device
-        )
-        neighbor_matrix, num_neighbors = naive_neighbor_list(
-            positions=positions,
-            cutoff=0.0,
-            pbc=None,
-            cell=None,
-            max_neighbors=10,
-            half_fill=half_fill,
-        )
-        assert torch.all(num_neighbors == 0), "Zero cutoff should find no neighbors"
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    @pytest.mark.parametrize("target_mode", ["full", "partial", "empty"])
+    def test_nonpositive_cutoff_rejected_before_mutating_buffers(
+        self, cutoff, target_mode
+    ):
+        """Nonpositive cutoff is rejected before output buffers are touched."""
+        positions = torch.zeros((4, 3))
+        target_indices = None
+        num_rows = positions.shape[0]
+        if target_mode == "partial":
+            target_indices = torch.tensor([3, 0], dtype=torch.int32)
+            num_rows = target_indices.numel()
+        elif target_mode == "empty":
+            target_indices = torch.empty((0,), dtype=torch.int32)
+            num_rows = 0
+        neighbor_matrix = torch.full((num_rows, 2), 17, dtype=torch.int32)
+        num_neighbors = torch.full((num_rows,), 19, dtype=torch.int32)
+        neighbor_distances = torch.full((num_rows, 2), 23.0)
+        neighbor_vectors = torch.full((num_rows, 2, 3), 29.0)
+
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            naive_neighbor_list(
+                positions,
+                cutoff,
+                max_neighbors=2,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+                neighbor_distances=neighbor_distances,
+                neighbor_vectors=neighbor_vectors,
+                return_distances=True,
+                return_vectors=True,
+                target_indices=target_indices,
+            )
+
+        assert torch.equal(neighbor_matrix, torch.full_like(neighbor_matrix, 17))
+        assert torch.equal(num_neighbors, torch.full_like(num_neighbors, 19))
+        assert torch.equal(neighbor_distances, torch.full_like(neighbor_distances, 23))
+        assert torch.equal(neighbor_vectors, torch.full_like(neighbor_vectors, 29))
 
     def test_large_cutoff_with_pbc(self, device, dtype, half_fill):
         """Test with cutoff larger than cell size."""
@@ -1879,162 +1890,32 @@ def test_partial_targets_compiled_invalid_rows_are_empty(device):
     assert torch.equal(matrix, torch.full_like(matrix, 3))
 
 
+@pytest.mark.gpu
 @pytest.mark.parametrize("cutoff", [0.0, -1.0])
-def test_partial_geometry_nonpositive_cutoff_is_empty(cutoff):
-    """Compact geometry outputs stay empty for nonpositive cutoffs."""
-    matrix, counts, distances = naive_neighbor_list(
-        torch.zeros((3, 3)),
-        cutoff,
-        max_neighbors=2,
-        target_indices=torch.tensor([0], dtype=torch.int32),
-        return_distances=True,
-    )
-    assert torch.equal(counts, torch.zeros_like(counts))
-    assert torch.equal(matrix, torch.full_like(matrix, 3))
-    assert torch.equal(distances, torch.zeros_like(distances))
+def test_nonpositive_cutoff_rejected_in_fullgraph(cutoff, device):
+    """Fullgraph tracing surfaces constant nonpositive cutoff errors."""
+    if not str(device).startswith("cuda"):
+        pytest.skip("CUDA is required for fullgraph coverage.")
+    positions = torch.zeros((3, 3), device=device)
+    matrix = torch.full((3, 2), 17, dtype=torch.int32, device=device)
+    counts = torch.full((3,), 19, dtype=torch.int32, device=device)
 
-
-@pytest.mark.parametrize(
-    "batched,partial,coo,periodic,cutoff",
-    [
-        (False, False, False, False, 0.0),
-        (False, True, True, True, 0.0),
-        (False, True, False, True, -1.0),
-        (False, False, True, True, 0.0),
-        (True, False, True, True, 0.0),
-        (True, True, False, False, -1.0),
-        (True, True, True, True, 0.0),
-        (True, False, False, False, -1.0),
-    ],
-)
-def test_nonpositive_geometry_keeps_zero_autograd_and_resets_buffers(
-    batched, partial, coo, periodic, cutoff
-):
-    """Zero geometry retains zero gradients, layouts, and output-buffer resets."""
-    positions = torch.tensor(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [4.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
-        requires_grad=True,
-    )
-    num_systems = 2 if batched else 1
-    rows = 1 if partial else positions.shape[0]
-    max_neighbors = 3
-    fill_value = positions.shape[0]
-    matrix_buffer = torch.full((rows, max_neighbors), 91, dtype=torch.int32)
-    count_buffer = torch.full((rows,), 92, dtype=torch.int32)
-    shift_buffer = torch.full((rows, max_neighbors, 3), 93, dtype=torch.int32)
-    distance_buffer = torch.full((rows, max_neighbors), 94.0)
-    vector_buffer = torch.full((rows, max_neighbors, 3), 95.0)
-    targets = (
-        torch.tensor([2 if batched else 1], dtype=torch.int32) if partial else None
-    )
-
-    kwargs = {}
-    cell = None
-    if periodic:
-        cell = (torch.eye(3).repeat(num_systems, 1, 1) * 8.0).requires_grad_()
-        pbc = torch.ones((num_systems, 3), dtype=torch.bool)
-        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 0.5, pbc)
-        kwargs.update(
-            cell=cell,
-            pbc=pbc,
-            shift_range_per_dimension=shift_range,
-            num_shifts_per_system=num_shifts,
-            max_shifts_per_system=max_shifts,
-            neighbor_matrix_shifts=shift_buffer,
+    @torch.compile(fullgraph=True)
+    def run(pos, neighbor_matrix, num_neighbors):
+        return naive_neighbor_list(
+            pos,
+            cutoff,
+            max_neighbors=2,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
         )
-    if batched:
-        kwargs.update(
-            batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
-            batch_idx=torch.tensor([0, 0, 1, 1], dtype=torch.int32),
-        )
-        call = batch_naive_neighbor_list
-    else:
-        if periodic:
-            kwargs["cell"] = cell[:1]
-            kwargs["pbc"] = kwargs["pbc"][:1]
-            kwargs["shift_range_per_dimension"] = kwargs["shift_range_per_dimension"][
-                :1
-            ]
-            kwargs["num_shifts_per_system"] = kwargs["num_shifts_per_system"][:1]
-        call = naive_neighbor_list
 
-    result = call(
-        positions,
-        cutoff,
-        max_neighbors=max_neighbors,
-        target_indices=targets,
-        neighbor_matrix=matrix_buffer,
-        num_neighbors=count_buffer,
-        neighbor_distances=distance_buffer,
-        neighbor_vectors=vector_buffer,
-        return_neighbor_list=coo,
-        return_distances=True,
-        return_vectors=True,
-        **kwargs,
-    )
-    topology_size = (3 if periodic else 2) if coo else (3 if periodic else 2)
-    if coo:
-        assert torch.equal(result[1], torch.zeros_like(result[1]))
-        if periodic:
-            assert torch.equal(result[2], torch.zeros_like(result[2]))
-    else:
-        assert torch.equal(result[0], torch.full_like(result[0], fill_value))
-        assert torch.equal(result[1], torch.zeros_like(result[1]))
-        if periodic:
-            assert torch.equal(result[2], torch.zeros_like(result[2]))
-    assert torch.equal(matrix_buffer, torch.full_like(matrix_buffer, fill_value))
-    assert torch.equal(count_buffer, torch.zeros_like(count_buffer))
-    if periodic:
-        assert torch.equal(shift_buffer, torch.zeros_like(shift_buffer))
-    assert torch.equal(distance_buffer, torch.zeros_like(distance_buffer))
-    assert torch.equal(vector_buffer, torch.zeros_like(vector_buffer))
-    distances, vectors = result[topology_size : topology_size + 2]
-    assert distances.requires_grad and vectors.requires_grad
-    inputs = (positions, cell) if periodic else (positions,)
-    gradients = torch.autograd.grad(distances.sum() + vectors.sum(), inputs)
-    assert all(
-        torch.equal(gradient, torch.zeros_like(gradient)) for gradient in gradients
-    )
+    with pytest.raises(
+        torch._dynamo.exc.Unsupported, match="Observed exception"
+    ) as exc_info:
+        run(positions, matrix, counts)
 
+    assert "ValueError('cutoff must be positive')" in str(exc_info.value)
 
-@pytest.mark.parametrize("batched", [False, True])
-def test_nonpositive_geometry_keeps_pair_callback_outputs_forward_only(batched):
-    """Zero-cutoff pair callbacks keep tuple order and zero forward-only buffers."""
-    positions = torch.tensor(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [4.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
-        requires_grad=True,
-    )
-    max_neighbors = 2
-    kwargs = {}
-    call = naive_neighbor_list
-    if batched:
-        call = batch_naive_neighbor_list
-        kwargs.update(
-            batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
-            batch_idx=torch.tensor([0, 0, 1, 1], dtype=torch.int32),
-        )
-    pair_energies = torch.full((4, max_neighbors), 17.0)
-    pair_forces = torch.full((4, max_neighbors, 3), 19.0)
-    result = call(
-        positions,
-        0.0,
-        max_neighbors=max_neighbors,
-        pair_fn=_nonpositive_cutoff_pair_fn,
-        pair_params=torch.ones((4, 1)),
-        pair_energies=pair_energies,
-        pair_forces=pair_forces,
-        return_distances=True,
-        return_vectors=True,
-        **kwargs,
-    )
-
-    assert len(result) == 6
-    assert torch.equal(result[1], torch.zeros_like(result[1]))
-    distances, vectors, energies, forces = result[2:]
-    assert torch.equal(distances, torch.zeros_like(distances))
-    assert torch.equal(vectors, torch.zeros_like(vectors))
-    assert torch.equal(energies, torch.zeros_like(energies))
-    assert torch.equal(forces, torch.zeros_like(forces))
-    assert not energies.requires_grad and not forces.requires_grad
-    grad = torch.autograd.grad(distances.sum() + vectors.sum(), positions)[0]
-    assert torch.equal(grad, torch.zeros_like(grad))
+    assert torch.equal(matrix, torch.full_like(matrix, 17))
+    assert torch.equal(counts, torch.full_like(counts, 19))

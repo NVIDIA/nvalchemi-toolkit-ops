@@ -1625,6 +1625,7 @@ def naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        Eager calls with zero or negative cutoffs raise ``ValueError``.
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags for each dimension.
         True enables periodicity in that direction. Default is None (no PBC).
@@ -1877,6 +1878,9 @@ def naive_neighbor_list(
     are statically specialized. Scratch buffers allocated inside this function
     prevent stable graph replay and add repeated capture overhead.
     """
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+
     graph_mode = _validate_graph_mode(graph_mode)
     coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
 
@@ -2029,7 +2033,7 @@ def naive_neighbor_list(
             (num_rows, int(max_neighbors), 3),
             positions.dtype,
         )
-        if target_indices is not None and (cutoff <= 0 or num_rows == 0):
+        if target_indices is not None and num_rows == 0:
             matrix_out = (
                 jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
                 if neighbor_matrix is None
@@ -2372,49 +2376,6 @@ def naive_neighbor_list(
             shift_range_per_dimension, num_shifts_per_system, max_shifts_per_system = (
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
-
-    if cutoff <= 0:
-        if rebuild_flags is None and graph_mode == "warp":
-            neighbor_matrix = neighbor_matrix.at[:].set(fill_value)
-            num_neighbors = num_neighbors.at[:].set(jnp.int32(0))
-            if pbc is not None:
-                neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
-        if return_neighbor_list:
-            output_pairs = 0 if coo_capacity is None else int(coo_capacity)
-            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
-            metadata_valid = jnp.ones((), dtype=jnp.bool_)
-            if pbc is not None:
-                return (
-                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
-                    jnp.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=jnp.int32,
-                    ),
-                    jnp.zeros((output_pairs, 3), dtype=jnp.int32),
-                    *(
-                        (recovery_counts, metadata_valid)
-                        if coo_capacity is not None
-                        else ()
-                    ),
-                )
-            else:
-                return (
-                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
-                    jnp.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=jnp.int32,
-                    ),
-                    *(
-                        (recovery_counts, metadata_valid)
-                        if coo_capacity is not None
-                        else ()
-                    ),
-                )
-        else:
-            if pbc is not None:
-                return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
-            else:
-                return neighbor_matrix, num_neighbors
 
     # Select wrap kernel by dtype; direct naive registrations resolve at launch.
     if positions.dtype == jnp.float64:

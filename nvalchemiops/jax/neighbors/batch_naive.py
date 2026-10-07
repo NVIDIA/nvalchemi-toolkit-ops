@@ -811,6 +811,7 @@ def batch_naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        Eager calls with zero or negative cutoffs raise ``ValueError``.
     batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
         System index for each atom. If None, batch_ptr must be provided.
     batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional
@@ -957,6 +958,9 @@ def batch_naive_neighbor_list(
     nvalchemiops.jax.neighbors.naive.naive_neighbor_list : Non-batched version
     batch_cell_list : Cell list method for large systems
     """
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+
     coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
 
     if strategy not in {"auto", "scalar", "tile"}:
@@ -1102,7 +1106,7 @@ def batch_naive_neighbor_list(
             (num_rows, int(max_neighbors), 3),
             positions.dtype,
         )
-        if target_indices is not None and (cutoff <= 0 or num_rows == 0):
+        if target_indices is not None and num_rows == 0:
             matrix_out = (
                 jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
                 if neighbor_matrix is None
@@ -1415,7 +1419,7 @@ def batch_naive_neighbor_list(
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
 
-    if cutoff <= 0 or (partial and num_rows == 0):
+    if partial and num_rows == 0:
         if return_neighbor_list:
             output_pairs = 0 if coo_capacity is None else int(coo_capacity)
             recovery_counts = jnp.zeros(num_rows, dtype=jnp.int32)

@@ -8,6 +8,12 @@ Neighbor lists enumerate atom pairs within a cutoff distance. ALCHEMI Toolkit-Op
 provides GPU-accelerated neighbor list algorithms via
 [NVIDIA Warp](https://nvidia.github.io/warp/) with bindings for both PyTorch and JAX.
 
+The `naive` and `batch_naive` methods require a positive cutoff. Eager calls
+with zero or negative cutoffs raise `ValueError` before output buffers are
+allocated or modified. Under `torch.compile(fullgraph=True)`, an invalid
+constant cutoff is rejected during tracing; Dynamo may wrap the `ValueError`
+in a compilation exception.
+
 ```{tip}
 Start with the unified `neighbor_list` function
 ({func}`~nvalchemiops.torch.neighbors.neighbor_list` for PyTorch,

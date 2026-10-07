@@ -1328,26 +1328,38 @@ class TestBatchNaiveEdgeCases:
 
         assert num_neighbors[0].item() == 0, "Single atom should have no neighbors"
 
-    def test_zero_cutoff(self, device, dtype, half_fill):
-        """Test with zero cutoff should find no neighbors."""
-        atoms_per_system = [3, 4]
-        positions_batch, _, _, _ = create_batch_systems(
-            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
-        )
-        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    @pytest.mark.parametrize("target_mode", ["full", "partial", "empty"])
+    def test_nonpositive_cutoff_rejected_before_mutating_buffers(
+        self, cutoff, target_mode
+    ):
+        """Nonpositive cutoff is rejected before batched outputs are touched."""
+        positions = torch.zeros((4, 3))
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32)
+        target_indices = None
+        num_rows = positions.shape[0]
+        if target_mode == "partial":
+            target_indices = torch.tensor([3, 0], dtype=torch.int32)
+            num_rows = target_indices.numel()
+        elif target_mode == "empty":
+            target_indices = torch.empty((0,), dtype=torch.int32)
+            num_rows = 0
+        neighbor_matrix = torch.full((num_rows, 2), 17, dtype=torch.int32)
+        num_neighbors = torch.full((num_rows,), 19, dtype=torch.int32)
 
-        neighbor_matrix, num_neighbors = batch_naive_neighbor_list(
-            positions=positions_batch,
-            cutoff=0.0,
-            batch_idx=batch_idx,
-            batch_ptr=batch_ptr,
-            max_neighbors=10,
-            pbc=None,
-            cell=None,
-            half_fill=half_fill,
-        )
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            batch_naive_neighbor_list(
+                positions,
+                cutoff,
+                batch_ptr=batch_ptr,
+                max_neighbors=2,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+                target_indices=target_indices,
+            )
 
-        assert torch.all(num_neighbors == 0), "Zero cutoff should find no neighbors"
+        assert torch.equal(neighbor_matrix, torch.full_like(neighbor_matrix, 17))
+        assert torch.equal(num_neighbors, torch.full_like(num_neighbors, 19))
 
     def test_single_system_batch(self, device, dtype, half_fill):
         """Test batch with only one system."""
@@ -2229,22 +2241,6 @@ def test_partial_targets_compiled_invalid_rows_are_empty(device):
     assert torch.equal(matrix, torch.full_like(matrix, 4))
 
 
-@pytest.mark.parametrize("cutoff", [0.0, -1.0])
-def test_partial_geometry_nonpositive_cutoff_is_empty(cutoff):
-    """Compact batched geometry outputs stay empty for nonpositive cutoffs."""
-    matrix, counts, distances = batch_naive_neighbor_list(
-        torch.zeros((4, 3)),
-        cutoff,
-        batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
-        max_neighbors=2,
-        target_indices=torch.tensor([0], dtype=torch.int32),
-        return_distances=True,
-    )
-    assert torch.equal(counts, torch.zeros_like(counts))
-    assert torch.equal(matrix, torch.full_like(matrix, 4))
-    assert torch.equal(distances, torch.zeros_like(distances))
-
-
 def test_partial_supplied_matrix_avoids_estimator(monkeypatch):
     """A compact caller matrix defines capacity without estimation."""
     monkeypatch.setattr(
@@ -2260,3 +2256,36 @@ def test_partial_supplied_matrix_avoids_estimator(monkeypatch):
         target_indices=torch.tensor([0], dtype=torch.int32),
     )
     assert matrix.shape == (1, 3)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+def test_nonpositive_cutoff_rejected_in_fullgraph(cutoff, device):
+    """Fullgraph batch tracing surfaces constant nonpositive cutoff errors."""
+    if not str(device).startswith("cuda"):
+        pytest.skip("CUDA is required for fullgraph coverage.")
+    positions = torch.zeros((4, 3), device=device)
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+    matrix = torch.full((4, 2), 17, dtype=torch.int32, device=device)
+    counts = torch.full((4,), 19, dtype=torch.int32, device=device)
+
+    @torch.compile(fullgraph=True)
+    def run(pos, neighbor_matrix, num_neighbors):
+        return batch_naive_neighbor_list(
+            pos,
+            cutoff,
+            batch_ptr=batch_ptr,
+            max_neighbors=2,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+        )
+
+    with pytest.raises(
+        torch._dynamo.exc.Unsupported, match="Observed exception"
+    ) as exc_info:
+        run(positions, matrix, counts)
+
+    assert "ValueError('cutoff must be positive')" in str(exc_info.value)
+
+    assert torch.equal(matrix, torch.full_like(matrix, 17))
+    assert torch.equal(counts, torch.full_like(counts, 19))

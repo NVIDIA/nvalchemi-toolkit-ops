@@ -1009,39 +1009,6 @@ def _batch_naive_pair_outputs_forward(
     ``pair_forces`` are forward-only outputs, matching the cell-list binding.
     """
     is_partial = target_indices is not None
-    if cutoff <= 0:
-        # The public caller has reset the topology and output buffers. Return
-        # empty active-pair metadata through the same custom autograd route as
-        # positive cutoffs so zero geometry remains connected to positions and
-        # cell, with exactly zero derivatives.
-        shifts_arg = (
-            neighbor_matrix_shifts
-            if neighbor_matrix_shifts is not None
-            else torch.zeros(
-                (*neighbor_matrix.shape, 3),
-                dtype=torch.int32,
-                device=neighbor_matrix.device,
-            )
-        )
-        i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
-            neighbor_matrix,
-            num_neighbors,
-            shifts_arg,
-            target_indices=target_indices,
-            batch_idx=batch_idx,
-        )
-        rows, width = neighbor_matrix.shape
-        return _NeighborForwardOutput(
-            distances=neighbor_distances,
-            vectors=neighbor_vectors,
-            extra_outputs=(neighbor_matrix, num_neighbors, shifts_arg),
-            i_idx_flat=i_idx,
-            j_idx_flat=j_idx,
-            shifts_flat=shifts_flat,
-            batch_idx_flat=batch_idx_flat,
-            active_mask=mask,
-            matrix_shape=(rows, width),
-        )
     if is_compiled_pair_fn(pair_fn):
         if pbc is None:
             op = pair_fn.get_or_register(
@@ -1422,6 +1389,7 @@ def batch_naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        Eager calls with zero or negative cutoffs raise ``ValueError``.
     batch_idx : torch.Tensor, shape (total_atoms,), dtype=torch.int32, optional
         System index for each atom. Atoms with the same index belong to
         the same system and can be neighbors. Must be in sorted order.
@@ -1569,6 +1537,9 @@ def batch_naive_neighbor_list(
     nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc : Core warp launcher (with PBC)
     batch_cell_list : O(N) cell list method for larger systems
     """
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
     if pbc is not None and cell is None:
@@ -1648,7 +1619,7 @@ def batch_naive_neighbor_list(
             neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
-        if cutoff > 0 and num_rows > 0:
+        if num_rows > 0:
             if pbc is None:
                 _batch_naive_neighbor_matrix_no_pbc(
                     positions=positions,
@@ -1909,44 +1880,7 @@ def batch_naive_neighbor_list(
                 dtype=positions.dtype,
                 device=positions.device,
             )
-        if cutoff <= 0:
-            neighbor_distances.zero_()
-            neighbor_vectors.zero_()
-            if pair_energies is not None:
-                pair_energies.zero_()
-            if pair_forces is not None:
-                pair_forces.zero_()
-            if not return_distances and not return_vectors:
-                if return_neighbor_list:
-                    if pbc is None:
-                        base = get_neighbor_list_from_neighbor_matrix(
-                            neighbor_matrix,
-                            num_neighbors=num_neighbors,
-                            fill_value=fill_value,
-                        )
-                    else:
-                        base = get_neighbor_list_from_neighbor_matrix(
-                            neighbor_matrix,
-                            num_neighbors=num_neighbors,
-                            neighbor_shift_matrix=neighbor_matrix_shifts,
-                            fill_value=fill_value,
-                        )
-                    active = neighbor_matrix != fill_value
-                    neighbor_distances, neighbor_vectors = coo_pack_pair_geometry(
-                        active, neighbor_distances, neighbor_vectors
-                    )
-                    pair_energies, pair_forces = coo_pack_pair_geometry(
-                        active, pair_energies, pair_forces
-                    )
-                elif pbc is None:
-                    base = (neighbor_matrix, num_neighbors)
-                else:
-                    base = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
-                tail = []
-                if pair_fn is not None:
-                    tail.extend((pair_energies, pair_forces))
-                return (*base, *tail)
-        if cutoff > 0 and pbc is not None and max_atoms_per_system is None:
+        if pbc is not None and max_atoms_per_system is None:
             # ``.item()`` is a CPU sync; it works in eager but triggers a
             # graph break under ``torch.compile``.  Pass max_atoms_per_system
             # explicitly to keep the autograd path graph-clean under compile.

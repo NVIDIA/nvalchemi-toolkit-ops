@@ -48,20 +48,36 @@ def _partial_pair_fn(
     return pair_params[i, 0] + pair_params[j, 0] + distance, -r_ij
 
 
-def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
-    """Zero cutoff never retains a caller-provided count buffer."""
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+@pytest.mark.parametrize("target_mode", ["full", "partial", "empty"])
+def test_nonpositive_cutoff_rejected_before_buffer_mutation(cutoff, target_mode):
+    """Nonpositive cutoffs fail before fixed COO buffers are consumed."""
     positions = jnp.zeros((2, 3), dtype=jnp.float32)
-    _list, _ptr, counts, metadata_valid = naive_neighbor_list(
-        positions,
-        0.0,
-        max_neighbors=1,
-        num_neighbors=jnp.full(2, 7, dtype=jnp.int32),
-        return_neighbor_list=True,
-        coo_capacity=2,
-    )
+    target_indices = None
+    num_rows = positions.shape[0]
+    if target_mode == "partial":
+        target_indices = jnp.array([1], dtype=jnp.int32)
+        num_rows = target_indices.shape[0]
+    elif target_mode == "empty":
+        target_indices = jnp.empty((0,), dtype=jnp.int32)
+        num_rows = 0
+    matrix = jnp.full((num_rows, 1), 5, dtype=jnp.int32)
+    counts = jnp.full(num_rows, 7, dtype=jnp.int32)
 
-    np.testing.assert_array_equal(counts, jnp.zeros(2, dtype=jnp.int32))
-    assert bool(metadata_valid)
+    with pytest.raises(ValueError, match="cutoff must be positive"):
+        naive_neighbor_list(
+            positions,
+            cutoff,
+            max_neighbors=1,
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            return_neighbor_list=True,
+            coo_capacity=2,
+            target_indices=target_indices,
+        )
+
+    np.testing.assert_array_equal(matrix, 5)
+    np.testing.assert_array_equal(counts, 7)
 
 
 def test_empty_partial_fixed_coo_preserves_static_contract():
@@ -82,38 +98,6 @@ def test_empty_partial_fixed_coo_preserves_static_contract():
     assert counts.shape == (0,)
     np.testing.assert_array_equal(neighbor_list, 2)
     np.testing.assert_array_equal(neighbor_ptr, 0)
-    assert bool(metadata_valid)
-
-
-def test_zero_cutoff_partial_pbc_fixed_coo_preserves_geometry_contract():
-    """Zero-cutoff compact PBC output retains padded shifts and distances."""
-    positions = jnp.zeros((2, 3), dtype=jnp.float32)
-    cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
-    pbc = jnp.ones((1, 3), dtype=jnp.bool_)
-    outputs = naive_neighbor_list(
-        positions,
-        0.0,
-        cell=cell,
-        pbc=pbc,
-        max_neighbors=4,
-        target_indices=jnp.array([0], dtype=jnp.int32),
-        strategy="scalar",
-        return_neighbor_list=True,
-        coo_capacity=3,
-        return_distances=True,
-    )
-    neighbor_list, neighbor_ptr, shifts, counts, metadata_valid, distances = outputs
-
-    assert neighbor_list.shape == (2, 3)
-    assert neighbor_ptr.shape == (2,)
-    assert shifts.shape == (3, 3)
-    assert counts.shape == (1,)
-    assert distances.shape == (3,)
-    np.testing.assert_array_equal(neighbor_list, 2)
-    np.testing.assert_array_equal(neighbor_ptr, 0)
-    np.testing.assert_array_equal(shifts, 0)
-    np.testing.assert_array_equal(counts, 0)
-    np.testing.assert_array_equal(distances, 0.0)
     assert bool(metadata_valid)
 
 
@@ -510,34 +494,6 @@ class TestNaiveNeighborList:
         assert neighbor_shifts.shape == (0, 3)
         np.testing.assert_array_equal(np.asarray(neighbor_ptr), [0])
 
-    def test_zero_cutoff_compact_pbc_resets_stale_outputs(self):
-        """A compact PBC zero-cutoff call clears caller-provided output buffers."""
-        positions = jnp.array(
-            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]],
-            dtype=jnp.float32,
-        )
-        cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
-        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
-        targets = jnp.array([0], dtype=jnp.int32)
-        kwargs = {
-            "cell": cell,
-            "pbc": pbc,
-            "target_indices": targets,
-            "neighbor_matrix": jnp.full((1, 4), 99, dtype=jnp.int32),
-            "num_neighbors": jnp.full((1,), 99, dtype=jnp.int32),
-            "neighbor_matrix_shifts": jnp.full((1, 4, 3), 99, dtype=jnp.int32),
-        }
-
-        matrix, counts, matrix_shifts = naive_neighbor_list(
-            positions,
-            0.0,
-            **kwargs,
-        )
-
-        np.testing.assert_array_equal(np.asarray(matrix), [[2, 2, 2, 2]])
-        np.testing.assert_array_equal(np.asarray(counts), [0])
-        np.testing.assert_array_equal(np.asarray(matrix_shifts), 0)
-
     def test_target_indices_jit_uses_compact_user_buffers(self):
         """target_indices works under jax.jit with compact caller buffers."""
         positions = jnp.array(
@@ -869,34 +825,43 @@ class TestNaiveEdgeCases:
                 coo_capacity=coo_capacity,
             )
 
-    def test_zero_cutoff_returns_no_neighbors(self):
-        """Zero cutoff should find zero neighbors."""
-        # 4 atoms in a cluster
-        positions = jnp.array(
-            [
-                [0.0, 0.0, 0.0],
-                [0.5, 0.0, 0.0],
-                [0.0, 0.5, 0.0],
-                [0.0, 0.0, 0.5],
-            ],
-            dtype=jnp.float32,
-        )
-
-        neighbor_matrix, num_neighbors = naive_neighbor_list(
-            positions, cutoff=0.0, max_neighbors=10
-        )
-        assert jnp.all(num_neighbors == 0)
-
-    def test_zero_cutoff_with_pbc(self):
-        """Zero cutoff with PBC should find zero neighbors."""
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    @pytest.mark.parametrize("periodic", [False, True])
+    def test_nonpositive_cutoff_rejected(self, cutoff, periodic):
+        """Single-system calls reject nonpositive cutoffs with and without PBC."""
         positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
-        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 10.0
-        pbc = jnp.array([[True, True, True]])
+        kwargs = {}
+        if periodic:
+            kwargs.update(
+                cell=jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0,
+                pbc=jnp.ones((1, 3), dtype=jnp.bool_),
+            )
 
-        nm, nn, shifts = naive_neighbor_list(
-            positions, cutoff=0.0, cell=cell, pbc=pbc, max_neighbors=10
-        )
-        assert jnp.all(nn == 0)
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            naive_neighbor_list(positions, cutoff=cutoff, max_neighbors=2, **kwargs)
+
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    def test_nonpositive_cutoff_rejected_under_jit(self, cutoff):
+        """Jitted single calls reject constant nonpositive cutoffs during tracing."""
+        positions = jnp.zeros((2, 3), dtype=jnp.float32)
+        matrix = jnp.full((2, 1), 5, dtype=jnp.int32)
+        counts = jnp.full((2,), 7, dtype=jnp.int32)
+
+        @jax.jit
+        def run(pos, neighbor_matrix, num_neighbors):
+            return naive_neighbor_list(
+                pos,
+                cutoff,
+                max_neighbors=1,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            run(positions, matrix, counts)
+
+        np.testing.assert_array_equal(matrix, 5)
+        np.testing.assert_array_equal(counts, 7)
 
     def test_large_cutoff_finds_all_pairs(self):
         """Large cutoff should find all possible neighbors (N-1 per atom)."""

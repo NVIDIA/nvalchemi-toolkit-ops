@@ -60,21 +60,37 @@ def _sorted_row_multisets(
     return rows
 
 
-def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
-    """Batched zero cutoff never retains a caller-provided count buffer."""
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+@pytest.mark.parametrize("target_mode", ["full", "partial", "empty"])
+def test_nonpositive_cutoff_rejected_before_buffer_mutation(cutoff, target_mode):
+    """Batched nonpositive cutoffs fail before fixed COO buffers are consumed."""
     positions = jnp.zeros((2, 3), dtype=jnp.float32)
-    _list, _ptr, counts, metadata_valid = batch_naive_neighbor_list(
-        positions,
-        0.0,
-        batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
-        max_neighbors=1,
-        num_neighbors=jnp.full(2, 7, dtype=jnp.int32),
-        return_neighbor_list=True,
-        coo_capacity=2,
-    )
+    target_indices = None
+    num_rows = positions.shape[0]
+    if target_mode == "partial":
+        target_indices = jnp.array([1], dtype=jnp.int32)
+        num_rows = target_indices.shape[0]
+    elif target_mode == "empty":
+        target_indices = jnp.empty((0,), dtype=jnp.int32)
+        num_rows = 0
+    matrix = jnp.full((num_rows, 1), 5, dtype=jnp.int32)
+    counts = jnp.full(num_rows, 7, dtype=jnp.int32)
 
-    np.testing.assert_array_equal(counts, jnp.zeros(2, dtype=jnp.int32))
-    assert bool(metadata_valid)
+    with pytest.raises(ValueError, match="cutoff must be positive"):
+        batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
+            max_neighbors=1,
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            return_neighbor_list=True,
+            coo_capacity=2,
+            target_indices=target_indices,
+        )
+
+    np.testing.assert_array_equal(matrix, 5)
+    np.testing.assert_array_equal(counts, 7)
 
 
 def test_full_row_prewrapped_tile_is_rejected():
@@ -947,8 +963,9 @@ class TestBatchNaiveEdgeCases:
         total = int(jnp.sum(nn))
         assert total > 0
 
-    def test_batch_zero_cutoff(self):
-        """Batch with zero cutoff should find no neighbors."""
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    def test_batch_nonpositive_cutoff_rejected(self, cutoff):
+        """Batched calls reject nonpositive cutoffs before neighbor setup."""
         positions = jnp.array(
             [
                 [0.0, 0.0, 0.0],
@@ -961,14 +978,39 @@ class TestBatchNaiveEdgeCases:
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
         batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
-        nm, nn = batch_naive_neighbor_list(
-            positions,
-            cutoff=0.0,
-            batch_idx=batch_idx,
-            batch_ptr=batch_ptr,
-            max_neighbors=10,
-        )
-        assert jnp.all(nn == 0)
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            batch_naive_neighbor_list(
+                positions,
+                cutoff=cutoff,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=10,
+            )
+
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    def test_batch_nonpositive_cutoff_rejected_under_jit(self, cutoff):
+        """Jitted batch calls reject constant nonpositive cutoffs during tracing."""
+        positions = jnp.zeros((2, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0, 2], dtype=jnp.int32)
+        matrix = jnp.full((2, 1), 5, dtype=jnp.int32)
+        counts = jnp.full((2,), 7, dtype=jnp.int32)
+
+        @jax.jit
+        def run(pos, neighbor_matrix, num_neighbors):
+            return batch_naive_neighbor_list(
+                pos,
+                cutoff,
+                batch_ptr=batch_ptr,
+                max_neighbors=1,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            run(positions, matrix, counts)
+
+        np.testing.assert_array_equal(matrix, 5)
+        np.testing.assert_array_equal(counts, 7)
 
     def test_batch_with_pbc_distance_validity(self):
         """All batched PBC neighbors should be within cutoff distance."""

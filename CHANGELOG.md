@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Torch and JAX single and batched naive neighbor APIs now reject zero and
+  negative cutoffs before allocating or modifying output buffers. Eager calls
+  raise `ValueError`; this replaces the earlier empty-result behavior for zero
+  cutoffs.
 - Recalibrated neighbor-list strategy selection. Free-boundary systems no longer
   double-count the periodic-image saving, cluster-tile is selected where it wins
   rather than across its whole eligibility region, and float64 work is scaled by
