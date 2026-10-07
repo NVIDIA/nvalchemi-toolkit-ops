@@ -662,8 +662,8 @@ class TestBatchNaiveWpLaunchers:
 
     @pytest.mark.gpu
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-    def test_batched_pbc_prewrapped_tiled_matches_scalar(self, dtype):
-        """Explicit prewrapped PBC tile output matches scalar topology."""
+    def test_batched_full_row_prewrapped_pbc_tile_is_rejected(self, dtype):
+        """Full-row prewrapped PBC is scalar-only; partial rows can tile."""
         device = "cuda:0"
         atoms_per_system = [4, 5]
         positions, cell, pbc, _ = create_batch_systems(
@@ -721,11 +721,9 @@ class TestBatchNaiveWpLaunchers:
             )
             return neighbor_matrix, neighbor_matrix_shifts, num_neighbors
 
-        scalar = build("scalar")
-        tiled = build("tile")
-
-        assert torch.equal(tiled[2], scalar[2])
-        assert _neighbor_shift_sets(*tiled) == _neighbor_shift_sets(*scalar)
+        build("scalar")
+        with pytest.raises(NotImplementedError, match="partial rows only"):
+            build("tile")
 
     @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])

@@ -27,6 +27,19 @@ High-Level Interface
 
 .. autofunction:: nvalchemiops.torch.neighbors.neighbor_list
 
+Prepared Execution
+------------------
+
+Prepared state owns reusable route storage for repeated Torch execution while
+preserving ordinary result tuples. See the
+:ref:`prepared neighbor-list guide <prepared_neighbor_lists>` for lifecycle and
+compilation guidance.
+
+.. autoclass:: nvalchemiops.torch.neighbors.NeighborListState()
+   :members:
+
+.. autofunction:: nvalchemiops.torch.neighbors.prepare_neighbor_list
+
 Exceptions
 ----------
 
@@ -39,7 +52,7 @@ Exceptions
    :show-inheritance:
 
 Method Selection
-^^^^^^^^^^^^^^^^
+----------------
 
 .. autofunction:: nvalchemiops.torch.neighbors.estimate_neighbor_list_costs
 .. autofunction:: nvalchemiops.torch.neighbors.suggest_neighbor_list_method
@@ -105,14 +118,6 @@ Batched Dual Cutoff Algorithm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autofunction:: nvalchemiops.torch.neighbors.batch_naive_neighbor_list_dual_cutoff
-
-Prepared Cluster Tile Execution
--------------------------------
-
-.. autoclass:: nvalchemiops.torch.neighbors.ClusterTileState
-   :members: neighbor_vectors, neighbor_distances
-
-.. autofunction:: nvalchemiops.torch.neighbors.prepare_cluster_tile
 
 Rebuild Detection
 -----------------

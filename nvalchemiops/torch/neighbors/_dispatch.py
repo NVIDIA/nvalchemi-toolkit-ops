@@ -159,10 +159,11 @@ def _normalize_selector_cell_pbc(
 @scoped_torch_warp_stream
 def estimate_neighbor_list_costs(
     batch_ptr: torch.Tensor,
-    cell: torch.Tensor,
-    pbc: torch.Tensor,
-    cutoff: float,
+    cell: torch.Tensor | None = None,
+    pbc: torch.Tensor | None = None,
+    cutoff: float = 0.0,
     *,
+    positions: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     max_nbins: int | None = None,
     optional_outputs: Iterable[str] | None = None,
@@ -185,7 +186,11 @@ def estimate_neighbor_list_costs(
         Cumulative atom counts. ``batch_ptr[-1]`` is the total atom count.
     cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3)
         Per-system cells, or one shared cell to broadcast.
-    pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=bool
+    positions : torch.Tensor, shape (total_atoms, 3), optional
+        Required when ``cell`` and ``pbc`` are omitted, to synthesize the same
+        bounding box the dispatcher would.
+    pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=bool, optional
+        Omit together with ``cell``; see above.
         Shared or per-system PBC flags.
     cutoff : float
         Neighbor cutoff. For dual-cutoff routing, pass the larger cutoff.
@@ -247,7 +252,8 @@ def estimate_neighbor_list_costs(
 
     Notes
     -----
-    Costs are relative, hardware-independent estimates; only their ordering is
+    Costs are relative estimates of algorithmic work with calibrated setup and
+    launch costs and a device-dependent float64 penalty; only their ordering is
     meaningful. This host-only function synchronizes a small selector result.
     Call it outside ``torch.compile`` and pass the chosen name as an explicit
     ``method=`` argument.
@@ -262,6 +268,32 @@ def estimate_neighbor_list_costs(
     if batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
+    if (cell is None) != (pbc is None):
+        raise ValueError("cell and pbc must be provided together, or neither")
+    if cell is None:
+        # Cost a free boundary against the same padded bounding box the
+        # dispatcher synthesizes, with an all-False pbc.
+        if positions is None:
+            raise ValueError(
+                "estimate_neighbor_list_costs needs either cell and pbc, or "
+                "positions to synthesize a bounding box from for a "
+                "free-boundary system"
+            )
+        if batch_idx is not None and num_systems > 1:
+            # Per-system boxes: one shared box inflates every system's volume
+            # when they occupy different regions, which is not what the
+            # dispatcher builds.
+            _, cell, pbc = synthesize_cell_for_batch(
+                positions,
+                batch_idx.detach().to(dtype=torch.int32),
+                batch_ptr.detach().to(dtype=torch.int32),
+                cutoff,
+            )
+        else:
+            _, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
+            if num_systems > 1:
+                cell = cell.expand(num_systems, -1, -1)
+                pbc = pbc.unsqueeze(0).expand(num_systems, -1)
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.detach().to(dtype=torch.int32).contiguous()
     if batch_idx is not None:
@@ -317,7 +349,9 @@ def suggest_neighbor_list_method(*args, **kwargs) -> str:
 
     Thin wrapper over
     :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`
-    returning only the top-ranked strategy name. Accepts the same arguments
+    returning only the top-ranked strategy name. ``cell`` and ``pbc`` are
+    optional there and so are optional here: omit both and pass ``positions``
+    for a free-boundary system. Accepts the same arguments
     and carries the same host-only sync caveat: call outside ``torch.compile``
     and pass the result as an explicit ``method=`` argument.
 

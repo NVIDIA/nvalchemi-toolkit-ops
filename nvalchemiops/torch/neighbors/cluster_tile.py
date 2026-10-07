@@ -61,11 +61,15 @@ from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
     _prepare_coo_pair_output_args,
 )
-from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
+from nvalchemiops.torch._warp_op_helpers import (
+    _capture_safe_inverse,
+    scoped_torch_warp_stream,
+)
 from nvalchemiops.torch.neighbors._autograd import (
     _reconstruct_coo_geometry,
     _reconstruct_matrix_geometry,
 )
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
     _check_tile_buffer_capacity,
@@ -89,6 +93,128 @@ __all__ = [
 ]
 
 
+def _wp_fixed_cluster_geometry(
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> dict[str, object]:
+    """Convert optional prepared cluster geometry arrays for a Warp launcher."""
+    return {
+        "fixed_cell": fixed_cell,
+        "qr": wp.from_torch(
+            qr, dtype=wp.float32, requires_grad=False, return_ctype=True
+        )
+        if qr is not None
+        else None,
+        "axis_aligned": wp.from_torch(
+            axis_aligned, dtype=wp.bool, requires_grad=False, return_ctype=True
+        )
+        if axis_aligned is not None
+        else None,
+        "fractional_rounding_certified": wp.from_torch(
+            fractional_rounding_certified,
+            dtype=wp.bool,
+            requires_grad=False,
+            return_ctype=True,
+        )
+        if fractional_rounding_certified is not None
+        else None,
+        "qr_height_certified": wp.from_torch(
+            qr_height_certified, dtype=wp.bool, requires_grad=False, return_ctype=True
+        )
+        if qr_height_certified is not None
+        else None,
+        "bbox_cutoff_bounds": wp.from_torch(
+            bbox_cutoff_bounds, dtype=wp.float32, requires_grad=False, return_ctype=True
+        )
+        if bbox_cutoff_bounds is not None
+        else None,
+    }
+
+
+def _fixed_cluster_op_args(
+    geometry: _FixedCellGeometry | None,
+) -> tuple[
+    bool,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+]:
+    """Return static fixed mode and readonly geometry tensors for custom ops."""
+    if geometry is None:
+        return False, None, None, None, None, None
+    return (
+        True,
+        geometry.qr,
+        geometry.axis_aligned,
+        geometry.fractional_rounding_certified,
+        geometry.qr_height_certified,
+        geometry.bbox_cutoff_bounds,
+    )
+
+
+def _fixed_cluster_geometry_record(
+    inv_cell: torch.Tensor,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> _FixedCellGeometry | None:
+    """Wrap query-op tensors in the private geometry record expected downstream."""
+    if not fixed_cell:
+        return None
+    return _FixedCellGeometry(
+        inv_cell=inv_cell,
+        cell=None,
+        cells_per_dimension=None,
+        neighbor_search_radius=None,
+        cells_per_system=None,
+        cell_offsets=None,
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
+
+
+def _wp_direct_csr_geometry_inputs(
+    device: torch.device,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> tuple[wp.array, wp.array, wp.array, wp.array, wp.array]:
+    """Convert direct-CSR geometry inputs, using empty dynamic sentinels."""
+    device_str = str(device)
+    return (
+        wp.from_torch(qr, dtype=wp.float32, requires_grad=False)
+        if qr is not None
+        else wp.empty((0, 15), dtype=wp.float32, device=device_str),
+        wp.from_torch(axis_aligned, dtype=wp.bool, requires_grad=False)
+        if axis_aligned is not None
+        else wp.empty(0, dtype=wp.bool, device=device_str),
+        wp.from_torch(fractional_rounding_certified, dtype=wp.bool, requires_grad=False)
+        if fractional_rounding_certified is not None
+        else wp.empty(0, dtype=wp.bool, device=device_str),
+        wp.from_torch(qr_height_certified, dtype=wp.bool, requires_grad=False)
+        if qr_height_certified is not None
+        else wp.empty(0, dtype=wp.bool, device=device_str),
+        wp.from_torch(bbox_cutoff_bounds, dtype=wp.float32, requires_grad=False)
+        if bbox_cutoff_bounds is not None
+        else wp.empty((0, 3), dtype=wp.float32, device=device_str),
+    )
+
+
 @torch.library.custom_op(
     "nvalchemiops::_cluster_tile_direct_csr_count",
     mutates_args=("row_counts",),
@@ -108,9 +234,26 @@ def _cluster_tile_direct_csr_count_op(
     tile_col_group: torch.Tensor,
     row_counts: torch.Tensor,
     launch_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
+    geometry = _wp_direct_csr_geometry_inputs(
+        sorted_pos_x.device,
+        fixed_cell,
+        qr,
+        axis_aligned,
+        fractional_rounding_certified,
+        qr_height_certified,
+        bbox_cutoff_bounds,
+    )
     wp.launch_tiled(
-        _get_query_cluster_tile_direct_csr_count_kernel(batched=False),
+        _get_query_cluster_tile_direct_csr_count_kernel(
+            batched=False, fixed_cell=fixed_cell
+        ),
         dim=[launch_tiles],
         inputs=[
             wp.from_torch(x, dtype=d, return_ctype=True)
@@ -123,6 +266,7 @@ def _cluster_tile_direct_csr_count_op(
                 (inv_cell.unsqueeze(0), wp.mat33f),
             )
         ]
+        + list(geometry)
         + [
             float(cutoff * cutoff),
             int(natom),
@@ -174,10 +318,26 @@ def _cluster_tile_direct_csr_fill_op(
     return_distances: bool,
     max_pairs: int,
     launch_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
+    geometry = _wp_direct_csr_geometry_inputs(
+        sorted_pos_x.device,
+        fixed_cell,
+        qr,
+        axis_aligned,
+        fractional_rounding_certified,
+        qr_height_certified,
+        bbox_cutoff_bounds,
+    )
     wp.launch_tiled(
         _get_query_cluster_tile_direct_csr_fill_kernel(
             batched=False,
+            fixed_cell=fixed_cell,
             return_vectors=return_vectors,
             return_distances=return_distances,
         ),
@@ -193,6 +353,7 @@ def _cluster_tile_direct_csr_fill_op(
                 (inv_cell.unsqueeze(0), wp.mat33f),
             )
         ]
+        + list(geometry)
         + [
             float(cutoff * cutoff),
             int(natom),
@@ -246,6 +407,7 @@ def _cluster_tile_direct_csr_fill_pair_outputs(
     return_distances: bool,
     max_pairs: int,
     launch_tiles: int,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Fill compact CSR rows and eager raw pair-function outputs together."""
     device = str(sorted_pos_x.device)
@@ -282,6 +444,7 @@ def _cluster_tile_direct_csr_fill_pair_outputs(
     wp.launch_tiled(
         _get_query_cluster_tile_direct_csr_fill_kernel(
             batched=False,
+            fixed_cell=_fixed_cell_geometry is not None,
             return_vectors=return_vectors,
             return_distances=return_distances,
             pair_fn=pair_fn,
@@ -294,6 +457,10 @@ def _cluster_tile_direct_csr_fill_pair_outputs(
             wp.from_torch(sorted_atom_index, dtype=wp.int32),
             wp.from_torch(cell.unsqueeze(0), dtype=wp.mat33f),
             wp.from_torch(inv_cell.unsqueeze(0), dtype=wp.mat33f),
+            *_wp_direct_csr_geometry_inputs(
+                sorted_pos_x.device,
+                *_fixed_cluster_op_args(_fixed_cell_geometry),
+            ),
             float(cutoff * cutoff),
             int(natom),
             int(max_pairs),
@@ -630,9 +797,9 @@ def _cell_from_cell(cell: torch.Tensor) -> torch.Tensor:
 def _cell_invcell_from_cell(
     cell: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Normalize a cell and compute its inverse for eager execution."""
+    """Normalize a cell and compute its inverse with capture-safe checking."""
     cell_mat = _cell_from_cell(cell)
-    inv_cell_mat = torch.linalg.inv(cell_mat).contiguous()
+    inv_cell_mat = _capture_safe_inverse(cell_mat).contiguous()
     return cell_mat, inv_cell_mat
 
 
@@ -665,28 +832,8 @@ def _mat33f_from_torch(mat: torch.Tensor):
 # =============================================================================
 # Component ops (torch.library.custom_op wrappers)
 # =============================================================================
-@torch.library.custom_op(
-    "nvalchemiops::_build_cluster_tile_list",
-    mutates_args=(
-        "sorted_atom_index",
-        "morton_codes",
-        "sorted_pos_x",
-        "sorted_pos_y",
-        "sorted_pos_z",
-        "group_ctr_x",
-        "group_ctr_y",
-        "group_ctr_z",
-        "group_ext_x",
-        "group_ext_y",
-        "group_ext_z",
-        "inv_cell",
-        "num_tiles",
-        "tile_row_group",
-        "tile_col_group",
-    ),
-)
 @scoped_torch_warp_stream
-def _build_cluster_tile_list_op(
+def _build_cluster_tile_list_impl(
     positions: torch.Tensor,
     cutoff: float,
     cell: torch.Tensor,
@@ -708,6 +855,12 @@ def _build_cluster_tile_list_op(
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
     compute_inv_cell: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     """Compute Morton codes + argsort + SoA gather in torch, then run
     bbox reduction + tile enumeration on the warp side.
@@ -843,6 +996,185 @@ def _build_cluster_tile_list_op(
         group_ext_y_buffer=wp_group_ext_y,
         group_ext_z_buffer=wp_group_ext_z,
         rebuild_flags=wp_rebuild_flags if use_rebuild_flags else None,
+        fixed_cell=fixed_cell,
+        qr=(
+            wp.from_torch(qr, dtype=wp.float32, return_ctype=True)
+            if qr is not None
+            else None
+        ),
+        axis_aligned=(
+            wp.from_torch(axis_aligned, dtype=wp.bool, return_ctype=True)
+            if axis_aligned is not None
+            else None
+        ),
+        fractional_rounding_certified=(
+            wp.from_torch(
+                fractional_rounding_certified, dtype=wp.bool, return_ctype=True
+            )
+            if fractional_rounding_certified is not None
+            else None
+        ),
+        qr_height_certified=(
+            wp.from_torch(qr_height_certified, dtype=wp.bool, return_ctype=True)
+            if qr_height_certified is not None
+            else None
+        ),
+        bbox_cutoff_bounds=(
+            wp.from_torch(bbox_cutoff_bounds, dtype=wp.float32, return_ctype=True)
+            if bbox_cutoff_bounds is not None
+            else None
+        ),
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_build_cluster_tile_list",
+    mutates_args=(
+        "sorted_atom_index",
+        "morton_codes",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "inv_cell",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+    ),
+)
+def _build_cluster_tile_list_op(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    inv_cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    morton_codes: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    use_rebuild_flags: bool,
+    compute_inv_cell: bool,
+) -> None:
+    _build_cluster_tile_list_impl(
+        positions,
+        cutoff,
+        cell,
+        inv_cell,
+        sorted_atom_index,
+        morton_codes,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        group_ctr_x,
+        group_ctr_y,
+        group_ctr_z,
+        group_ext_x,
+        group_ext_y,
+        group_ext_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        rebuild_flags,
+        use_rebuild_flags,
+        compute_inv_cell,
+        False,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_build_cluster_tile_list_fixed",
+    mutates_args=(
+        "sorted_atom_index",
+        "morton_codes",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+    ),
+)
+def _build_cluster_tile_list_fixed_op(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    inv_cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    morton_codes: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    use_rebuild_flags: bool,
+    qr: torch.Tensor,
+    axis_aligned: torch.Tensor,
+    fractional_rounding_certified: torch.Tensor,
+    qr_height_certified: torch.Tensor,
+    bbox_cutoff_bounds: torch.Tensor,
+) -> None:
+    _build_cluster_tile_list_impl(
+        positions,
+        cutoff,
+        cell,
+        inv_cell,
+        sorted_atom_index,
+        morton_codes,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        group_ctr_x,
+        group_ctr_y,
+        group_ctr_z,
+        group_ext_x,
+        group_ext_y,
+        group_ext_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        rebuild_flags,
+        use_rebuild_flags,
+        False,
+        True,
+        qr,
+        axis_aligned,
+        fractional_rounding_certified,
+        qr_height_certified,
+        bbox_cutoff_bounds,
     )
 
 
@@ -873,6 +1205,37 @@ def _(
     return None
 
 
+@_build_cluster_tile_list_fixed_op.register_fake
+def _(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    inv_cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    morton_codes: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    use_rebuild_flags: bool,
+    qr: torch.Tensor,
+    axis_aligned: torch.Tensor,
+    fractional_rounding_certified: torch.Tensor,
+    qr_height_certified: torch.Tensor,
+    bbox_cutoff_bounds: torch.Tensor,
+) -> None:
+    return None
+
+
 def _build_cluster_tile_list_normalized(
     positions: torch.Tensor,
     cutoff: float,
@@ -892,20 +1255,30 @@ def _build_cluster_tile_list_normalized(
     tile_row_group: torch.Tensor,
     tile_col_group: torch.Tensor,
     *,
+    inv_cell: torch.Tensor | None = None,
     rebuild_flags: torch.Tensor | None = None,
+    force_compute_inv_cell: bool = False,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build tiles and return the normalized cell and inverse used by queries."""
     if positions.dtype != torch.float32:
         raise TypeError("positions must be float32")
     cell_mat = _cell_from_cell(cell).to(positions.dtype)
-    compute_inv_cell = torch.compiler.is_compiling()
+    compute_inv_cell = _fixed_cell_geometry is None and (
+        force_compute_inv_cell or torch.compiler.is_compiling()
+    )
     inv_cell_mat = (
         torch.empty_like(cell_mat)
-        if compute_inv_cell
-        else torch.linalg.inv(cell_mat).contiguous()
+        if inv_cell is None and compute_inv_cell
+        else (torch.linalg.inv(cell_mat).contiguous() if inv_cell is None else inv_cell)
     )
     dummy_rebuild_flags = torch.empty(1, dtype=torch.bool, device=positions.device)
-    _build_cluster_tile_list_op(
+    build_op = (
+        _build_cluster_tile_list_fixed_op
+        if _fixed_cell_geometry is not None
+        else _build_cluster_tile_list_op
+    )
+    build_args = (
         positions,
         cutoff,
         cell_mat,
@@ -926,8 +1299,30 @@ def _build_cluster_tile_list_normalized(
         tile_col_group,
         rebuild_flags if rebuild_flags is not None else dummy_rebuild_flags,
         rebuild_flags is not None,
-        compute_inv_cell,
     )
+    if _fixed_cell_geometry is None:
+        build_op(*build_args, compute_inv_cell)
+    else:
+        geometry = _fixed_cell_geometry
+        if any(
+            value is None
+            for value in (
+                geometry.qr,
+                geometry.axis_aligned,
+                geometry.fractional_rounding_certified,
+                geometry.qr_height_certified,
+                geometry.bbox_cutoff_bounds,
+            )
+        ):
+            raise RuntimeError("prepared cluster geometry cache is incomplete")
+        build_op(
+            *build_args,
+            geometry.qr,
+            geometry.axis_aligned,
+            geometry.fractional_rounding_certified,
+            geometry.qr_height_certified,
+            geometry.bbox_cutoff_bounds,
+        )
     return cell_mat, inv_cell_mat
 
 
@@ -1059,6 +1454,12 @@ def _query_cluster_tile_op(
     n_tiles: int,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     # ``n_tiles`` (host-synced emitted-tile count from the caller) sets the
     # launch dimension so we don't launch over the full allocated tile
@@ -1123,6 +1524,14 @@ def _query_cluster_tile_op(
             if return_distances
             else None
         ),
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -1147,6 +1556,12 @@ def _(
     n_tiles: int,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -1180,6 +1595,7 @@ def _query_cluster_tile_normalized(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Convert the tile pair list to neighbor_matrix form in place.
 
@@ -1282,6 +1698,7 @@ def _query_cluster_tile_normalized(
         inv_cell_mat = torch.linalg.inv(cell_mat).contiguous()
     else:
         inv_cell_mat = inv_cell_mat.to(sorted_pos_x.dtype)
+    fixed_geometry_args = _fixed_cluster_op_args(_fixed_cell_geometry)
     # Eager execution tightens the launch to the emitted tile count. Compiled
     # execution validates on device and launches the full static capacity.
     tile_capacity = int(tile_row_group.shape[0])
@@ -1351,6 +1768,7 @@ def _query_cluster_tile_normalized(
             int(n_tiles),
             bool(cutoff2 is not None),
             bool(rebuild_flags is not None),
+            *fixed_geometry_args,
         )
         return
     if geometry_only:
@@ -1377,6 +1795,7 @@ def _query_cluster_tile_normalized(
             n_tiles,
             bool(return_vectors),
             bool(return_distances),
+            *fixed_geometry_args,
         )
         return
     if feature_path:
@@ -1411,6 +1830,7 @@ def _query_cluster_tile_normalized(
                 cutoff2,
                 return_vectors,
                 return_distances,
+                *fixed_geometry_args,
             )
         if torch.compiler.is_compiling():
             raise NotImplementedError(
@@ -1448,6 +1868,7 @@ def _query_cluster_tile_normalized(
             pair_energies=pair_energies,
             pair_forces=pair_forces,
             n_tiles=n_tiles,
+            _fixed_cell_geometry=_fixed_cell_geometry,
         )
         return
 
@@ -1471,6 +1892,7 @@ def _query_cluster_tile_normalized(
         n_tiles,
         False,
         False,
+        *fixed_geometry_args,
     )
 
 
@@ -1502,6 +1924,7 @@ def query_cluster_tile(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Convert the tile pair list to neighbor-matrix form in place."""
     _query_cluster_tile_normalized(
@@ -1531,6 +1954,7 @@ def query_cluster_tile(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
 
 
@@ -1576,6 +2000,12 @@ def _query_cluster_tile_optional_no_pair_fn_op(
     cutoff2: float | None,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     # Selective queries must retain every output entry when the system is not
     # rebuilt; a rebuilt system starts with zeroed geometry padding.
@@ -1629,6 +2059,15 @@ def _query_cluster_tile_optional_no_pair_fn_op(
         neighbor_distances=neighbor_distances,
         pair_energies=None,
         pair_forces=None,
+        _fixed_cell_geometry=_fixed_cluster_geometry_record(
+            inv_cell_mat,
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -1658,6 +2097,12 @@ def _(
     cutoff2: float | None,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -1697,6 +2142,12 @@ def _query_cluster_tile_topology_op(
     n_tiles: int,
     use_cutoff2: bool,
     use_rebuild_flags: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     _query_cluster_tile_optional(
         cell_mat,
@@ -1727,6 +2178,15 @@ def _query_cluster_tile_topology_op(
         neighbor_distances=None,
         pair_energies=None,
         pair_forces=None,
+        _fixed_cell_geometry=_fixed_cluster_geometry_record(
+            inv_cell_mat,
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -1754,6 +2214,12 @@ def _(
     n_tiles: int,
     use_cutoff2: bool,
     use_rebuild_flags: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -1789,6 +2255,7 @@ def _query_cluster_tile_optional(
     neighbor_distances: torch.Tensor | None,
     pair_energies: torch.Tensor | None,
     pair_forces: torch.Tensor | None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Pair-output path: bypass the torch custom op + call warp directly.
 
@@ -1887,6 +2354,7 @@ def _query_cluster_tile_optional(
         neighbor_distances=wp_neighbor_distances,
         pair_energies=wp_pair_energies,
         pair_forces=wp_pair_forces,
+        **_wp_fixed_cluster_geometry(*_fixed_cluster_op_args(_fixed_cell_geometry)),
     )
 
 
@@ -1912,6 +2380,12 @@ def _query_cluster_tile_coo_op(
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
     n_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     # ``n_tiles`` (host-synced emitted-tile count from the caller) tightens
     # the launch dimension; the kernel still guards per-tile defensively.
@@ -1949,6 +2423,14 @@ def _query_cluster_tile_coo_op(
         wp_dtype=wp_dtype,
         device=wp_device,
         n_tiles=int(n_tiles),
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -1970,6 +2452,12 @@ def _(
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
     n_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -1999,6 +2487,12 @@ def _query_cluster_tile_coo_segmented_op(
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
     n_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     """Run fixed-capacity selective COO conversion in place."""
     device = sorted_pos_x.device
@@ -2028,6 +2522,14 @@ def _query_cluster_tile_coo_segmented_op(
         rebuild_flags=wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True),
         pair_offsets=wp.from_torch(pair_offsets, dtype=wp.int32, return_ctype=True),
         pair_counts=wp.from_torch(pair_counts, dtype=wp.int32, return_ctype=True),
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -2052,6 +2554,12 @@ def _(
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
     n_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -2088,6 +2596,12 @@ def _query_cluster_tile_coo_optional_no_pair_fn_op(
     n_tiles: int,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     _query_cluster_tile_coo_optional(
         cell_mat,
@@ -2114,6 +2628,15 @@ def _query_cluster_tile_coo_optional_no_pair_fn_op(
         neighbor_distances=neighbor_distances,
         pair_energies=None,
         pair_forces=None,
+        _fixed_cell_geometry=_fixed_cluster_geometry_record(
+            inv_cell_mat,
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -2139,6 +2662,12 @@ def _(
     n_tiles: int,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -2170,6 +2699,7 @@ def _query_cluster_tile_coo_optional(
     neighbor_distances: torch.Tensor | None,
     pair_energies: torch.Tensor | None,
     pair_forces: torch.Tensor | None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Pair-output COO path: bypass the torch custom op.
 
@@ -2238,6 +2768,7 @@ def _query_cluster_tile_coo_optional(
         neighbor_distances=wp_neighbor_distances,
         pair_energies=wp_pair_energies,
         pair_forces=wp_pair_forces,
+        **_wp_fixed_cluster_geometry(*_fixed_cluster_op_args(_fixed_cell_geometry)),
     )
 
 
@@ -2268,6 +2799,7 @@ def query_cluster_tile_coo(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Convert the tile pair list to flat COO format in place.
 
@@ -2388,6 +2920,7 @@ def query_cluster_tile_coo(
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
     cell_mat = cell_mat.to(sorted_pos_x.dtype)
     inv_cell_mat = inv_cell_mat.to(sorted_pos_x.dtype)
+    fixed_geometry_args = _fixed_cluster_op_args(_fixed_cell_geometry)
     # Eager execution tightens the launch to the emitted tile count. Compiled
     # execution validates on device and launches the full static capacity.
     tile_capacity = int(tile_row_group.shape[0])
@@ -2415,6 +2948,7 @@ def query_cluster_tile_coo(
             coo_list,
             coo_shifts,
             n_tiles,
+            *fixed_geometry_args,
         )
         if torch.compiler.is_compiling():
             _normalize_compiled_single_segment_coo_count(
@@ -2462,6 +2996,7 @@ def query_cluster_tile_coo(
                 n_tiles,
                 return_vectors,
                 return_distances,
+                *fixed_geometry_args,
             )
         if torch.compiler.is_compiling():
             raise NotImplementedError(
@@ -2493,6 +3028,7 @@ def query_cluster_tile_coo(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            _fixed_cell_geometry=_fixed_cell_geometry,
         )
         return
 
@@ -2513,6 +3049,7 @@ def query_cluster_tile_coo(
         coo_list,
         coo_shifts,
         n_tiles,
+        *fixed_geometry_args,
     )
 
 
@@ -2567,8 +3104,11 @@ def _cluster_tile_neighbor_list_impl(
     pair_forces: torch.Tensor | None = None,
     *,
     max_tiles_per_group: int | None = None,
-    state: object | None = None,
     eager_rebuild_count: int | None = None,
+    inv_cell: torch.Tensor | None = None,
+    force_compute_inv_cell: bool = False,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
+    _live_cell: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a cluster-pair tile neighbor list in one call.
 
@@ -2587,8 +3127,7 @@ def _cluster_tile_neighbor_list_impl(
         use sentinel Morton codes and are filtered out by the
         convert/coo kernels.
     cutoff : float, optional
-        Cutoff distance in Cartesian units. Must be positive. Required without
-        ``state`` and ignored when ``state`` is provided.
+        Cutoff distance in Cartesian units. Must be positive.
     cutoff2 : float, optional
         Cutoff for the second matrix. It is normally the outer cutoff and may
         equal ``cutoff``. Either order is accepted because the tile buffer is
@@ -2596,7 +3135,7 @@ def _cluster_tile_neighbor_list_impl(
         COO/tile formats.
     cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
         Any non-degenerate cell (orthorhombic or triclinic). Required on every
-        call, including prepared execution.
+        call.
     max_neighbors : int, optional
         Falls back to ``estimate_max_neighbors`` using the larger active cutoff.
         Matrix format only.
@@ -2637,13 +3176,6 @@ def _cluster_tile_neighbor_list_impl(
         Eager calls estimate the value when it is ``None``. Caller-owned tile
         arrays determine the actual capacity. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
-    state : ClusterTileState, optional
-        Prepared configuration and reusable storage returned by
-        :func:`prepare_cluster_tile`. The cell remains a required per-call
-        input. The state controls cutoffs, format, capacities, optional outputs,
-        and scratch storage; redundant static arguments are ignored. Explicit
-        scratch or output buffers and ``return_state=True`` are rejected. The
-        state must be unbatched for ``cluster_tile_neighbor_list``.
     rebuild_flags : torch.Tensor, shape (1,), dtype=bool, optional
         Selective rebuild flag. An eager all-true call may bootstrap omitted
         state. When false, caller-owned fixed topology and tile state are
@@ -2688,8 +3220,6 @@ def _cluster_tile_neighbor_list_impl(
         format uses flat buffers written in pair-list order.
     pair_params : torch.Tensor, shape ``(num_atoms, num_parameters)``, optional
         Per-atom pair-function parameters; required with ``pair_fn``.
-        ``pair_params`` is rejected with prepared state because prepared pair
-        callbacks are unsupported.
     neighbor_vectors, neighbor_distances : torch.Tensor, optional
         OUTPUT buffers for per-pair displacements / distances. Without
         autograd reconstruction, matrix and compact COO formats allocate them
@@ -2763,80 +3293,13 @@ def _cluster_tile_neighbor_list_impl(
         Lower-level query step.
     """
 
-    if state is not None:
-        from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
-            ClusterTileState,
-            _execute_prepared_cluster_tile,
-        )
-
-        if not isinstance(state, ClusterTileState):
-            raise TypeError("state must be a ClusterTileState")
-        if state.is_batched:
-            raise ValueError("cluster_tile_neighbor_list requires an unbatched state")
-        if cell is None:
-            raise ValueError("cell is required when state is provided")
-        conflicts = [
-            name
-            for name, value in {
-                "neighbor_matrix": neighbor_matrix,
-                "neighbor_matrix_shifts": neighbor_matrix_shifts,
-                "num_neighbors": num_neighbors,
-                "neighbor_matrix2": neighbor_matrix2,
-                "neighbor_matrix_shifts2": neighbor_matrix_shifts2,
-                "num_neighbors2": num_neighbors2,
-                "neighbor_list": neighbor_list,
-                "neighbor_list_shifts": neighbor_list_shifts,
-                "pair_offsets": pair_offsets,
-                "pair_counts": pair_counts,
-                "pair_counter": pair_counter,
-                "sorted_atom_index": sorted_atom_index,
-                "morton_codes": morton_codes,
-                "sorted_pos_x": sorted_pos_x,
-                "sorted_pos_y": sorted_pos_y,
-                "sorted_pos_z": sorted_pos_z,
-                "group_ctr_x": group_ctr_x,
-                "group_ctr_y": group_ctr_y,
-                "group_ctr_z": group_ctr_z,
-                "group_ext_x": group_ext_x,
-                "group_ext_y": group_ext_y,
-                "group_ext_z": group_ext_z,
-                "num_tiles": num_tiles,
-                "tile_row_group": tile_row_group,
-                "tile_col_group": tile_col_group,
-                "neighbor_vectors": neighbor_vectors,
-                "neighbor_distances": neighbor_distances,
-                "pair_energies": pair_energies,
-                "pair_forces": pair_forces,
-            }.items()
-            if value is not None
-        ]
-        if return_state:
-            conflicts.insert(0, "return_state")
-        if conflicts:
-            raise ValueError(
-                "state controls configuration and storage; conflicting arguments: "
-                + ", ".join(conflicts)
-            )
-        if pair_params is not None:
-            raise ValueError(
-                "pair_params is not supported with state because prepared pair "
-                "callbacks are unsupported"
-            )
-        return _execute_prepared_cluster_tile(
-            positions,
-            cell,
-            state,
-            rebuild_flags=rebuild_flags,
-        )
     if cutoff is None or cell is None:
         missing = [
             name
             for name, value in (("cutoff", cutoff), ("cell", cell))
             if value is None
         ]
-        raise ValueError(
-            "missing required arguments without state: " + ", ".join(missing)
-        )
+        raise ValueError("missing required arguments: " + ", ".join(missing))
     if positions.dtype != torch.float32:
         raise TypeError("positions must be float32")
     if format not in ("matrix", "coo", "tile"):
@@ -3087,7 +3550,10 @@ def _cluster_tile_neighbor_list_impl(
     requires_reconstruction = (
         geometry_requested
         and torch.is_grad_enabled()
-        and (positions.requires_grad or cell.requires_grad)
+        and (
+            positions.requires_grad
+            or (_live_cell if _live_cell is not None else cell).requires_grad
+        )
     )
     snapshot_vectors = neighbor_vectors is not None
     snapshot_distances = neighbor_distances is not None
@@ -3192,7 +3658,10 @@ def _cluster_tile_neighbor_list_impl(
         num_tiles,
         tile_row_group,
         tile_col_group,
+        inv_cell=inv_cell,
         rebuild_flags=rebuild_flags if selective else None,
+        force_compute_inv_cell=force_compute_inv_cell,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
 
     if format == "tile":
@@ -3275,6 +3744,7 @@ def _cluster_tile_neighbor_list_impl(
                 tile_col_group,
                 row_counts,
                 launch_tiles,
+                *_fixed_cluster_op_args(_fixed_cell_geometry),
             )
             neighbor_ptr = torch.cat(
                 (
@@ -3312,6 +3782,7 @@ def _cluster_tile_neighbor_list_impl(
                     copy_distances,
                     int(max_pairs),
                     launch_tiles,
+                    *_fixed_cluster_op_args(_fixed_cell_geometry),
                 )
             else:
                 if pair_params is None or pair_energies is None or pair_forces is None:
@@ -3343,6 +3814,7 @@ def _cluster_tile_neighbor_list_impl(
                     return_distances,
                     int(max_pairs),
                     launch_tiles,
+                    _fixed_cell_geometry=_fixed_cell_geometry,
                 )
             nl, nls, exact_vectors, exact_distances = _compact_coo_prefix(
                 total,
@@ -3358,7 +3830,10 @@ def _cluster_tile_neighbor_list_impl(
             if geometry_requested:
                 if requires_reconstruction:
                     exact_distances, exact_vectors = _reconstruct_coo_geometry(
-                        positions, cell, nl, nls
+                        positions,
+                        _live_cell if _live_cell is not None else cell,
+                        nl,
+                        nls,
                     )
                     if return_vectors and snapshot_vectors:
                         neighbor_vectors[: exact_vectors.shape[0]].copy_(
@@ -3402,6 +3877,7 @@ def _cluster_tile_neighbor_list_impl(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            _fixed_cell_geometry=_fixed_cell_geometry,
         )
         if selective:
             if not torch.compiler.is_compiling():
@@ -3524,6 +4000,7 @@ def _cluster_tile_neighbor_list_impl(
         neighbor_distances=None if requires_reconstruction else neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
 
     # Skip-prefill tail fill: write ``fill_value`` into the unused columns
@@ -3571,7 +4048,7 @@ def _cluster_tile_neighbor_list_impl(
     if requires_reconstruction:
         distances, vectors = _reconstruct_matrix_geometry(
             positions,
-            cell,
+            _live_cell if _live_cell is not None else cell,
             neighbor_matrix,
             num_neighbors,
             neighbor_matrix_shifts,
@@ -3610,8 +4087,8 @@ def _cluster_tile_neighbor_list_impl(
 
 def cluster_tile_neighbor_list(
     positions: torch.Tensor,
-    cutoff: float | None = None,
-    cell: torch.Tensor | None = None,
+    cutoff: float,
+    cell: torch.Tensor,
     max_neighbors: int | None = None,
     fill_value: int | None = None,
     format: str = "matrix",
@@ -3654,7 +4131,6 @@ def cluster_tile_neighbor_list(
     pair_forces: torch.Tensor | None = None,
     *,
     max_tiles_per_group: int | None = None,
-    state: object | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a cluster-pair tile neighbor list in one call."""
     return _cluster_tile_neighbor_list_impl(
@@ -3702,7 +4178,6 @@ def cluster_tile_neighbor_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
         max_tiles_per_group=max_tiles_per_group,
-        state=state,
     )
 
 

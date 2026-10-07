@@ -77,6 +77,36 @@ def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
     assert bool(metadata_valid)
 
 
+def test_full_row_prewrapped_tile_is_rejected():
+    """The public JAX binding keeps prewrapped batch tile partial-only."""
+    positions = jnp.array(
+        [[0.1, 0.1, 0.1], [0.6, 0.1, 0.1], [1.1, 0.1, 0.1], [1.6, 0.1, 0.1]],
+        dtype=jnp.float32,
+    )
+    batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+    cell = jnp.stack([jnp.eye(3, dtype=jnp.float32) * 2.0] * 2)
+    pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 0.75, pbc)
+
+    with pytest.raises(NotImplementedError, match="partial rows only"):
+        batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=2,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=int(max_shifts),
+            wrap_positions=False,
+            strategy="tile",
+        )
+
+
 def test_empty_partial_fixed_coo_preserves_static_contract():
     """Empty batched compact rows retain fixed COO shapes and diagnostics."""
     positions = jnp.zeros((2, 3), dtype=jnp.float32)
@@ -1041,8 +1071,9 @@ class TestBatchNaiveEdgeCases:
 class TestBatchNaiveJIT:
     """Smoke tests for batch_naive_neighbor_list with jax.jit."""
 
-    def test_jit_no_pbc(self):
-        """Test batched naive neighbor list without PBC works with jax.jit."""
+    @pytest.mark.parametrize("strategy", ["scalar", "tile"])
+    def test_jit_no_pbc_fixed_buffers_keep_systems_isolated(self, strategy):
+        """Scalar and tile packed calls reuse buffers without cross-system pairs."""
         positions = jnp.array(
             [
                 [0.0, 0.0, 0.0],
@@ -1054,24 +1085,43 @@ class TestBatchNaiveJIT:
         )
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
         batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        neighbor_matrix = jnp.full((4, 10), -1, dtype=jnp.int32)
+        num_neighbors = jnp.full((4,), -1, dtype=jnp.int32)
 
         @jax.jit
-        def jitted_batch_naive(positions, batch_idx, batch_ptr):
+        def jitted_batch_naive(
+            positions,
+            batch_idx,
+            batch_ptr,
+            neighbor_matrix,
+            num_neighbors,
+        ):
             return batch_naive_neighbor_list(
                 positions,
                 cutoff=1.0,
                 batch_idx=batch_idx,
                 batch_ptr=batch_ptr,
                 max_neighbors=10,
+                strategy=strategy,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
             )
 
         neighbor_matrix, num_neighbors = jitted_batch_naive(
-            positions, batch_idx, batch_ptr
+            positions,
+            batch_idx,
+            batch_ptr,
+            neighbor_matrix,
+            num_neighbors,
         )
 
         assert neighbor_matrix.shape == (4, 10)
         assert num_neighbors.shape == (4,)
-        assert jnp.all(num_neighbors >= 0)
+        np.testing.assert_array_equal(np.asarray(num_neighbors), np.ones(4, dtype=int))
+        np.testing.assert_array_equal(
+            np.asarray(neighbor_matrix[:, 0]),
+            np.array([1, 0, 3, 2]),
+        )
 
     @pytest.mark.gpu
     def test_jit_tile_partial_no_pbc(self):
@@ -1194,6 +1244,42 @@ class TestBatchNaiveJIT:
         assert _sorted_row_multisets(tiled_nm, tiled_nn, tiled_shifts) == (
             _sorted_row_multisets(scalar_nm, scalar_nn, scalar_shifts)
         )
+
+    def test_jit_fixed_capacity_coo(self):
+        """Batched naive exposes padded COO data and recovery metadata."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_naive(positions):
+            return batch_naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                return_neighbor_list=True,
+                coo_capacity=6,
+            )
+
+        neighbor_list, neighbor_ptr, counts, metadata_valid = jitted_batch_naive(
+            positions
+        )
+
+        assert neighbor_list.shape == (2, 6)
+        assert neighbor_ptr.shape == (5,)
+        assert int(neighbor_ptr[-1]) == 4
+        np.testing.assert_array_equal(counts, jnp.ones(4, dtype=jnp.int32))
+        assert bool(metadata_valid)
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

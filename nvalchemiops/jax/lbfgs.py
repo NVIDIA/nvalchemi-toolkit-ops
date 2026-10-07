@@ -91,11 +91,13 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import math
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import warp as wp
+from jax.experimental import io_callback
 from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
@@ -706,7 +708,16 @@ def _get_cell_callable(dtype, graph_mode: str):
     return _CELL_CALLABLES[key]
 
 
-def _lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
+_CELL_ALIGNMENT_ERROR = (
+    "cell must be aligned: entries strictly above the diagonal must be zero. "
+    "Call nvalchemiops.dynamics.utils.cell_filter.align_cell once before "
+    "reference-cell setup."
+)
+
+
+def _lbfgs_set_reference_cell(
+    cell: jax.Array, *, alignment_atol: float | None = None
+) -> tuple[jax.Array, jax.Array]:
     """Capture the reference cell that defines the variable-cell chart.
 
     Coordinates are measured relative to a cell held fixed for the whole
@@ -722,14 +733,68 @@ def _lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
     Parameters
     ----------
     cell : jax.Array, shape (num_systems, 3, 3)
-        Current cell, lattice vectors as columns.
+        Current cell, lattice vectors as columns. Alignment is checked before
+        capturing the reference cell.
+    alignment_atol : float, optional
+        Absolute tolerance for entries strictly above the cell diagonal.
+        Defaults to ``1e-4`` for float32 cells and ``1e-8`` for float64 cells.
 
     Returns
     -------
     ref_cell, ref_cell_inv : jax.Array, shape (num_systems, 3, 3)
         Pass these to every :func:`lbfgs_step_coord_cell` call. They are
         read-only, so do not donate them.
+
+    Notes
+    -----
+    Eager calls raise ``ValueError`` for an unaligned cell. Under ``jax.jit``,
+    a scalar validity check runs through a host callback; XLA reports callback
+    failures as a runtime error. The CPU backend must be enabled to report the
+    alignment error from the host callback, including when cell arrays are on
+    a GPU. When jitting this helper with an explicit ``alignment_atol``, mark
+    that keyword static. ``lbfgs_prepare_cell_state`` itself remains an eager
+    setup helper.
     """
+    if cell.ndim != 3 or cell.shape[-2:] != (3, 3):
+        raise ValueError(f"cell must have shape (num_systems, 3, 3); got {cell.shape}")
+    cell_dtype = jnp.dtype(cell.dtype)
+    if cell_dtype.type not in _CELL_BODIES:
+        raise ValueError(f"cell must be float32 or float64; got {cell.dtype}")
+    if alignment_atol is None:
+        alignment_atol = 1e-4 if cell_dtype == jnp.dtype(jnp.float32) else 1e-8
+    else:
+        try:
+            alignment_atol = float(alignment_atol)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"alignment_atol must be finite and non-negative; got {alignment_atol!r}"
+            ) from exc
+        if not math.isfinite(alignment_atol) or alignment_atol < 0.0:
+            raise ValueError(
+                f"alignment_atol must be finite and non-negative; got {alignment_atol}"
+            )
+
+    max_upper = jnp.max(jnp.abs(jnp.triu(cell, k=1)), axis=(-2, -1))
+    aligned = jnp.all(max_upper <= alignment_atol)
+    if isinstance(aligned, jax.core.Tracer):
+
+        def report_unaligned(value):
+            def fail_if_unaligned(valid):
+                if not bool(valid):
+                    raise ValueError(_CELL_ALIGNMENT_ERROR)
+
+            io_callback(fail_if_unaligned, None, value, ordered=True)
+            return jnp.asarray(0, dtype=jnp.int32)
+
+        jax.lax.cond(
+            aligned,
+            lambda _: jnp.asarray(0, dtype=jnp.int32),
+            report_unaligned,
+            aligned,
+        )
+    elif not bool(aligned):
+        raise ValueError(_CELL_ALIGNMENT_ERROR)
+
     return jnp.array(cell, copy=True), jnp.linalg.inv(cell)
 
 
@@ -800,12 +865,13 @@ def lbfgs_prepare_cell_state(
     *,
     cell_force_scale: float = 1.0,
     dtype=jnp.float64,
+    alignment_atol: float | None = None,
 ) -> LBFGSCellState:
     """Build a complete, ready-to-step variable-cell chart from atom topology.
 
-    One call: give it the ordinary ``atom_ptr`` and the aligned cells, and it
+    One call: give it the ordinary ``atom_ptr`` and aligned cells, and it
     derives the packed topology, captures the reference chart and computes
-    ``kappa``. Nothing needs repairing before the first step.
+    ``kappa``. Alignment is checked before the reference cell is captured.
 
     Ragged batches are unaffected -- ``atom_ptr`` already carries each
     system's atom count, so nothing here assumes an even split.
@@ -820,6 +886,9 @@ def lbfgs_prepare_cell_state(
         Multiplier on the atom count in ``kappa``.
     dtype : optional
         Coordinate precision; must match the coordinates and the state.
+    alignment_atol : float, optional
+        Absolute tolerance for entries strictly above the cell diagonal.
+        Defaults to ``1e-4`` for float32 cells and ``1e-8`` for float64 cells.
 
     Returns
     -------
@@ -855,7 +924,9 @@ def lbfgs_prepare_cell_state(
     )
 
     mat = lambda: jnp.zeros((n, 3, 3), dtype)  # noqa: E731
-    ref_cell, ref_cell_inv = _lbfgs_set_reference_cell(cell)
+    ref_cell, ref_cell_inv = _lbfgs_set_reference_cell(
+        cell, alignment_atol=alignment_atol
+    )
     state = LBFGSCellState(
         ref_cell=ref_cell, ref_cell_inv=ref_cell_inv,
         kappa=_lbfgs_cell_kappa(

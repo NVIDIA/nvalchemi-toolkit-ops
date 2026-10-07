@@ -1195,6 +1195,10 @@ def get_naive_neighbor_matrix_kernel(
     mode = _parse_pbc_mode(pbc_mode)
     strat = _parse_strategy(strategy)
     if strat is _NaiveStrategy.TILE:
+        if batched and mode is _PBCMode.PREWRAPPED and not partial:
+            raise NotImplementedError(
+                "Batched prewrapped PBC tile kernels support partial rows only.",
+            )
         if return_vectors or return_distances or pair_fn is not None:
             raise NotImplementedError("pair outputs currently use strategy='scalar'")
         if partial and selective:

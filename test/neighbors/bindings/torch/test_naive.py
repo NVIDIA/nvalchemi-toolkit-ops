@@ -21,6 +21,7 @@ import pytest
 import torch
 import warp as wp
 
+from nvalchemiops.torch.neighbors.batch_naive import batch_naive_neighbor_list
 from nvalchemiops.torch.neighbors.naive import (
     _naive_neighbor_matrix_no_pbc,
     _naive_neighbor_matrix_pbc,
@@ -33,11 +34,24 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
 
 from ...test_utils import (
     assert_neighbor_lists_equal,
+    assert_neighbor_matrix_equal,
     brute_force_neighbors,
     create_random_system,
     create_simple_cubic_system,
 )
 from .conftest import requires_vesin
+
+
+@wp.func
+def _nonpositive_cutoff_pair_fn(
+    r_ij: wp.vec3f,
+    distance: wp.float32,
+    pair_params: wp.array2d(dtype=wp.float32),
+    i: int,
+    j: int,
+):
+    """Return simple outputs for nonpositive-cutoff callback contract tests."""
+    return pair_params[i, 0] + pair_params[j, 0] + distance, -r_ij
 
 
 def _sorted_row_multisets(
@@ -57,6 +71,31 @@ def _sorted_row_multisets(
             values.append(item)
         rows.append(sorted(values))
     return rows
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("periodic", [False, True])
+def test_explicit_naive_topology_strategies_agree(periodic: bool) -> None:
+    """CUDA topology output agrees for every supported naive strategy."""
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.6, 0.1, 0.1], [1.1, 0.1, 0.1]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 2.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs = {"cell": cell, "pbc": pbc} if periodic else {"cell": None, "pbc": None}
+    reference = naive_neighbor_list(
+        positions, 0.75, max_neighbors=8, strategy="scalar", **kwargs
+    )
+    for strategy in ("auto", "scalar", "tile"):
+        assert_neighbor_matrix_equal(
+            reference,
+            naive_neighbor_list(
+                positions, 0.75, max_neighbors=8, strategy=strategy, **kwargs
+            ),
+        )
 
 
 class TestNaiveCorrectness:
@@ -1853,3 +1892,149 @@ def test_partial_geometry_nonpositive_cutoff_is_empty(cutoff):
     assert torch.equal(counts, torch.zeros_like(counts))
     assert torch.equal(matrix, torch.full_like(matrix, 3))
     assert torch.equal(distances, torch.zeros_like(distances))
+
+
+@pytest.mark.parametrize(
+    "batched,partial,coo,periodic,cutoff",
+    [
+        (False, False, False, False, 0.0),
+        (False, True, True, True, 0.0),
+        (False, True, False, True, -1.0),
+        (False, False, True, True, 0.0),
+        (True, False, True, True, 0.0),
+        (True, True, False, False, -1.0),
+        (True, True, True, True, 0.0),
+        (True, False, False, False, -1.0),
+    ],
+)
+def test_nonpositive_geometry_keeps_zero_autograd_and_resets_buffers(
+    batched, partial, coo, periodic, cutoff
+):
+    """Zero geometry retains zero gradients, layouts, and output-buffer resets."""
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [4.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
+        requires_grad=True,
+    )
+    num_systems = 2 if batched else 1
+    rows = 1 if partial else positions.shape[0]
+    max_neighbors = 3
+    fill_value = positions.shape[0]
+    matrix_buffer = torch.full((rows, max_neighbors), 91, dtype=torch.int32)
+    count_buffer = torch.full((rows,), 92, dtype=torch.int32)
+    shift_buffer = torch.full((rows, max_neighbors, 3), 93, dtype=torch.int32)
+    distance_buffer = torch.full((rows, max_neighbors), 94.0)
+    vector_buffer = torch.full((rows, max_neighbors, 3), 95.0)
+    targets = (
+        torch.tensor([2 if batched else 1], dtype=torch.int32) if partial else None
+    )
+
+    kwargs = {}
+    cell = None
+    if periodic:
+        cell = (torch.eye(3).repeat(num_systems, 1, 1) * 8.0).requires_grad_()
+        pbc = torch.ones((num_systems, 3), dtype=torch.bool)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 0.5, pbc)
+        kwargs.update(
+            cell=cell,
+            pbc=pbc,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+            neighbor_matrix_shifts=shift_buffer,
+        )
+    if batched:
+        kwargs.update(
+            batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
+            batch_idx=torch.tensor([0, 0, 1, 1], dtype=torch.int32),
+        )
+        call = batch_naive_neighbor_list
+    else:
+        if periodic:
+            kwargs["cell"] = cell[:1]
+            kwargs["pbc"] = kwargs["pbc"][:1]
+            kwargs["shift_range_per_dimension"] = kwargs["shift_range_per_dimension"][
+                :1
+            ]
+            kwargs["num_shifts_per_system"] = kwargs["num_shifts_per_system"][:1]
+        call = naive_neighbor_list
+
+    result = call(
+        positions,
+        cutoff,
+        max_neighbors=max_neighbors,
+        target_indices=targets,
+        neighbor_matrix=matrix_buffer,
+        num_neighbors=count_buffer,
+        neighbor_distances=distance_buffer,
+        neighbor_vectors=vector_buffer,
+        return_neighbor_list=coo,
+        return_distances=True,
+        return_vectors=True,
+        **kwargs,
+    )
+    topology_size = (3 if periodic else 2) if coo else (3 if periodic else 2)
+    if coo:
+        assert torch.equal(result[1], torch.zeros_like(result[1]))
+        if periodic:
+            assert torch.equal(result[2], torch.zeros_like(result[2]))
+    else:
+        assert torch.equal(result[0], torch.full_like(result[0], fill_value))
+        assert torch.equal(result[1], torch.zeros_like(result[1]))
+        if periodic:
+            assert torch.equal(result[2], torch.zeros_like(result[2]))
+    assert torch.equal(matrix_buffer, torch.full_like(matrix_buffer, fill_value))
+    assert torch.equal(count_buffer, torch.zeros_like(count_buffer))
+    if periodic:
+        assert torch.equal(shift_buffer, torch.zeros_like(shift_buffer))
+    assert torch.equal(distance_buffer, torch.zeros_like(distance_buffer))
+    assert torch.equal(vector_buffer, torch.zeros_like(vector_buffer))
+    distances, vectors = result[topology_size : topology_size + 2]
+    assert distances.requires_grad and vectors.requires_grad
+    inputs = (positions, cell) if periodic else (positions,)
+    gradients = torch.autograd.grad(distances.sum() + vectors.sum(), inputs)
+    assert all(
+        torch.equal(gradient, torch.zeros_like(gradient)) for gradient in gradients
+    )
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_nonpositive_geometry_keeps_pair_callback_outputs_forward_only(batched):
+    """Zero-cutoff pair callbacks keep tuple order and zero forward-only buffers."""
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [4.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
+        requires_grad=True,
+    )
+    max_neighbors = 2
+    kwargs = {}
+    call = naive_neighbor_list
+    if batched:
+        call = batch_naive_neighbor_list
+        kwargs.update(
+            batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
+            batch_idx=torch.tensor([0, 0, 1, 1], dtype=torch.int32),
+        )
+    pair_energies = torch.full((4, max_neighbors), 17.0)
+    pair_forces = torch.full((4, max_neighbors, 3), 19.0)
+    result = call(
+        positions,
+        0.0,
+        max_neighbors=max_neighbors,
+        pair_fn=_nonpositive_cutoff_pair_fn,
+        pair_params=torch.ones((4, 1)),
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+        return_distances=True,
+        return_vectors=True,
+        **kwargs,
+    )
+
+    assert len(result) == 6
+    assert torch.equal(result[1], torch.zeros_like(result[1]))
+    distances, vectors, energies, forces = result[2:]
+    assert torch.equal(distances, torch.zeros_like(distances))
+    assert torch.equal(vectors, torch.zeros_like(vectors))
+    assert torch.equal(energies, torch.zeros_like(energies))
+    assert torch.equal(forces, torch.zeros_like(forces))
+    assert not energies.requires_grad and not forces.requires_grad
+    grad = torch.autograd.grad(distances.sum() + vectors.sum(), positions)[0]
+    assert torch.equal(grad, torch.zeros_like(grad))

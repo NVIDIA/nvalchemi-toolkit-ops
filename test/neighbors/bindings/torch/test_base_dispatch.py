@@ -32,6 +32,7 @@ from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 _ENV_KNOBS = (
     "NVALCHEMI_NEIGHLIST_CELL_SHELL",
     "NVALCHEMI_NEIGHLIST_CELL_SETUP",
+    "NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY",
 )
 
 
@@ -136,7 +137,10 @@ class TestReportNeighborListCosts:
 
     def test_shell_env_override_shifts_naive_cell_boundary(self, monkeypatch):
         """Increasing shell cost can flip a sparse system back to naive."""
-        args = ([5000], [5.0e6])
+        # Free-boundary float32 reports (``_report`` passes an all-False pbc
+        # and a float32 cell), sized so cell_list is genuinely the cheapest
+        # strategy and the env override has something to flip.
+        args = ([50000], [5.0e5])
         assert _base_method(_report(*args, cutoff=5.0)) == "cell_list"
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_CELL_SHELL", "100000.0")
         assert _base_method(_report(*args, cutoff=5.0)) == "naive"
@@ -247,11 +251,13 @@ class TestReportNeighborListCosts:
     )
     def test_cuda_dense_periodic_float32_selects_cluster_tile(self):
         """Dense fully periodic float32 geometry can auto-select cluster-tile."""
-        batch_ptr = torch.tensor([0, 4096], dtype=torch.int32, device="cuda")
-        cell = torch.eye(3, dtype=torch.float32, device="cuda").reshape(1, 3, 3) * 20.0
+        # Sized above the naive/cluster_tile crossover, where cluster_tile is
+        # genuinely the fastest strategy.
+        batch_ptr = torch.tensor([0, 16384], dtype=torch.int32, device="cuda")
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").reshape(1, 3, 3) * 22.5
         pbc = torch.ones((1, 3), dtype=torch.bool, device="cuda")
 
-        top = suggest_torch(batch_ptr, cell, pbc, 10.0, positions_dtype=torch.float32)
+        top = suggest_torch(batch_ptr, cell, pbc, 8.0, positions_dtype=torch.float32)
         assert top == "cluster_tile"
 
 

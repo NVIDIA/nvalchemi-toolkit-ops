@@ -29,7 +29,11 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.torch.neighbors import compile_pair_fn
+from nvalchemiops.torch.neighbors import (
+    compile_pair_fn,
+    neighbor_list,
+    prepare_neighbor_list,
+)
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
     batch_query_cell_list,
@@ -663,6 +667,30 @@ def test_naive_pair_fn_target_indices_compact_rows(device):
     _check_target_pair_outputs(nm, nn, nv, nd, pe, pf, pp, target_indices)
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_naive_pair_fn_partial_tile_rejected() -> None:
+    """Topology-only partial tile rejects inline pair callbacks."""
+    device = "cuda:0"
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+    targets = torch.tensor([1], dtype=torch.int32, device=device)
+    pair_params = torch.ones((2, 1), dtype=torch.float32, device=device)
+    with pytest.raises(NotImplementedError, match="topology-only target_indices"):
+        naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=4,
+            target_indices=targets,
+            pair_fn=_sum_pair_fn,
+            pair_params=pair_params,
+            strategy="tile",
+        )
+
+
 def test_naive_pair_fn_target_indices_fullgraph_rejected(device):
     """Torch fullgraph rejects eager-only Python ``pair_fn`` routes clearly."""
     _skip_without_cuda(device)
@@ -1032,6 +1060,97 @@ def test_compiled_pair_fn_batch_naive_pbc_target_indices_fullgraph_matrix(device
         pf_out,
         pp,
         target_indices,
+    )
+
+
+@pytest.mark.gpu
+def test_prepared_fixed_cell_compiled_pair_fn_naive_pbc(device):
+    """Prepared fixed-cell single naive invokes a compiled pair callback."""
+    _skip_without_cuda(device)
+    positions, cell, pbc = _single_system_pbc(device)
+    max_neighbors = 8
+    pair_fn = _compiled_pair_fn("prepared_fixed_naive_pbc")
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        fixed_cell=True,
+        max_neighbors=max_neighbors,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=pair_fn,
+    )
+    pair_params = (
+        (torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0)
+        * 0.5
+    ).reshape(-1, 1)
+
+    neighbor_list(positions, state=state, pair_params=pair_params)
+
+    assert state.neighbor_matrix is not None
+    assert state.num_neighbors is not None
+    assert state.neighbor_vectors is not None
+    assert state.neighbor_distances is not None
+    assert state.pair_energies is not None
+    assert state.pair_forces is not None
+    _check_pair_outputs(
+        state.neighbor_matrix,
+        state.num_neighbors,
+        state.neighbor_vectors,
+        state.neighbor_distances,
+        state.pair_energies,
+        state.pair_forces,
+        pair_params,
+    )
+
+
+@pytest.mark.gpu
+def test_prepared_fixed_cell_compiled_pair_fn_batch_naive_pbc(device):
+    """Prepared fixed-cell batch naive invokes a compiled pair callback."""
+    _skip_without_cuda(device)
+    one_system, one_cell, one_pbc = _single_system_pbc(device)
+    positions = torch.cat((one_system, one_system + 1.5))
+    cell = one_cell.repeat(2, 1, 1)
+    pbc = one_pbc.repeat(2, 1)
+    batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device=device)
+    max_neighbors = 8
+    pair_fn = _compiled_pair_fn("prepared_fixed_batch_naive_pbc")
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        fixed_cell=True,
+        max_neighbors=max_neighbors,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=pair_fn,
+    )
+    pair_params = (
+        (torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0)
+        * 0.5
+    ).reshape(-1, 1)
+
+    neighbor_list(positions, state=state, pair_params=pair_params)
+
+    assert state.neighbor_matrix is not None
+    assert state.num_neighbors is not None
+    assert state.neighbor_vectors is not None
+    assert state.neighbor_distances is not None
+    assert state.pair_energies is not None
+    assert state.pair_forces is not None
+    _check_pair_outputs(
+        state.neighbor_matrix,
+        state.num_neighbors,
+        state.neighbor_vectors,
+        state.neighbor_distances,
+        state.pair_energies,
+        state.pair_forces,
+        pair_params,
     )
 
 

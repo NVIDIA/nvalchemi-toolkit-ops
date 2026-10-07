@@ -24,6 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import warp as wp
 
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
@@ -33,6 +34,18 @@ from .conftest import requires_gpu
 pytestmark = requires_gpu
 
 naive_module = import_module("nvalchemiops.jax.neighbors.naive")
+
+
+@wp.func
+def _partial_pair_fn(
+    r_ij: wp.vec3f,
+    distance: wp.float32,
+    pair_params: wp.array2d(dtype=wp.float32),
+    i: int,
+    j: int,
+):
+    """Return a small pair output for partial-tile rejection coverage."""
+    return pair_params[i, 0] + pair_params[j, 0] + distance, -r_ij
 
 
 def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
@@ -663,6 +676,17 @@ class TestNaiveNeighborList:
                 max_neighbors=16,
                 target_indices=target_indices,
                 neighbor_vectors=jnp.zeros((3, 16, 3), dtype=jnp.float32),
+                strategy="tile",
+            )
+
+        with pytest.raises(NotImplementedError, match="pair-output"):
+            naive_neighbor_list(
+                positions,
+                0.5,
+                max_neighbors=16,
+                target_indices=target_indices,
+                pair_fn=_partial_pair_fn,
+                pair_params=jnp.ones((24, 1), dtype=jnp.float32),
                 strategy="tile",
             )
 

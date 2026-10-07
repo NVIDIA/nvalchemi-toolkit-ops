@@ -165,17 +165,22 @@ def _prepare_pbc_positions(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ):
     """Prepare wrapped or prewrapped positions and per-atom cell offsets.
 
-    Caller-supplied scratch buffers are used when provided.  If any are
-    absent the launcher allocates a fresh buffer for the call.
+    Caller-supplied scratch buffers are used when provided. If any are absent
+    the launcher allocates a fresh buffer for the call. ``inv_cell_buffer``
+    is recomputed by default; set ``reuse_inv_cell`` only when it contains a
+    valid inverse for an unchanged cell.
     """
     if not wrap_positions:
         return positions, _empty_sentinel(1, wp.vec3i, device)
 
     total_atoms = positions.shape[0]
     vec_dtype, mat_dtype = _DTYPE_INFO[wp_dtype]
+    if reuse_inv_cell and inv_cell_buffer is None:
+        raise ValueError("inv_cell_buffer is required when reuse_inv_cell=True")
     if inv_cell_buffer is None:
         inv_cell_buffer = wp.empty((cell.shape[0],), dtype=mat_dtype, device=device)
     if positions_wrapped_buffer is None:
@@ -186,7 +191,8 @@ def _prepare_pbc_positions(
         per_atom_cell_offsets_buffer = wp.empty(
             (total_atoms,), dtype=wp.vec3i, device=device
         )
-    compute_inv_cells(cell, inv_cell_buffer, wp_dtype, device)
+    if not reuse_inv_cell:
+        compute_inv_cells(cell, inv_cell_buffer, wp_dtype, device)
     _wrap_pbc_positions(
         positions,
         cell,
@@ -461,6 +467,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    reuse_inv_cell: bool = False,
     strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff PBC naive neighbor-matrix path."""
@@ -508,6 +515,10 @@ def _launch_naive_neighbor_matrix_pbc(
         raise ValueError(
             f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
+    if strategy == "tile" and batched and not wrap_positions and not partial:
+        raise NotImplementedError(
+            "Batched prewrapped PBC tile kernels support partial rows only.",
+        )
     num_systems = int(batch_ptr.shape[0] - 1) if batched else 1
     strategy = _resolve_naive_strategy(
         strategy,
@@ -536,6 +547,7 @@ def _launch_naive_neighbor_matrix_pbc(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
     (
         _empty_offsets,
@@ -812,6 +824,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Launch dual-cutoff PBC kernels."""
     pbc_mode = _pbc_mode_from_wrap(wrap_positions)
@@ -827,6 +840,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
     kernel = get_naive_neighbor_matrix_dual_cutoff_kernel(
         wp_dtype,
@@ -996,10 +1010,10 @@ def naive_neighbor_matrix(
         OUTPUT: Required if ``pair_fn`` is provided.  Stores the per-pair
         force returned by ``pair_fn``.
     strategy : {"auto", "scalar", "tile"}, default="auto"
-        Kernel dispatch selector. Compact topology-only rows support explicit
-        CUDA tile and dtype-specific automatic selection. Geometry and pair
-        outputs use scalar, and explicit tile rejects them. Full-row topology
-        ignores this argument and retains its internal automatic selection.
+        Kernel dispatch selector. Explicit scalar or tile is honored for
+        supported topology-only variants. ``auto`` resolves from the workload
+        and device. Geometry and pair outputs use scalar, and explicit tile
+        rejects them.
 
     Notes
     -----
@@ -1008,11 +1022,10 @@ def naive_neighbor_matrix(
     - The CUDA path uses ``wp.launch_tiled(block_dim=BLOCK_DIM)``; Warp forces
       ``block_dim = 1`` on CPU which would silently break the lane-cooperative
       partitioning, so CPU callers take the scalar path.
-    - Topology-only ``target_indices`` calls use the tile-cooperative path on
-      CUDA when explicitly requested, and under ``strategy="auto"`` for inputs
-      with at least ``4 * BLOCK_DIM`` atoms for float64 or ``16 * BLOCK_DIM``
-      atoms for float16/float32. Geometry and pair-function outputs use the
-      scalar factory kernel.
+    - Explicit scalar or tile is honored for supported topology-only variants.
+      Under ``strategy="auto"``, single-system topology-only partial calls use
+      dtype-specific atom thresholds for tile selection. Geometry and
+      pair-function outputs use the scalar factory kernel.
 
     See Also
     --------
@@ -1042,6 +1055,7 @@ def naive_neighbor_matrix(
             batched=False,
             half_fill=half_fill,
             rebuild_flags=rebuild_flags,
+            strategy=strategy,
         )
         return
     _launch_naive_neighbor_matrix_no_pbc(
@@ -1153,14 +1167,17 @@ def batch_naive_neighbor_matrix(
     strategy : {"auto", "scalar", "tile"}, default="auto"
         Kernel dispatch selector. Batched compact topology-only ``auto`` uses
         scalar, while explicit CUDA tile is supported. Geometry and pair
-        outputs use scalar, and explicit tile rejects them. Full-row topology
-        ignores this argument and retains its internal automatic selection.
+        outputs use scalar, and explicit tile rejects them. Explicit scalar or
+        tile is honored for supported full-row variants; ``auto`` resolves
+        from the workload and device.
 
     Notes
     -----
     - This is a low-level warp interface. For framework bindings, use torch/jax wrappers.
     - Output arrays must be pre-allocated by caller.
-    - Default calls dispatch internally:
+    - Topology-only and partial calls forward ``strategy`` to the helper.
+      Explicit scalar or tile is honored for supported full-row variants.
+      ``auto`` full-row calls dispatch internally:
 
       * On CPU, always use the scalar kernel (Warp forces ``block_dim=1`` on CPU).
       * On CUDA, use the tile-cooperative kernel when the adaptive
@@ -1207,6 +1224,7 @@ def batch_naive_neighbor_matrix(
             batch_ptr=batch_ptr,
             half_fill=half_fill,
             rebuild_flags=rebuild_flags,
+            strategy=strategy,
         )
         return
     if rebuild_flags is not None:
@@ -1273,6 +1291,7 @@ def naive_neighbor_matrix_pbc(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for naive neighbor matrix construction with PBC.
 
@@ -1353,11 +1372,16 @@ def naive_neighbor_matrix_pbc(
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
+    reuse_inv_cell : bool, default=False
+        Reuse ``inv_cell_buffer`` without recomputing it. The buffer must hold
+        the inverse of the unchanged cell; it is required when this flag is
+        True. By default, the inverse is recomputed on every wrapped call.
     strategy : {"auto", "scalar", "tile"}, default="auto"
         Kernel dispatch selector. Compact topology-only rows support explicit
-        CUDA tile and dtype-specific automatic selection. Geometry and pair
-        outputs use scalar, and explicit tile rejects them. Full-row topology
-        ignores this argument and retains its internal automatic selection.
+        CUDA tile and dtype-specific automatic selection. Explicit scalar or
+        tile is honored for supported full-row variants; ``auto`` resolves
+        from the workload and device. Geometry and pair outputs use scalar,
+        and explicit tile rejects them.
     pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
         Per-axis periodic boundary flags.  When supplied, axes marked False
         are left unwrapped during position wrapping.  When omitted, wrapping
@@ -1376,6 +1400,8 @@ def naive_neighbor_matrix_pbc(
       ``inv_cell_buffer``) may be supplied by the caller to eliminate
       per-call allocation; their contents are overwritten on every call.
       When omitted the launcher allocates a fresh buffer for the call.
+    - The deprecated ``positions_wrapped``, ``per_atom_cell_offsets``, and
+      ``inv_cell`` kwargs alias their corresponding ``*_buffer`` arguments.
     - The CUDA path uses ``wp.launch_tiled(block_dim=BLOCK_DIM)``; CPU is
       forced to ``block_dim = 1`` by Warp, so CPU callers take the scalar path.
     - Topology-only ``target_indices`` calls can tile. Under
@@ -1438,6 +1464,7 @@ def naive_neighbor_matrix_pbc(
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
             inv_cell_buffer=inv_cell_buffer,
+            reuse_inv_cell=reuse_inv_cell,
             strategy=strategy,
         )
         return
@@ -1469,6 +1496,7 @@ def naive_neighbor_matrix_pbc(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
         strategy=strategy,
     )
 
@@ -1509,6 +1537,7 @@ def batch_naive_neighbor_matrix_pbc(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for batched naive neighbor matrix construction with PBC.
 
@@ -1590,11 +1619,17 @@ def batch_naive_neighbor_matrix_pbc(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    reuse_inv_cell : bool, default=False
+        Reuse ``inv_cell_buffer`` without recomputing it. The buffer must hold
+        the inverse of each unchanged cell; it is required when this flag is
+        True. By default, inverses are recomputed on every wrapped call.
     strategy : {"auto", "scalar", "tile"}, default="auto"
-        Kernel dispatch selector. Batched compact topology-only ``auto`` uses
-        scalar, while explicit CUDA tile is supported. Geometry and pair
-        outputs use scalar, and explicit tile rejects them. Full-row topology
-        ignores this argument and retains its internal automatic selection.
+        Kernel dispatch selector. Batched compact topology-only rows support
+        explicit CUDA tile for wrapped and prewrapped PBC; direct partial
+        ``"auto"`` remains scalar. Explicit scalar or tile is honored for
+        supported full-row variants; ``auto`` resolves from the workload and
+        device. Geometry and pair outputs use scalar, and explicit tile rejects
+        them.
     pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
         Per-system, per-axis periodic boundary flags.  When supplied, axes
         marked False are left unwrapped during position wrapping.  When
@@ -1613,21 +1648,21 @@ def batch_naive_neighbor_matrix_pbc(
       ``inv_cell_buffer``) to eliminate per-call allocation; when omitted the
       launcher allocates fresh per call (batched callers do not share the
       single-system cache).
-    - Default calls dispatch internally:
+    - Topology-only and partial calls forward ``strategy`` to the helper.
+      Explicit scalar or tile is honored for supported full-row variants.
+      ``auto`` full-row calls dispatch internally:
 
       * On CPU, use the scalar 3D-launch kernels.
-      * On CUDA with ``wrap_positions=True``, use the tile-cooperative kernel
-        when the adaptive ``use_tiled`` heuristic favours it
-        (``256 <= avg_atoms_per_system < 6144`` and either
-        ``avg_atoms_per_system >= 2048`` or ``total_atoms <= 8192``);
-        otherwise fall back to the scalar 3D-launch kernel.
-      * When ``wrap_positions=False``, CUDA callers may explicitly request
-        ``strategy="tile"`` for topology-only output; ``strategy="auto"``
-        remains on the prewrapped scalar kernels.
-    - Topology-only tiled calls support both wrapped and prewrapped PBC when
-      explicitly requested on CUDA. Under ``strategy="auto"``, batched partial
-      and prewrapped calls use the scalar factory kernel. Geometry and
-      pair-function output kwargs also use the scalar factory kernel.
+      * On CUDA with ``wrap_positions=True``, ``auto`` selects the
+        tile-cooperative kernel for full-row topology.
+      * When ``wrap_positions=False``, ``auto`` selects the prewrapped scalar
+        kernel. Explicit tile is supported for topology-only partial rows;
+        full-row batched prewrapped tile is unsupported.
+    - Topology-only tiled calls support wrapped PBC for full rows and wrapped
+      or prewrapped PBC for partial rows when explicitly requested on CUDA.
+      Under ``strategy="auto"``, batched partial and full-row prewrapped calls
+      use the scalar factory kernel. Geometry and pair-function outputs also
+      use the scalar factory kernel.
 
     See Also
     --------
@@ -1692,6 +1727,8 @@ def batch_naive_neighbor_matrix_pbc(
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
             inv_cell_buffer=inv_cell_buffer,
+            reuse_inv_cell=reuse_inv_cell,
+            strategy=strategy,
         )
         return
     if rebuild_flags is not None:
@@ -1731,6 +1768,10 @@ def batch_naive_neighbor_matrix_pbc(
         pair_forces=pair_forces,
         batched=True,
         strategy=strategy,
+        positions_wrapped_buffer=positions_wrapped_buffer,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+        inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -1848,6 +1889,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for naive dual cutoff neighbor matrix construction with PBC.
 
@@ -1906,6 +1948,10 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    reuse_inv_cell : bool, default=False
+        Reuse ``inv_cell_buffer`` without recomputing it. The buffer must hold
+        the inverse of the unchanged cell; it is required when this flag is
+        True. By default, the inverse is recomputed on every wrapped call.
     pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
         Per-axis periodic boundary flags.  When supplied, axes marked False
         are left unwrapped during position wrapping.  When omitted, wrapping
@@ -1976,6 +2022,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -2111,6 +2158,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
     pbc: wp.array | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Core warp launcher for batched naive dual cutoff neighbor matrix construction with PBC.
 
@@ -2173,6 +2221,24 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
     pair_params : wp.array, optional
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
+    positions_wrapped_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
+        Caller-supplied scratch for wrapped positions (used when
+        ``wrap_positions=True``).  Optional — the launcher allocates when
+        omitted.
+    per_atom_cell_offsets_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
+        Caller-supplied scratch for per-atom cell offsets.
+    inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
+        Caller-supplied scratch for inverse cell matrices.
+    reuse_inv_cell : bool, default=False
+        Reuse ``inv_cell_buffer`` without recomputing it. The buffer must hold
+        the inverse of each unchanged cell; it is required when this flag is
+        True. By default, inverses are recomputed on every wrapped call.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system, per-axis periodic boundary flags.  When supplied, axes
+        marked False are left unwrapped during position wrapping.  When
+        omitted, wrapping uses the existing all-axis behavior.
+    positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
+        Deprecated aliases of the ``*_buffer`` kwargs above.
 
     Notes
     -----
@@ -2180,6 +2246,13 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     - Output arrays must be pre-allocated by caller.
     - When ``wrap_positions`` is True, positions are wrapped into the primary
       cell in a preprocessing step before the neighbor search kernel.
+    - The scratch buffers used for the wrap step
+      (``positions_wrapped_buffer``, ``per_atom_cell_offsets_buffer``,
+      ``inv_cell_buffer``) may be supplied by the caller to eliminate
+      per-call allocation; their contents are overwritten on every call.
+      When omitted the launcher allocates a fresh buffer for the call.
+    - The deprecated ``positions_wrapped``, ``per_atom_cell_offsets``, and
+      ``inv_cell`` kwargs alias their corresponding ``*_buffer`` arguments.
     - Dual-cutoff mode does not support pair outputs or
       target-row restriction; ``pair_fn`` / ``pair_params`` raise
       ``ValueError`` if provided.
@@ -2239,4 +2312,5 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
+        reuse_inv_cell=reuse_inv_cell,
     )

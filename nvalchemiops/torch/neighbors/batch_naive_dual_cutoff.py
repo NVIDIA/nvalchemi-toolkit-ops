@@ -32,6 +32,7 @@ from nvalchemiops.torch._warp_op_helpers import (
     register_noop_fake,
     scoped_torch_warp_stream,
 )
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
@@ -150,6 +151,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped_buffer: torch.Tensor | None = None,
     per_atom_cell_offsets_buffer: torch.Tensor | None = None,
     inv_cell_buffer: torch.Tensor | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Compute batch neighbor matrices with PBC using dual cutoffs.
 
@@ -266,6 +268,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions_wrapped_buffer=wp_positions_wrapped,
         per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
         inv_cell_buffer=wp_inv_cell,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -385,6 +388,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     positions_wrapped_buffer: torch.Tensor | None = None,
     per_atom_cell_offsets_buffer: torch.Tensor | None = None,
     inv_cell_buffer: torch.Tensor | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Selective batched naive dual cutoff PBC neighbor matrix custom op.
 
@@ -506,6 +510,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
         positions_wrapped_buffer=wp_positions_wrapped,
         per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
         inv_cell_buffer=wp_inv_cell,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -543,6 +548,8 @@ def batch_naive_neighbor_list_dual_cutoff(
     positions_wrapped_buffer: torch.Tensor | None = None,
     per_atom_cell_offsets_buffer: torch.Tensor | None = None,
     inv_cell_buffer: torch.Tensor | None = None,
+    *,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> (
     tuple[
         torch.Tensor,
@@ -727,6 +734,8 @@ def batch_naive_neighbor_list_dual_cutoff(
 
     if cell is not None:
         cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
+    if _fixed_cell_geometry is not None and _fixed_cell_geometry.inv_cell is not None:
+        inv_cell_buffer = _fixed_cell_geometry.inv_cell
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc.unsqueeze(0)
 
@@ -902,6 +911,10 @@ def batch_naive_neighbor_list_dual_cutoff(
                 positions_wrapped_buffer=positions_wrapped_buffer,
                 per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
                 inv_cell_buffer=inv_cell_buffer,
+                reuse_inv_cell=(
+                    _fixed_cell_geometry is not None
+                    and _fixed_cell_geometry.inv_cell is not None
+                ),
             )
         else:
             _batch_naive_neighbor_matrix_pbc_dual_cutoff(
@@ -927,6 +940,10 @@ def batch_naive_neighbor_list_dual_cutoff(
                 positions_wrapped_buffer=positions_wrapped_buffer,
                 per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
                 inv_cell_buffer=inv_cell_buffer,
+                reuse_inv_cell=(
+                    _fixed_cell_geometry is not None
+                    and _fixed_cell_geometry.inv_cell is not None
+                ),
             )
         if return_neighbor_list:
             neighbor_list1, neighbor_ptr1, unit_shifts1 = (
