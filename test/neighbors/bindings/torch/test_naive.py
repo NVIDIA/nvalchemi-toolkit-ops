@@ -648,6 +648,27 @@ class TestNaiveCorrectness:
                 strategy="scalar",
             )
 
+        matrix = torch.full((1, 4), 91, dtype=torch.int32, device=device)
+        counts = torch.full((1,), 73, dtype=torch.int32, device=device)
+        distances = torch.full((1, 4), 44.0, dtype=positions.dtype, device=device)
+        ignored_shifts = torch.full((1, 4, 3), 55, dtype=torch.int32, device="cpu")
+        with pytest.raises(ValueError, match="same device"):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=targets,
+                neighbor_matrix=matrix,
+                num_neighbors=counts,
+                neighbor_matrix_shifts=ignored_shifts,
+                neighbor_distances=distances,
+                return_distances=True,
+                strategy="scalar",
+            )
+        assert torch.all(matrix == 91)
+        assert torch.all(counts == 73)
+        assert torch.all(distances == 44.0)
+
     @pytest.mark.parametrize(
         ("dtype", "num_atoms", "expected_cuda_strategy"),
         [

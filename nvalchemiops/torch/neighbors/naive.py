@@ -50,6 +50,7 @@ from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors._naive_partial import (
     _pack_partial_outputs,
     _prepare_partial_outputs,
+    _validate_partial_output,
     _validate_partial_request,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
@@ -875,25 +876,6 @@ def _register_compiled_naive_pbc_pair_op(compiled: CompiledPairFn):
     return _compiled_naive_pbc_pair
 
 
-def _validate_output_buffer(
-    name: str,
-    tensor: torch.Tensor | None,
-    expected_shape: tuple[int, ...],
-    expected_dtype: torch.dtype | None = None,
-) -> None:
-    """Validate optional compact-row output buffers."""
-    if tensor is None:
-        return
-    if tuple(tensor.shape) != expected_shape:
-        raise ValueError(
-            f"{name} must have shape {expected_shape}; got {tuple(tensor.shape)}.",
-        )
-    if expected_dtype is not None and tensor.dtype != expected_dtype:
-        raise ValueError(
-            f"{name} dtype must be {expected_dtype}; got {tensor.dtype}.",
-        )
-
-
 @scoped_torch_warp_stream
 def _naive_pair_outputs_forward(
     positions: torch.Tensor,
@@ -1632,59 +1614,54 @@ def naive_neighbor_list(
             else positions.shape[0]
         )
         if target_indices is not None:
-            for name, tensor in (
-                ("neighbor_matrix", neighbor_matrix),
-                ("num_neighbors", num_neighbors),
-                ("neighbor_matrix_shifts", neighbor_matrix_shifts),
-                ("neighbor_distances", neighbor_distances),
-                ("neighbor_vectors", neighbor_vectors),
-                ("pair_energies", pair_energies),
-                ("pair_forces", pair_forces),
-            ):
-                if tensor is not None and tensor.device != positions.device:
-                    raise ValueError(f"{name} must be on the same device as positions.")
-            _validate_output_buffer(
+            _validate_partial_output(
                 "neighbor_matrix",
                 neighbor_matrix,
                 (num_rows, max_neighbors),
                 torch.int32,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "num_neighbors",
                 num_neighbors,
                 (num_rows,),
                 torch.int32,
+                positions.device,
             )
-            if pbc is not None:
-                _validate_output_buffer(
-                    "neighbor_matrix_shifts",
-                    neighbor_matrix_shifts,
-                    (num_rows, max_neighbors, 3),
-                    torch.int32,
-                )
-            _validate_output_buffer(
+            _validate_partial_output(
+                "neighbor_matrix_shifts",
+                neighbor_matrix_shifts,
+                (num_rows, max_neighbors, 3) if pbc is not None else None,
+                torch.int32 if pbc is not None else None,
+                positions.device,
+            )
+            _validate_partial_output(
                 "neighbor_distances",
                 neighbor_distances,
                 (num_rows, max_neighbors),
                 positions.dtype,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "neighbor_vectors",
                 neighbor_vectors,
                 (num_rows, max_neighbors, 3),
                 positions.dtype,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "pair_energies",
                 pair_energies,
                 (num_rows, max_neighbors),
                 positions.dtype,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "pair_forces",
                 pair_forces,
                 (num_rows, max_neighbors, 3),
                 positions.dtype,
+                positions.device,
             )
         if neighbor_matrix is None:
             neighbor_matrix = torch.full(

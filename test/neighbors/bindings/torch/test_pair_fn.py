@@ -667,6 +667,123 @@ def test_naive_pair_fn_target_indices_compact_rows(device):
     _check_target_pair_outputs(nm, nn, nv, nd, pe, pf, pp, target_indices)
 
 
+@pytest.mark.parametrize(
+    "buffer_name",
+    [
+        "neighbor_matrix",
+        "num_neighbors",
+        "neighbor_matrix_shifts",
+        "neighbor_distances",
+        "neighbor_vectors",
+        "pair_energies",
+        "pair_forces",
+    ],
+)
+@pytest.mark.parametrize("mismatch", ["shape", "dtype"])
+def test_naive_pair_fn_partial_geometry_buffers_validate_before_reset(
+    buffer_name, mismatch
+):
+    """Compact PBC geometry and callback buffers validate before any reset."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.2, 0.3],
+            [0.5, 0.2, 0.3],
+            [2.0, 0.2, 0.3],
+            [2.4, 0.2, 0.3],
+        ],
+        dtype=torch.float32,
+    )
+    targets = torch.tensor([2, 0], dtype=torch.int32)
+    cell = torch.eye(3, dtype=torch.float32).reshape(1, 3, 3) * 4.0
+    pbc = torch.ones((1, 3), dtype=torch.bool)
+    expected_shapes = {
+        "neighbor_matrix": (2, 4),
+        "num_neighbors": (2,),
+        "neighbor_matrix_shifts": (2, 4, 3),
+        "neighbor_distances": (2, 4),
+        "neighbor_vectors": (2, 4, 3),
+        "pair_energies": (2, 4),
+        "pair_forces": (2, 4, 3),
+    }
+    expected_dtypes = {
+        "neighbor_matrix": torch.int32,
+        "num_neighbors": torch.int32,
+        "neighbor_matrix_shifts": torch.int32,
+        "neighbor_distances": torch.float32,
+        "neighbor_vectors": torch.float32,
+        "pair_energies": torch.float32,
+        "pair_forces": torch.float32,
+    }
+    sentinels = {
+        "neighbor_matrix": 101,
+        "num_neighbors": 103,
+        "neighbor_matrix_shifts": 107,
+        "neighbor_distances": 109.25,
+        "neighbor_vectors": 113.25,
+        "pair_energies": 127.25,
+        "pair_forces": 131.25,
+    }
+    outputs = {
+        name: torch.full(
+            shape,
+            sentinels[name],
+            dtype=expected_dtypes[name],
+        )
+        for name, shape in expected_shapes.items()
+    }
+    if mismatch == "shape":
+        bad_shape = {
+            "neighbor_matrix": (2, 3),
+            "num_neighbors": (3,),
+            "neighbor_matrix_shifts": (2, 4, 2),
+            "neighbor_distances": (2, 3),
+            "neighbor_vectors": (2, 4, 2),
+            "pair_energies": (2, 3),
+            "pair_forces": (2, 4, 2),
+        }[buffer_name]
+        outputs[buffer_name] = torch.full(
+            bad_shape,
+            sentinels[buffer_name],
+            dtype=expected_dtypes[buffer_name],
+        )
+    else:
+        bad_dtype = (
+            torch.float64
+            if expected_dtypes[buffer_name] == torch.float32
+            else torch.int64
+        )
+        outputs[buffer_name] = torch.full(
+            expected_shapes[buffer_name],
+            sentinels[buffer_name],
+            dtype=bad_dtype,
+        )
+    before = {name: output.clone() for name, output in outputs.items()}
+
+    with pytest.raises(ValueError, match=buffer_name):
+        naive_neighbor_list(
+            positions,
+            0.75,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            target_indices=targets,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_matrix=outputs["neighbor_matrix"],
+            num_neighbors=outputs["num_neighbors"],
+            neighbor_matrix_shifts=outputs["neighbor_matrix_shifts"],
+            neighbor_distances=outputs["neighbor_distances"],
+            neighbor_vectors=outputs["neighbor_vectors"],
+            pair_fn=_sum_pair_fn,
+            pair_params=torch.ones((4, 1), dtype=torch.float32),
+            pair_energies=outputs["pair_energies"],
+            pair_forces=outputs["pair_forces"],
+        )
+
+    for name, output in outputs.items():
+        assert torch.equal(output, before[name]), name
+
+
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_naive_pair_fn_partial_tile_rejected() -> None:

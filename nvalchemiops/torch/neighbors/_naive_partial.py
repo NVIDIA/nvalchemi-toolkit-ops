@@ -94,18 +94,44 @@ def _validate_partial_request(
 def _validate_partial_output(
     name: str,
     tensor: torch.Tensor | None,
-    expected_shape: tuple[int, ...],
-    expected_dtype: torch.dtype,
+    expected_shape: tuple[int, ...] | None,
+    expected_dtype: torch.dtype | None,
     expected_device: torch.device,
 ) -> None:
-    """Validate an optional compact-row output buffer."""
+    """Validate one optional compact-row output buffer without modifying it.
+
+    Parameters
+    ----------
+    name : str
+        Public argument name used in any validation error.
+    tensor : torch.Tensor or None
+        Caller-provided output buffer; ``None`` is accepted for allocation by
+        the caller.
+    expected_shape : tuple of int or None
+        Required shape, or ``None`` when this route does not use the buffer's
+        shape.
+    expected_dtype : torch.dtype or None
+        Required dtype, or ``None`` when this route does not constrain dtype.
+    expected_device : torch.device
+        Device required for every supplied tensor.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If a supplied buffer violates any non-None shape or dtype requirement,
+        or resides on a different device.
+    """
     if tensor is None:
         return
-    if tuple(tensor.shape) != expected_shape:
+    if expected_shape is not None and tuple(tensor.shape) != expected_shape:
         raise ValueError(
             f"{name} must have shape {expected_shape}; got {tuple(tensor.shape)}.",
         )
-    if tensor.dtype != expected_dtype:
+    if expected_dtype is not None and tensor.dtype != expected_dtype:
         raise ValueError(f"{name} dtype must be {expected_dtype}; got {tensor.dtype}.")
     if tensor.device != expected_device:
         raise ValueError(
