@@ -1506,8 +1506,10 @@ def batch_naive_neighbor_list(
         ``"auto"`` keeps batched topology-only partial rows on the scalar
         kernel, while ``"scalar"`` is a deterministic opt-out and ``"tile"``
         explicitly selects the CUDA tiled kernel. Explicit tile supports
-        no-PBC, wrapped PBC, and prewrapped PBC compact rows. Explicit tile
-        rejects geometry and pair outputs; partial neighbor lists do not support
+        no-PBC, wrapped PBC, and prewrapped PBC compact rows. Full-row batched
+        PBC calls with ``wrap_positions=False`` reject tile; prewrapped tile
+        support is limited to compact topology-only rows. Explicit tile rejects
+        geometry and pair outputs; partial neighbor lists do not support
         ``rebuild_flags``. For compact partial rows, when neither result
         overflows capacity, scalar and tile stored ``(neighbor, shift)``
         multisets agree, although ordering may differ.

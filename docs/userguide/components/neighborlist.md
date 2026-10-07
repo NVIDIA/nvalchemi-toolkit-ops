@@ -2200,8 +2200,15 @@ does not support `target_indices`. On JAX, `cell_list` `target_indices` runs thr
 the `atom_centric` strategy (`pair_centric` plus `target_indices` is rejected;
 identical results are available via `atom_centric`).
 
-For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
-available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
+For the state-free `neighbor_list(...)` API, use `method="naive_tile"` to
+request tiled partial rows or `method="naive"` to use the direct naive family’s
+automatic strategy. `method=None` uses calibrated method selection. The
+`strategy` policy below applies to direct naive calls; prepared route resolution
+is described in {ref}`prepared_neighbor_lists`.
+
+For topology-only partial lists through the direct naive APIs, `strategy="tile"`
+is CUDA-only and is available in both PyTorch and JAX for no-PBC, wrapped PBC,
+and prewrapped PBC.
 For single-system CUDA calls with concrete placement, `strategy="auto"` selects
 tile at float64 `N >= 256` and float32 `N >= 1024`. Torch and the Warp
 launchers also use the `N >= 1024` threshold for float16; JAX supports float32

@@ -35,7 +35,39 @@ def _validate_partial_request(
     strategy: str,
     has_geometry_or_pair_outputs: bool,
 ) -> None:
-    """Validate a compact naive-neighbor request without touching outputs."""
+    """Validate compact naive request metadata before output preparation.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3)
+        Input positions defining the valid atom-index range and device.
+    target_indices : torch.Tensor, shape (R,), dtype=torch.int32
+        Requested compact source rows.
+    rebuild_flags : torch.Tensor or None
+        Selective-rebuild flags, which are unsupported for compact rows.
+    strategy : {"auto", "scalar", "tile"}
+        Requested execution strategy.
+    has_geometry_or_pair_outputs : bool
+        Whether the request asks for distances, vectors, or pair-callback output.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If row indices have invalid rank, dtype, device, or eager values, or if
+        CPU execution explicitly requests the CUDA tile strategy.
+    NotImplementedError
+        If selective rebuild is requested for compact rows, or tile execution
+        is requested with geometry or pair-callback outputs.
+
+    Notes
+    -----
+    This check does not allocate or reset output buffers. Eager calls check that
+    indices are in bounds; value inspection is skipped while compiling.
+    """
     if target_indices.ndim != 1 or target_indices.dtype != torch.int32:
         raise ValueError("target_indices must be a rank-one int32 tensor.")
     if target_indices.device != positions.device:
@@ -94,7 +126,50 @@ def _prepare_partial_outputs(
     num_neighbors: torch.Tensor | None,
     neighbor_matrix_shifts: torch.Tensor | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, int, int]:
-    """Validate, allocate, and reset compact topology output buffers."""
+    """Validate, allocate, and reset compact topology output buffers.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3)
+        Input positions defining output device and default padding value.
+    target_indices : torch.Tensor, shape (R,)
+        Requested compact source rows.
+    cutoff : float
+        Cutoff used to estimate capacity when no buffer or capacity is supplied.
+    pbc_enabled : bool
+        Whether periodic shift rows are required.
+    max_neighbors : int or None
+        Row capacity, inferred from a supplied matrix or the cutoff when absent.
+    fill_value : int or None
+        Matrix padding value; defaults to the total atom count.
+    neighbor_matrix, num_neighbors, neighbor_matrix_shifts : torch.Tensor or None
+        Optional caller-owned topology output buffers.
+
+    Returns
+    -------
+    neighbor_matrix : torch.Tensor, shape (R, M), dtype=int32
+        Validated or newly allocated matrix, reset to ``fill_value``.
+    num_neighbors : torch.Tensor, shape (R,), dtype=int32
+        Validated or newly allocated row counts, reset to zero.
+    neighbor_matrix_shifts : torch.Tensor or None
+        Validated or newly allocated zeroed shifts for PBC; ``None`` otherwise.
+    max_neighbors : int
+        Resolved matrix row capacity.
+    num_rows : int
+        Number of compact rows, including repeated target indices.
+
+    Raises
+    ------
+    ValueError
+        If a supplied matrix, count, or applicable PBC shift buffer has an
+        incompatible shape, dtype, or device.
+
+    Notes
+    -----
+    All applicable caller buffers are validated before any is reset. Matrix
+    padding and counts are then initialized in place; PBC shift buffers are
+    zeroed in place, while non-PBC calls return no shift buffer.
+    """
     num_rows = int(target_indices.shape[0])
     if max_neighbors is None and neighbor_matrix is not None:
         max_neighbors = int(neighbor_matrix.shape[1])
@@ -171,7 +246,33 @@ def _pack_partial_outputs(
     fill_value: int,
     return_neighbor_list: bool,
 ) -> tuple[torch.Tensor, ...]:
-    """Pack compact matrix outputs into the public matrix or COO contract."""
+    """Pack compact matrix outputs in the public matrix or COO layout.
+
+    Parameters
+    ----------
+    neighbor_matrix : torch.Tensor, shape (R, M)
+        Compact-row neighbor indices.
+    num_neighbors : torch.Tensor, shape (R,)
+        Raw neighbor count for each compact row.
+    neighbor_matrix_shifts : torch.Tensor or None, shape (R, M, 3)
+        Periodic shifts for each stored pair, when PBC is enabled.
+    fill_value : int
+        Padding value excluded from COO conversion.
+    return_neighbor_list : bool
+        Whether to convert the matrix to the public COO representation.
+
+    Returns
+    -------
+    tuple of torch.Tensor
+        Matrix format returns ``(matrix, counts)`` and includes shifts as a
+        third value when present. COO format returns ``(indices, pointer)``
+        and likewise appends shifts for PBC.
+
+    Notes
+    -----
+    Compact row order is preserved. COO source indices are compact row numbers,
+    not the original atom indices stored in ``target_indices``.
+    """
     if return_neighbor_list:
         if neighbor_matrix_shifts is None:
             neighbor_list, neighbor_ptr = _get_neighbor_list_from_neighbor_matrix(

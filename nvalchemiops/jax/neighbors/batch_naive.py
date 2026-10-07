@@ -523,6 +523,59 @@ def _batch_naive_pair_outputs_forward(
     When ``pair_fn`` is set, a ``pair_fn``-specialized kernel writes per-pair
     ``pair_energies`` / ``pair_forces`` which ride along in ``extra_outputs``
     (forward-only); see ``naive._naive_pair_outputs_forward``.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Concatenated positions for all systems.
+    cell, pbc : jax.Array or None
+        Per-system cell matrices and periodic-axis flags.
+    batch_idx_i32 : jax.Array, shape (N,)
+        System owner for each atom.
+    batch_ptr_i32 : jax.Array, shape (S + 1,)
+        System boundaries in the concatenated positions.
+    cutoff : float
+        Neighbor cutoff.
+    max_neighbors, fill_value : int
+        Fixed row capacity and matrix padding value.
+    max_shifts_per_system, max_atoms_per_system, num_systems : int
+        Static capacities and system count used by full-row kernels.
+    neighbor_matrix, neighbor_matrix_shifts, num_neighbors : jax.Array, optional
+        Topology operands. Compact rows follow ``target_indices`` order.
+    neighbor_vectors, neighbor_distances : jax.Array, optional
+        Geometry operands used by differentiable pair reconstruction.
+    shift_range_per_dimension, num_shifts_per_system : jax.Array, optional
+        Prepared per-system periodic-image metadata.
+    pair_fn : Warp function or None
+        Optional forward-only pair callback.
+    pair_params : jax.Array, optional
+        Per-atom parameters passed to ``pair_fn``.
+    target_indices : jax.Array, optional
+        Compact source rows, which may repeat atoms across systems.
+    half_fill : bool
+        Select the canonical half-list convention.
+    wrap_positions : bool
+        Whether to wrap positions in compact topology-only or fixed-cell
+        execution. Other PBC calls wrap positions on entry.
+    _fixed_cell_geometry : tuple or None
+        Prepared per-system fixed-cell cache metadata.
+    topology_only_partial : bool
+        Enable prewrapped handling for compact topology-only rows when
+        ``wrap_positions=False``.
+
+    Returns
+    -------
+    _NeighborForwardOutput
+        Geometry, active-pair reconstruction data, and topology/callback arrays
+        consumed by the public wrapper and autograd primitive.
+
+    Notes
+    -----
+    This closure uses scalar pair kernels for full and compact rows. With PBC,
+    wrapping uses the prepared fixed-cell inverse when available; otherwise it
+    computes an inverse from the current cell. Pair energies and forces remain
+    forward-only outputs. The public batched wrapper dispatches topology-only
+    tile calls separately.
     """
     positions = jax.lax.stop_gradient(positions)
     if cell is not None:
@@ -861,14 +914,19 @@ def batch_naive_neighbor_list(
     per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         Scratch buffer for per-atom wrapping offsets.
     inv_cell_buffer : jax.Array, shape (num_systems, 3, 3), dtype matching cell, optional
-        Precomputed inverse-cell buffer for wrapped PBC calls.
+        Inverse-cell buffer for wrapped PBC calls. Default wrapped tile calls
+        treat this as inverse scratch and recompute from the current cell;
+        prepared fixed-cell tile calls reuse their cached inverse. Full-row
+        scalar topology calls use the supplied precomputed inverse.
     strategy : {"auto", "scalar", "tile"}, default="auto"
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
         CPU device raises ``ValueError``. Topology-only compact
         ``target_indices`` rows support no-PBC, wrapped PBC, and prewrapped
-        PBC. ``"auto"`` keeps batched partial rows on scalar; ``"scalar"`` is
+        PBC. Full-row batched PBC calls with ``wrap_positions=False`` reject
+        tile; prewrapped tile support is limited to compact topology-only rows.
+        ``"auto"`` keeps batched partial rows on scalar; ``"scalar"`` is
         a deterministic opt-out. Explicit tile rejects geometry and pair
         outputs; partial neighbor lists do not support ``rebuild_flags``. For
         compact partial rows, when neither result overflows capacity, scalar

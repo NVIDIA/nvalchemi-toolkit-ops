@@ -1369,7 +1369,7 @@ def naive_neighbor_matrix_pbc(
     per_atom_cell_offsets_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
         Caller-supplied scratch buffer for per-atom cell offsets
         (only used when ``wrap_positions=True``).
-    inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
+    inv_cell_buffer : wp.array, shape (1,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
     reuse_inv_cell : bool, default=False

@@ -264,14 +264,13 @@ def neighbor_list(
             use ``len(target_indices)`` compact rows; in COO output the first
             row holds compact row ids. Supported by naive and cell-list methods;
             not by cluster_tile. Repeated and empty valid targets are supported.
-            Topology-only naive partial calls may use CUDA ``strategy="tile"``
-            explicitly; single-system CUDA ``strategy="auto"`` selects tile at
-            float64 ``N >= 256`` and float16/float32 ``N >= 1024``. Batched
-            partial auto and CPU auto remain scalar, and explicit tile rejects
-            CPU. Distances, vectors, and pair-function
-            outputs are scalar-only and reject explicit tile. Eager calls reject
-            out-of-bounds indices; under ``torch.compile`` callers must
-            prevalidate them.
+            Topology-only naive partial calls may use CUDA ``method="naive_tile"``
+            explicitly. ``method="naive"`` lets the direct naive family choose its
+            strategy automatically; ``method=None`` uses calibrated method
+            selection. Explicit tile rejects CPU. Distances, vectors, and
+            pair-function outputs are scalar-only and reject explicit tile.
+            Eager calls reject out-of-bounds indices; under ``torch.compile``
+            callers must prevalidate them.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|`` in matrix layout
             ``(num_rows, max_neighbors)``, where ``num_rows`` is

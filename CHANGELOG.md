@@ -69,9 +69,9 @@
 
 - JAX and Torch naive neighbor APIs support CUDA-only tiled topology-only
   `target_indices` rows. Matrix and COO central rows are compact: row `r`
-  corresponds to `target_indices[r]`. For single-system CUDA calls with
-  concrete placement, `auto` selects tile at float64 `N >= 256` and float32
-  `N >= 1024`. Torch and the Warp launchers also use the `N >= 1024`
+  corresponds to `target_indices[r]`. For direct single-system CUDA naive
+  calls with concrete placement, `auto` selects tile at float64 `N >= 256` and
+  float32 `N >= 1024`. Torch and the Warp launchers also use the `N >= 1024`
   threshold for float16; JAX supports float32 and float64. Under `jax.jit`,
   tracer placement may be unavailable during
   Python tracing, so `auto` may conservatively remain scalar above those

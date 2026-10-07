@@ -286,14 +286,13 @@ def neighbor_list(
         target_indices : jax.Array, optional
             Select central atoms for a compact partial neighbor list. Repeated
             and empty valid targets are supported. Topology-only naive partial
-            calls may use CUDA ``strategy="tile"`` explicitly. For
-            concrete-placement single-system CUDA arrays, topology-only partial
-            ``"auto"`` selects tile at float64 ``N >= 256`` and float32
-            ``N >= 1024``. CPU auto and batched partial auto
-            remain scalar, and explicit tile rejects CPU.
-            Distances, vectors, and pair-function outputs are scalar-only and
-            reject explicit tile. Eager calls reject out-of-bounds indices;
-            under ``jax.jit`` callers must prevalidate them.
+            calls may use CUDA ``method="naive_tile"`` explicitly.
+            ``method="naive"`` lets the direct naive family choose its strategy
+            automatically; ``method=None`` uses calibrated method selection.
+            Explicit tile rejects CPU. Distances, vectors, and pair-function
+            outputs are scalar-only and reject explicit tile. Eager calls reject
+            out-of-bounds indices; under ``jax.jit`` callers must prevalidate
+            them.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
             positions (and cell). Matrix layout is

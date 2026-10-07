@@ -1228,6 +1228,58 @@ def _naive_pair_outputs_forward(
     along *outside* the ``custom_vjp`` primitive: ``positions`` is detached above, so
     they are autograd-constants (forward-only / zero cotangent), while
     ``distances`` / ``vectors`` are re-attached on the original positions.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Current atomic positions.
+    cell, pbc : jax.Array or None
+        Cell geometry and per-axis periodicity. ``cell`` is required when
+        ``pbc`` is supplied.
+    cutoff : float
+        Neighbor cutoff.
+    max_neighbors, fill_value : int
+        Fixed row capacity and padding value for the neighbor matrix.
+    neighbor_matrix, neighbor_matrix_shifts, num_neighbors : jax.Array, optional
+        Caller-provided topology operands. Compact rows follow
+        ``target_indices`` order.
+    neighbor_vectors, neighbor_distances : jax.Array, optional
+        Geometry output operands used by differentiable reconstruction.
+    shift_range_per_dimension, num_shifts_per_system : jax.Array, optional
+        Prepared periodic-image metadata.
+    max_shifts_per_system : int, optional
+        Fixed periodic-image capacity.
+    pair_fn : Warp function or None
+        Optional forward-only pair callback.
+    pair_params : jax.Array, optional
+        Per-atom parameters passed to ``pair_fn``.
+    target_indices : jax.Array, optional
+        Compact source rows; repeated indices produce repeated output rows.
+    half_fill : bool
+        Select the canonical half-list convention.
+    strategy : {"scalar", "tile"}
+        Naive kernel strategy. Tile is used for topology-only compact rows.
+    wrap_positions : bool
+        Whether the callback wraps live positions before its tile search.
+    graph_mode : {"none", "warp"}
+        Warp callback mode for supported full-row routes.
+    inv_cell, positions_wrapped, per_atom_cell_offsets : jax.Array, optional
+        Resolved inverse and wrapping scratch operands for wrapped execution.
+    _fixed_cell_geometry : tuple or None
+        Prepared fixed-cell cache metadata used to select a readonly inverse.
+
+    Returns
+    -------
+    _NeighborForwardOutput
+        Geometry, active-pair reconstruction data, and topology/callback arrays
+        consumed by the public wrapper and autograd primitive.
+
+    Notes
+    -----
+    Compact topology-only tile execution skips residual pair-index construction.
+    Wrapped tile execution receives validated scratch operands; it reuses the
+    prepared inverse for fixed-cell geometry and computes from the current cell
+    in the default mode. Pair energies and forces remain forward-only outputs.
     """
     positions = jax.lax.stop_gradient(positions)
     if cell is not None:
@@ -1723,7 +1775,11 @@ def naive_neighbor_list(
         overflows capacity, scalar and tile stored ``(neighbor, shift)``
         multisets agree, although ordering may differ.
     inv_cell_buffer : jax.Array, shape (1, 3, 3), dtype matching positions, optional
-        Precomputed inverse-cell buffer used by wrapped PBC calls.
+        Inverse-cell buffer for wrapped PBC calls. Default wrapped tile calls
+        treat this as inverse scratch and recompute from the current cell;
+        prepared fixed-cell tile calls reuse their cached inverse. Full-row
+        scalar topology calls and supported topology-only Warp replay calls use
+        the supplied precomputed inverse.
     positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matching positions, optional
         Scratch buffer written by the position-wrapping kernel.
     per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
