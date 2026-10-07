@@ -2230,13 +2230,8 @@ def cell_list(
         # Caller-provided caches are assumed to have been sized with the
         # default public estimate policy.
         cell_list_min_cells = 4
-        if _fixed_cell_geometry is None:
-            cells_per_dimension.zero_()
-        atom_periodic_shifts.zero_()
-        atom_to_cell_mapping.zero_()
-        atoms_per_cell_count.zero_()
-        cell_atom_start_indices.zero_()
-        cell_atom_list.zero_()
+        # Dynamic builds rewrite the grid; fixed builds read it. Both build
+        # ops rewrite per-atom outputs and initialize occupancy before launch.
         cell_list_cache = (
             cells_per_dimension,
             neighbor_search_radius,
