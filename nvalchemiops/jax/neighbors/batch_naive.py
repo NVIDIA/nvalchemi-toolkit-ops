@@ -34,7 +34,10 @@ from nvalchemiops.jax.neighbors._dispatch import (
     _is_jax_cpu_array,
     _jax_array_device_kind,
 )
-from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
+from nvalchemiops.jax.neighbors._registration import (
+    _lazy_cell_inverse_kernel,
+    _lazy_naive_kernel,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
@@ -59,6 +62,120 @@ from nvalchemiops.neighbors.neighbor_utils import (
 
 # Direct jax_kernel registrations are constructed lazily. Tile callables and
 # wrap-position kernels remain eager because they are not factory direct wrappers.
+_CELL_INVERSE_REGISTRATION = _lazy_cell_inverse_kernel()
+
+
+def _prepare_wrapped_tile_operands(
+    positions: jax.Array,
+    cell: jax.Array,
+    *,
+    inv_cell_buffer: jax.Array | None,
+    positions_wrapped_buffer: jax.Array | None,
+    per_atom_cell_offsets_buffer: jax.Array | None,
+    fixed_cell_geometry: tuple[jax.Array | None, ...] | None,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Validate and prepare wrapped-PBC tile operands for a batch.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Concatenated positions whose wrapped coordinates and offsets are needed.
+    cell : jax.Array, shape (S, 3, 3)
+        Runtime cells used to compute inverses when no fixed cache is present.
+    inv_cell_buffer : jax.Array, shape matching ``cell``, optional
+        Caller-supplied inverse scratch with dtype matching ``positions`` for
+        the default-cell path.
+    positions_wrapped_buffer : jax.Array, shape (N, 3), optional
+        Caller-supplied wrapped-position output operand with dtype matching
+        ``positions``.
+    per_atom_cell_offsets_buffer : jax.Array, shape (N, 3), dtype=int32, optional
+        Caller-supplied integer offset output operand.
+    fixed_cell_geometry : tuple or None
+        Prepared per-system fixed-cell metadata. Its first element is the cached
+        inverse array when that cache is present.
+
+    Returns
+    -------
+    inverse_cells : jax.Array, shape matching ``cell``
+        Per-system inverse operands for the batched tile callback. Cached
+        fixed-cell inverses are returned read-only; otherwise these are the
+        supplied or allocated inverse scratch arrays.
+    wrapped_positions : jax.Array, shape (N, 3)
+        Supplied or allocated per-atom position scratch, with dtype matching
+        ``positions``.
+    cell_offsets : jax.Array, shape (N, 3), dtype=int32
+        Supplied or allocated per-atom wrapping-offset scratch.
+
+    Raises
+    ------
+    ValueError
+        If a supplied scratch buffer has an incompatible shape or dtype.
+
+    Notes
+    -----
+    Cached fixed-cell inverses are reused directly. Otherwise, the registered
+    Warp inverse kernel computes each current system cell's inverse into the
+    supplied buffer or newly allocated scratch. Position wrapping and offsets
+    remain per atom and are returned as callback operands for every execution.
+    """
+    if inv_cell_buffer is not None:
+        if tuple(inv_cell_buffer.shape) != tuple(cell.shape):
+            raise ValueError(
+                f"inv_cell_buffer must have shape {tuple(cell.shape)}; "
+                f"got {tuple(inv_cell_buffer.shape)}."
+            )
+        if inv_cell_buffer.dtype != positions.dtype:
+            raise ValueError(
+                f"inv_cell_buffer dtype must match positions dtype "
+                f"({positions.dtype}); got {inv_cell_buffer.dtype}."
+            )
+    if positions_wrapped_buffer is not None:
+        expected_shape = (positions.shape[0], 3)
+        if tuple(positions_wrapped_buffer.shape) != expected_shape:
+            raise ValueError(
+                f"positions_wrapped_buffer must have shape {expected_shape}; "
+                f"got {tuple(positions_wrapped_buffer.shape)}."
+            )
+        if positions_wrapped_buffer.dtype != positions.dtype:
+            raise ValueError(
+                f"positions_wrapped_buffer dtype must match positions dtype "
+                f"({positions.dtype}); got {positions_wrapped_buffer.dtype}."
+            )
+    if per_atom_cell_offsets_buffer is not None:
+        expected_shape = (positions.shape[0], 3)
+        if tuple(per_atom_cell_offsets_buffer.shape) != expected_shape:
+            raise ValueError(
+                f"per_atom_cell_offsets_buffer must have shape {expected_shape}; "
+                f"got {tuple(per_atom_cell_offsets_buffer.shape)}."
+            )
+        if per_atom_cell_offsets_buffer.dtype != jnp.int32:
+            raise ValueError(
+                "per_atom_cell_offsets_buffer dtype must be int32; "
+                f"got {per_atom_cell_offsets_buffer.dtype}."
+            )
+    fixed_inverse = None if fixed_cell_geometry is None else fixed_cell_geometry[0]
+    if fixed_inverse is not None:
+        inverse = fixed_inverse
+    else:
+        inverse = (
+            inv_cell_buffer if inv_cell_buffer is not None else jnp.empty_like(cell)
+        )
+        (inverse,) = _CELL_INVERSE_REGISTRATION[positions.dtype](
+            cell,
+            inverse,
+            launch_dims=(cell.shape[0],),
+        )
+    positions_wrapped = (
+        positions_wrapped_buffer
+        if positions_wrapped_buffer is not None
+        else jnp.empty_like(positions)
+    )
+    per_atom_cell_offsets = (
+        per_atom_cell_offsets_buffer
+        if per_atom_cell_offsets_buffer is not None
+        else jnp.empty((positions.shape[0], 3), dtype=jnp.int32)
+    )
+    return inverse, positions_wrapped, per_atom_cell_offsets
 
 
 _DIRECT_BATCH_NAIVE_KERNELS = {
@@ -273,13 +390,14 @@ def _batch_naive_tile_pbc_wrapped_f32(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
+    positions_wrapped: wp.array(dtype=wp.vec3f),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
     cutoff: wp.float32,
     max_shifts_per_system: wp.int32,
     max_atoms_per_system: wp.int32,
     half_fill: wp.bool,
     partial: wp.bool,
     inv_cell: wp.array(dtype=wp.mat33f),
-    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -302,8 +420,10 @@ def _batch_naive_tile_pbc_wrapped_f32(
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
-        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
-        reuse_inv_cell=bool(reuse_inv_cell),
+        positions_wrapped_buffer=positions_wrapped,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+        inv_cell_buffer=inv_cell,
+        reuse_inv_cell=True,
     )
 
 
@@ -319,13 +439,14 @@ def _batch_naive_tile_pbc_wrapped_f64(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
+    positions_wrapped: wp.array(dtype=wp.vec3d),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
     cutoff: wp.float64,
     max_shifts_per_system: wp.int32,
     max_atoms_per_system: wp.int32,
     half_fill: wp.bool,
     partial: wp.bool,
     inv_cell: wp.array(dtype=wp.mat33d),
-    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -348,8 +469,10 @@ def _batch_naive_tile_pbc_wrapped_f64(
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
-        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
-        reuse_inv_cell=bool(reuse_inv_cell),
+        positions_wrapped_buffer=positions_wrapped,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+        inv_cell_buffer=inv_cell,
+        reuse_inv_cell=True,
     )
 
 
@@ -444,6 +567,11 @@ _BATCH_NAIVE_TILE_PBC_IN_OUT_ARGS = (
     "neighbor_matrix_shifts",
     "num_neighbors",
 )
+_BATCH_NAIVE_TILE_PBC_WRAPPED_IN_OUT_ARGS = (
+    *_BATCH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+    "positions_wrapped",
+    "per_atom_cell_offsets",
+)
 _BATCH_NAIVE_TILE_SPECS = {
     (False, False): {
         "num_outputs": 2,
@@ -452,8 +580,8 @@ _BATCH_NAIVE_TILE_SPECS = {
         jnp.dtype(jnp.float64): _batch_naive_tile_no_pbc_f64,
     },
     (True, True): {
-        "num_outputs": 3,
-        "in_out_argnames": _BATCH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+        "num_outputs": 5,
+        "in_out_argnames": _BATCH_NAIVE_TILE_PBC_WRAPPED_IN_OUT_ARGS,
         jnp.dtype(jnp.float32): _batch_naive_tile_pbc_wrapped_f32,
         jnp.dtype(jnp.float64): _batch_naive_tile_pbc_wrapped_f64,
     },
@@ -1591,16 +1719,19 @@ def batch_naive_neighbor_list(
                 tile_callable = _BATCH_NAIVE_TILE_CALLABLES[
                     (True, True, positions.dtype)
                 ]
-                reuse_inverse = (
-                    _fixed_cell_geometry is not None
-                    and _fixed_cell_geometry[0] is not None
+                (
+                    inverse_arg,
+                    positions_wrapped_work,
+                    offsets_work,
+                ) = _prepare_wrapped_tile_operands(
+                    positions,
+                    cell,
+                    inv_cell_buffer=inv_cell_buffer,
+                    positions_wrapped_buffer=positions_wrapped_buffer,
+                    per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+                    fixed_cell_geometry=_fixed_cell_geometry,
                 )
-                inverse_arg = (
-                    _fixed_cell_geometry[0]
-                    if reuse_inverse
-                    else jnp.zeros((0, 3, 3), dtype=cell.dtype)
-                )
-                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
+                tile_outs = tile_callable(
                     positions,
                     cell,
                     pbc,
@@ -1612,6 +1743,8 @@ def batch_naive_neighbor_list(
                     neighbor_matrix,
                     neighbor_matrix_shifts,
                     num_neighbors,
+                    positions_wrapped_work,
+                    offsets_work,
                     cutoff_static,
                     int(max_shifts_per_system),
                     0
@@ -1620,8 +1753,8 @@ def batch_naive_neighbor_list(
                     half_fill,
                     partial,
                     inverse_arg,
-                    reuse_inverse,
                 )
+                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_outs[:3]
             else:
                 tile_callable = _BATCH_NAIVE_TILE_CALLABLES[
                     (True, False, positions.dtype)
@@ -1665,7 +1798,7 @@ def batch_naive_neighbor_list(
                 empty_num_shifts,
                 batch_idx_i32,
                 batch_ptr_i32,
-                target_indices if partial else empty_target_indices,
+                empty_target_indices,
                 neighbor_matrix,
                 empty_shifts,
                 num_neighbors,
@@ -1678,7 +1811,7 @@ def batch_naive_neighbor_list(
                 empty_energies,
                 empty_forces,
                 rf,
-                launch_dims=(1, 1, num_rows if partial else total_atoms),
+                launch_dims=(1, 1, total_atoms),
             )
         else:
             neighbor_matrix, num_neighbors = _DIRECT_BATCH_NAIVE_KERNELS[
@@ -1693,7 +1826,7 @@ def batch_naive_neighbor_list(
                 empty_num_shifts,
                 batch_idx_i32,
                 batch_ptr_i32,
-                target_indices if partial else empty_target_indices,
+                empty_target_indices,
                 neighbor_matrix,
                 empty_shifts,
                 num_neighbors,
@@ -1706,7 +1839,7 @@ def batch_naive_neighbor_list(
                 empty_energies,
                 empty_forces,
                 empty_rebuild_flags,
-                launch_dims=(1, 1, num_rows if partial else total_atoms),
+                launch_dims=(1, 1, total_atoms),
             )
     else:
         if cell.dtype != positions.dtype:
@@ -1768,7 +1901,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        target_indices if partial else empty_target_indices,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1782,9 +1915,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         rf,
                         launch_dims=(
-                            1 if partial else num_systems,
+                            num_systems,
                             max_shifts_per_system,
-                            num_rows if partial else max_atoms_per_system,
+                            max_atoms_per_system,
                         ),
                     )
                 )
@@ -1802,7 +1935,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        target_indices if partial else empty_target_indices,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1816,9 +1949,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         empty_rebuild_flags,
                         launch_dims=(
-                            1 if partial else num_systems,
+                            num_systems,
                             max_shifts_per_system,
-                            num_rows if partial else max_atoms_per_system,
+                            max_atoms_per_system,
                         ),
                     )
                 )
@@ -1842,7 +1975,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        target_indices if partial else empty_target_indices,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1856,9 +1989,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         rf,
                         launch_dims=(
-                            1 if partial else num_systems,
+                            num_systems,
                             max_shifts_per_system,
-                            num_rows if partial else max_atoms_per_system,
+                            max_atoms_per_system,
                         ),
                     )
                 )
@@ -1876,7 +2009,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        target_indices if partial else empty_target_indices,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1890,9 +2023,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         empty_rebuild_flags,
                         launch_dims=(
-                            1 if partial else num_systems,
+                            num_systems,
                             max_shifts_per_system,
-                            num_rows if partial else max_atoms_per_system,
+                            max_atoms_per_system,
                         ),
                     )
                 )

@@ -122,6 +122,54 @@ def test_fixed_coo_retained_selective_rows_keep_aligned_raw_counts():
     assert bool(metadata_valid)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "buffer_name",
+    [
+        "inv_cell_buffer",
+        "positions_wrapped_buffer",
+        "per_atom_cell_offsets_buffer",
+    ],
+)
+@pytest.mark.parametrize("mismatch", ["shape", "dtype"])
+def test_wrapped_partial_tile_validates_supplied_scratch(buffer_name, mismatch):
+    """Wrapped compact tile rejects malformed caller scratch before launch."""
+    device = jax.devices("gpu")[0]
+    positions = jax.device_put(
+        jnp.array([[0.1, 0.1, 0.1], [0.6, 0.1, 0.1]], dtype=jnp.float32),
+        device,
+    )
+    cell = jax.device_put(jnp.eye(3, dtype=jnp.float32)[None] * 4.0, device)
+    pbc = jax.device_put(jnp.ones((1, 3), dtype=jnp.bool_), device)
+    targets = jax.device_put(jnp.array([0], dtype=jnp.int32), device)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+    expected_shape, expected_dtype = {
+        "inv_cell_buffer": ((1, 3, 3), jnp.float32),
+        "positions_wrapped_buffer": ((2, 3), jnp.float32),
+        "per_atom_cell_offsets_buffer": ((2, 3), jnp.int32),
+    }[buffer_name]
+    bad_shape = expected_shape[:-1] + (expected_shape[-1] + 1,)
+    scratch = jnp.zeros(
+        bad_shape if mismatch == "shape" else expected_shape,
+        dtype=(jnp.bool_ if mismatch == "dtype" else expected_dtype),
+    )
+
+    with pytest.raises(ValueError, match=buffer_name):
+        naive_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            target_indices=targets,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=int(max_shifts),
+            strategy="tile",
+            **{buffer_name: scratch},
+        )
+
+
 class TestNaiveNeighborList:
     """Test naive_neighbor_list function."""
 
@@ -700,13 +748,14 @@ class TestNaiveNeighborList:
             map(tuple, np.asarray(scalar_list).T.tolist())
         )
 
-    def test_target_indices_tile_pbc_jit_matches_scalar(self):
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_target_indices_tile_pbc_jit_matches_scalar(self, dtype):
         """JIT-compiled tiled partial rows match scalar PBC topology and shifts."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0], [5.0, 0.0, 0.0]],
-            dtype=jnp.float32,
+            dtype=dtype,
         )
-        cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
+        cell = jnp.eye(3, dtype=dtype)[None, :, :] * 10.0
         pbc = jnp.array([[True, True, True]])
         target_indices = jnp.array([0, 2], dtype=jnp.int32)
         shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
@@ -730,6 +779,31 @@ class TestNaiveNeighborList:
         scalar_nm, scalar_nn, scalar_shifts = _run("scalar")
         tile_nm, tile_nn, tile_shifts = _run("tile")
 
+        @jax.jit
+        def _run_with_scratch(pos, inverse, wrapped, offsets):
+            return naive_neighbor_list(
+                pos,
+                1.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                target_indices=target_indices,
+                inv_cell_buffer=inverse,
+                positions_wrapped_buffer=wrapped,
+                per_atom_cell_offsets_buffer=offsets,
+                strategy="tile",
+            )
+
+        tile_scratch_outputs = _run_with_scratch(
+            positions,
+            jnp.full((1, 3, 3), 99.0, dtype=dtype),
+            jnp.empty_like(positions),
+            jnp.empty((positions.shape[0], 3), dtype=jnp.int32),
+        )
+
         np.testing.assert_array_equal(np.asarray(tile_nn), np.asarray(scalar_nn))
         for row, count in enumerate(np.asarray(scalar_nn)):
             scalar_pairs = sorted(
@@ -747,6 +821,14 @@ class TestNaiveNeighborList:
                 )
             )
             assert tile_pairs == scalar_pairs
+            scratch_pairs = sorted(
+                zip(
+                    np.asarray(tile_scratch_outputs[0][row, :count]).tolist(),
+                    np.asarray(tile_scratch_outputs[2][row, :count]).tolist(),
+                    strict=True,
+                )
+            )
+            assert scratch_pairs == scalar_pairs
 
     def test_target_indices_scalar_pbc_wraps_positions_like_tile(self):
         """Partial scalar PBC preserves tiled topology for unwrapped coordinates."""

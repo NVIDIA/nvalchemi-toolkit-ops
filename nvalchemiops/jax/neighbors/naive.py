@@ -34,7 +34,10 @@ from nvalchemiops.jax.neighbors._autograd import (
 from nvalchemiops.jax.neighbors._dispatch import (
     _jax_array_device_kind,
 )
-from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
+from nvalchemiops.jax.neighbors._registration import (
+    _lazy_cell_inverse_kernel,
+    _lazy_naive_kernel,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
@@ -64,6 +67,119 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
+_CELL_INVERSE_REGISTRATION = _lazy_cell_inverse_kernel()
+
+
+def _prepare_wrapped_tile_operands(
+    positions: jax.Array,
+    cell: jax.Array,
+    *,
+    inv_cell_buffer: jax.Array | None,
+    positions_wrapped_buffer: jax.Array | None,
+    per_atom_cell_offsets_buffer: jax.Array | None,
+    fixed_cell_geometry: tuple[jax.Array | None, ...] | None,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Validate and prepare wrapped-PBC tile operands for one system.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Positions whose wrapped coordinates and cell offsets are needed.
+    cell : jax.Array, shape (1, 3, 3)
+        Runtime cell used to compute an inverse when no fixed inverse is cached.
+    inv_cell_buffer : jax.Array, shape matching ``cell``, optional
+        Caller-supplied inverse scratch with dtype matching ``positions`` for
+        the default-cell path.
+    positions_wrapped_buffer : jax.Array, shape (N, 3), optional
+        Caller-supplied wrapped-position output operand with dtype matching
+        ``positions``.
+    per_atom_cell_offsets_buffer : jax.Array, shape (N, 3), dtype=int32, optional
+        Caller-supplied integer offset output operand.
+    fixed_cell_geometry : tuple or None
+        Prepared fixed-cell metadata. Its first element is the cached inverse
+        when that cache is present.
+
+    Returns
+    -------
+    inverse_cell : jax.Array, shape matching ``cell``
+        Warp-precision inverse for the tile callback. A prepared cached inverse
+        is returned read-only; otherwise this is the supplied or allocated
+        inverse scratch.
+    wrapped_positions : jax.Array, shape (N, 3)
+        Supplied or allocated position scratch, with dtype matching ``positions``.
+    cell_offsets : jax.Array, shape (N, 3), dtype=int32
+        Supplied or allocated per-atom wrapping-offset scratch.
+
+    Raises
+    ------
+    ValueError
+        If a supplied scratch buffer has an incompatible shape or dtype.
+
+    Notes
+    -----
+    A cached fixed-cell inverse is reused directly. Otherwise, the registered
+    Warp inverse kernel computes the inverse of the current cell into the
+    supplied buffer or newly allocated scratch. Wrapped positions and offsets
+    are returned as callback operands so each execution uses current positions.
+    """
+    if inv_cell_buffer is not None:
+        if tuple(inv_cell_buffer.shape) != tuple(cell.shape):
+            raise ValueError(
+                f"inv_cell_buffer must have shape {tuple(cell.shape)}; "
+                f"got {tuple(inv_cell_buffer.shape)}."
+            )
+        if inv_cell_buffer.dtype != positions.dtype:
+            raise ValueError(
+                f"inv_cell_buffer dtype must match positions dtype "
+                f"({positions.dtype}); got {inv_cell_buffer.dtype}."
+            )
+    if positions_wrapped_buffer is not None:
+        expected_shape = (positions.shape[0], 3)
+        if tuple(positions_wrapped_buffer.shape) != expected_shape:
+            raise ValueError(
+                f"positions_wrapped_buffer must have shape {expected_shape}; "
+                f"got {tuple(positions_wrapped_buffer.shape)}."
+            )
+        if positions_wrapped_buffer.dtype != positions.dtype:
+            raise ValueError(
+                f"positions_wrapped_buffer dtype must match positions dtype "
+                f"({positions.dtype}); got {positions_wrapped_buffer.dtype}."
+            )
+    if per_atom_cell_offsets_buffer is not None:
+        expected_shape = (positions.shape[0], 3)
+        if tuple(per_atom_cell_offsets_buffer.shape) != expected_shape:
+            raise ValueError(
+                f"per_atom_cell_offsets_buffer must have shape {expected_shape}; "
+                f"got {tuple(per_atom_cell_offsets_buffer.shape)}."
+            )
+        if per_atom_cell_offsets_buffer.dtype != jnp.int32:
+            raise ValueError(
+                "per_atom_cell_offsets_buffer dtype must be int32; "
+                f"got {per_atom_cell_offsets_buffer.dtype}."
+            )
+    fixed_inverse = None if fixed_cell_geometry is None else fixed_cell_geometry[0]
+    if fixed_inverse is not None:
+        inverse = fixed_inverse
+    else:
+        inverse = (
+            inv_cell_buffer if inv_cell_buffer is not None else jnp.empty_like(cell)
+        )
+        (inverse,) = _CELL_INVERSE_REGISTRATION[positions.dtype](
+            cell,
+            inverse,
+            launch_dims=(1,),
+        )
+    positions_wrapped = (
+        positions_wrapped_buffer
+        if positions_wrapped_buffer is not None
+        else jnp.empty_like(positions)
+    )
+    per_atom_cell_offsets = (
+        per_atom_cell_offsets_buffer
+        if per_atom_cell_offsets_buffer is not None
+        else jnp.empty((positions.shape[0], 3), dtype=jnp.int32)
+    )
+    return inverse, positions_wrapped, per_atom_cell_offsets
 
 
 (
@@ -1067,11 +1183,12 @@ def _graph_naive_tile_pbc_wrapped_f32(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
+    positions_wrapped: wp.array(dtype=wp.vec3f),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
     cutoff: wp.float32,
     num_shifts: wp.int32,
     half_fill: wp.bool,
     partial: wp.bool,
-    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1090,8 +1207,10 @@ def _graph_naive_tile_pbc_wrapped_f32(
         wrap_positions=True,
         target_indices=target_indices if bool(partial) else None,
         strategy="tile",
-        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
-        reuse_inv_cell=bool(reuse_inv_cell),
+        positions_wrapped_buffer=positions_wrapped,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+        inv_cell_buffer=inv_cell,
+        reuse_inv_cell=True,
     )
 
 
@@ -1105,11 +1224,12 @@ def _graph_naive_tile_pbc_wrapped_f64(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
+    positions_wrapped: wp.array(dtype=wp.vec3d),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
     cutoff: wp.float64,
     num_shifts: wp.int32,
     half_fill: wp.bool,
     partial: wp.bool,
-    reuse_inv_cell: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1128,8 +1248,10 @@ def _graph_naive_tile_pbc_wrapped_f64(
         wrap_positions=True,
         target_indices=target_indices if bool(partial) else None,
         strategy="tile",
-        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
-        reuse_inv_cell=bool(reuse_inv_cell),
+        positions_wrapped_buffer=positions_wrapped,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+        inv_cell_buffer=inv_cell,
+        reuse_inv_cell=True,
     )
 
 
@@ -1141,6 +1263,11 @@ _GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS = (
     "neighbor_matrix",
     "neighbor_matrix_shifts",
     "num_neighbors",
+)
+_GRAPH_NAIVE_TILE_PBC_WRAPPED_IN_OUT_ARGS = (
+    *_GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+    "positions_wrapped",
+    "per_atom_cell_offsets",
 )
 _GRAPH_NAIVE_TILE_SPECS = {
     (False, False): {
@@ -1156,8 +1283,8 @@ _GRAPH_NAIVE_TILE_SPECS = {
         jnp.dtype(jnp.float64): _graph_naive_tile_pbc_prewrapped_f64,
     },
     (True, True): {
-        "num_outputs": 3,
-        "in_out_argnames": _GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+        "num_outputs": 5,
+        "in_out_argnames": _GRAPH_NAIVE_TILE_PBC_WRAPPED_IN_OUT_ARGS,
         jnp.dtype(jnp.float32): _graph_naive_tile_pbc_wrapped_f32,
         jnp.dtype(jnp.float64): _graph_naive_tile_pbc_wrapped_f64,
     },
@@ -1437,15 +1564,22 @@ def _naive_pair_outputs_forward(
         tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
             (True, bool(wrap_positions), positions.dtype)
         ]
-        fixed_inverse = (
-            None if _fixed_cell_geometry is None else _fixed_cell_geometry[0]
-        )
-        reuse_inv_cell = wrap_positions and fixed_inverse is not None
-        pbc_arg = (
-            (pbc, fixed_inverse if reuse_inv_cell else empty_cell)
-            if wrap_positions
-            else ()
-        )
+        pbc_arg: tuple[jax.Array, ...] = ()
+        if wrap_positions:
+            inverse, positions_wrapped_work, offsets_work = (
+                _prepare_wrapped_tile_operands(
+                    positions,
+                    cell,
+                    inv_cell_buffer=inv_cell,
+                    positions_wrapped_buffer=positions_wrapped,
+                    per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+                    fixed_cell_geometry=_fixed_cell_geometry,
+                )
+            )
+            pbc_arg = (
+                pbc,
+                inverse,
+            )
         tile_args = (
             positions,
             ti_arg,
@@ -1455,16 +1589,14 @@ def _naive_pair_outputs_forward(
             nm,
             nms,
             nn,
+            *((positions_wrapped_work, offsets_work) if wrap_positions else ()),
             float(cutoff),
             int(max_shifts_per_system),
             half_fill,
             True,
         )
-        if wrap_positions:
-            tile_args += (reuse_inv_cell,)
-        nm, nms, nn = tile_callable(
-            *tile_args,
-        )
+        tile_outs = tile_callable(*tile_args)
+        nm, nms, nn = tile_outs[:3]
     else:
         fixed_mode = _fixed_cell_geometry is not None
         fixed_inverse = (
@@ -2234,10 +2366,41 @@ def naive_neighbor_list(
             # geometry only to discard it. This keeps topology-only partial
             # timing focused on the Warp search/callback and avoids unnecessary
             # gathers, norms, and materialized vector/distance arrays.
+            compact_forward_kwargs = forward_kwargs
+            if partial_tile_selected and pbc_norm is not None and wrap_positions:
+                tile_inv_cell = resolve_buffer_alias(
+                    "inv_cell_buffer",
+                    inv_cell_buffer,
+                    "inv_cell",
+                    inv_cell,
+                )
+                if (
+                    _fixed_cell_geometry is not None
+                    and _fixed_cell_geometry[0] is not None
+                ):
+                    tile_inv_cell = _fixed_cell_geometry[0]
+                tile_positions_wrapped = resolve_buffer_alias(
+                    "positions_wrapped_buffer",
+                    positions_wrapped_buffer,
+                    "positions_wrapped",
+                    positions_wrapped,
+                )
+                tile_per_atom_cell_offsets = resolve_buffer_alias(
+                    "per_atom_cell_offsets_buffer",
+                    per_atom_cell_offsets_buffer,
+                    "per_atom_cell_offsets",
+                    per_atom_cell_offsets,
+                )
+                compact_forward_kwargs = {
+                    **forward_kwargs,
+                    "inv_cell": tile_inv_cell,
+                    "positions_wrapped": tile_positions_wrapped,
+                    "per_atom_cell_offsets": tile_per_atom_cell_offsets,
+                }
             forward_out = _naive_pair_outputs_forward(
                 positions,
                 cell_norm,
-                **forward_kwargs,
+                **compact_forward_kwargs,
             )
             nm_out, nn_out, shifts_out = forward_out.extra_outputs
             distances_out = vectors_out = pe_out = pf_out = None
@@ -2494,16 +2657,19 @@ def naive_neighbor_list(
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
                 (True, bool(wrap_positions), positions.dtype)
             ]
-            reuse_inv_cell = (
-                wrap_positions
-                and _fixed_cell_geometry is not None
-                and _fixed_cell_geometry[0] is not None
-            )
-            pbc_arg = (
-                (pbc, _fixed_cell_geometry[0] if reuse_inv_cell else empty_cell)
-                if wrap_positions
-                else ()
-            )
+            pbc_arg: tuple[jax.Array, ...] = ()
+            if wrap_positions:
+                inverse, positions_wrapped_work, offsets_work = (
+                    _prepare_wrapped_tile_operands(
+                        positions,
+                        cell,
+                        inv_cell_buffer=inv_cell,
+                        positions_wrapped_buffer=positions_wrapped,
+                        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+                        fixed_cell_geometry=_fixed_cell_geometry,
+                    )
+                )
+                pbc_arg = (pbc, inverse)
             tile_args = (
                 positions,
                 empty_target_indices,
@@ -2513,16 +2679,14 @@ def naive_neighbor_list(
                 neighbor_matrix,
                 neighbor_matrix_shifts,
                 num_neighbors,
+                *((positions_wrapped_work, offsets_work) if wrap_positions else ()),
                 cutoff_static,
                 num_shifts,
                 half_fill,
                 False,
             )
-            if wrap_positions:
-                tile_args += (reuse_inv_cell,)
-            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
-                *tile_args,
-            )
+            tile_outs = tile_callable(*tile_args)
+            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_outs[:3]
     elif graph_mode == "warp":
         has_pbc = pbc is not None
         is_selective = rebuild_flags is not None

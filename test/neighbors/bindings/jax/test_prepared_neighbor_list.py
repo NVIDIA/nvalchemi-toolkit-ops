@@ -47,6 +47,7 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     TileBufferOverflow,
 )
 from nvalchemiops.jax.neighbors.prepared_neighbor_list import (
+    _FIXED_CELL_GEOMETRY_LEAF,
     NeighborListState,
     check_neighbor_list_state,
     prepare_neighbor_list,
@@ -2480,10 +2481,11 @@ def test_prepared_tiled_wrapped_pbc_default_and_fixed_modes(
     method: str, fixed_cell: bool
 ) -> None:
     """Wrapped tile callbacks preserve default scratch and fixed-cache modes."""
-    positions_np = np.array([[8.1, 1.0, 1.0], [7.8, 1.0, 1.0]], dtype=np.float32)
+    positions_np = np.array([[60.1, 0.0, 0.0], [0.2, 0.0, 0.0]], dtype=np.float32)
     positions = jnp.asarray(positions_np)
-    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
-    pbc = jnp.ones((3,), dtype=jnp.bool_)
+    cell_np = np.eye(3, dtype=np.float32) * 5.0
+    cell = jnp.asarray(cell_np)
+    pbc = jnp.array([True, False, False], dtype=jnp.bool_)
     kwargs: dict[str, Any] = {
         "cell": cell,
         "pbc": pbc,
@@ -2503,15 +2505,70 @@ def test_prepared_tiled_wrapped_pbc_default_and_fixed_modes(
         batch_ptr = jnp.array([0, 2], dtype=jnp.int32)
         kwargs["batch_ptr"] = batch_ptr
         direct_kwargs["batch_ptr"] = batch_ptr
-        direct = batch_naive_neighbor_list(positions, 0.6, **direct_kwargs)
-    else:
-        direct = naive_neighbor_list(positions, 0.6, **direct_kwargs)
-    state = prepare_neighbor_list(positions, 0.6, fixed_cell=fixed_cell, **kwargs)
-    result, successor = neighbor_list(positions, state=state)
-    assert successor.fixed_cell is fixed_cell
-    expected = _brute_force_pairs_full(positions_np, np.asarray(cell), 0.6, pbc=True)
-    assert _matrix_to_pair_set_full(*result[:3], len(positions_np)) == expected
-    assert _matrix_to_pair_set_full(*direct[:3], len(positions_np)) == expected
+    cutoff = 0.75
+    state = prepare_neighbor_list(positions, cutoff, fixed_cell=fixed_cell, **kwargs)
+    assert state.fixed_cell is fixed_cell
+    cached_inverse_before = (
+        np.asarray(state._leaves[_FIXED_CELL_GEOMETRY_LEAF][0]).copy()
+        if fixed_cell
+        else None
+    )
+
+    def _raw_image_oracle(values: np.ndarray, box: np.ndarray) -> set[tuple[int, ...]]:
+        pairs: set[tuple[int, ...]] = set()
+        for source in range(len(values)):
+            for neighbor in range(len(values)):
+                for shift_x in range(-20, 21):
+                    if source == neighbor and shift_x == 0:
+                        continue
+                    displacement = (
+                        values[neighbor]
+                        - values[source]
+                        + np.array([shift_x, 0, 0], dtype=values.dtype) @ box
+                    )
+                    if float(np.linalg.norm(displacement)) < cutoff:
+                        pairs.add((source, neighbor, shift_x, 0, 0))
+        return pairs
+
+    updated_cell_np = cell_np if fixed_cell else np.eye(3, dtype=np.float32) * 6.0
+    if not fixed_cell:
+        assert _raw_image_oracle(positions_np, cell_np) != _raw_image_oracle(
+            positions_np, updated_cell_np
+        )
+    current_state = state
+    for step in range(2):
+        if fixed_cell:
+            current_positions_np = positions_np.copy()
+            if step == 1:
+                current_positions_np[0, 0] = 65.1
+            runtime_cell_np = cell_np
+        else:
+            current_positions_np = positions_np
+            runtime_cell_np = cell_np if step == 0 else updated_cell_np
+        current_positions = jnp.asarray(current_positions_np)
+        runtime_cell = jnp.asarray(runtime_cell_np)
+        result, current_state = neighbor_list(
+            current_positions, cell=runtime_cell, state=current_state
+        )
+        direct_call = (
+            batch_naive_neighbor_list
+            if method == "batch_naive"
+            else naive_neighbor_list
+        )
+        direct = direct_call(
+            current_positions,
+            cutoff,
+            **{**direct_kwargs, "cell": runtime_cell},
+        )
+        expected = _raw_image_oracle(current_positions_np, runtime_cell_np)
+        assert _matrix_to_pair_set_full(*result[:3], len(positions_np)) == expected
+        assert _matrix_to_pair_set_full(*direct[:3], len(positions_np)) == expected
+        if fixed_cell:
+            np.testing.assert_array_equal(
+                np.asarray(current_state._leaves[_FIXED_CELL_GEOMETRY_LEAF][0]),
+                cached_inverse_before,
+            )
+    assert current_state.fixed_cell is fixed_cell
 
 
 def _matrix_geometry_by_pair(

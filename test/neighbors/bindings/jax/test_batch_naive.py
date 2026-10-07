@@ -60,6 +60,62 @@ def _sorted_row_multisets(
     return rows
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "buffer_name",
+    [
+        "inv_cell_buffer",
+        "positions_wrapped_buffer",
+        "per_atom_cell_offsets_buffer",
+    ],
+)
+@pytest.mark.parametrize("mismatch", ["shape", "dtype"])
+def test_wrapped_partial_tile_validates_supplied_scratch(buffer_name, mismatch):
+    """Wrapped compact batch tile rejects malformed scratch before launch."""
+    device = jax.devices("gpu")[0]
+    positions = jax.device_put(
+        jnp.array(
+            [[0.1, 0.1, 0.1], [0.6, 0.1, 0.1], [2.1, 0.1, 0.1], [2.6, 0.1, 0.1]],
+            dtype=jnp.float32,
+        ),
+        device,
+    )
+    batch_idx = jax.device_put(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+    batch_ptr = jax.device_put(jnp.array([0, 2, 4], dtype=jnp.int32), device)
+    cell = jax.device_put(jnp.stack([jnp.eye(3, dtype=jnp.float32) * 4.0] * 2), device)
+    pbc = jax.device_put(jnp.ones((2, 3), dtype=jnp.bool_), device)
+    targets = jax.device_put(jnp.array([0, 2], dtype=jnp.int32), device)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+    expected_shape, expected_dtype = {
+        "inv_cell_buffer": ((2, 3, 3), jnp.float32),
+        "positions_wrapped_buffer": ((4, 3), jnp.float32),
+        "per_atom_cell_offsets_buffer": ((4, 3), jnp.int32),
+    }[buffer_name]
+    bad_shape = expected_shape[:-1] + (expected_shape[-1] + 1,)
+    scratch = jnp.zeros(
+        bad_shape if mismatch == "shape" else expected_shape,
+        dtype=(jnp.bool_ if mismatch == "dtype" else expected_dtype),
+    )
+
+    with pytest.raises(ValueError, match=buffer_name):
+        batch_naive_neighbor_list(
+            positions,
+            1.0,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            target_indices=targets,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=int(max_shifts),
+            max_atoms_per_system=2,
+            strategy="tile",
+            **{buffer_name: scratch},
+        )
+
+
 @pytest.mark.parametrize("cutoff", [0.0, -1.0])
 @pytest.mark.parametrize("target_mode", ["full", "partial", "empty"])
 def test_nonpositive_cutoff_rejected_before_buffer_mutation(cutoff, target_mode):
@@ -575,6 +631,15 @@ class TestBatchNaiveNeighborList:
             strategy="scalar",
             **kwargs,
         )
+        tile_kwargs = dict(kwargs)
+        if pbc_mode == "wrapped":
+            tile_kwargs.update(
+                inv_cell_buffer=jnp.full_like(cell, 99.0),
+                positions_wrapped_buffer=jnp.empty_like(positions),
+                per_atom_cell_offsets_buffer=jnp.empty(
+                    (positions.shape[0], 3), dtype=jnp.int32
+                ),
+            )
         tiled = batch_naive_neighbor_list(
             positions,
             1.1,
@@ -584,7 +649,7 @@ class TestBatchNaiveNeighborList:
             half_fill=half_fill,
             target_indices=target_indices,
             strategy="tile",
-            **kwargs,
+            **tile_kwargs,
         )
         np.testing.assert_array_equal(np.asarray(scalar[1]), np.asarray(tiled[1]))
         scalar_shifts = scalar[2] if pbc_mode != "none" else None
