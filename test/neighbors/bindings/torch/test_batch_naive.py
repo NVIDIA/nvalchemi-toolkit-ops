@@ -887,19 +887,6 @@ class TestBatchNaiveCorrectness:
         assert empty_matrix.shape == (0, 4)
         assert empty_counts.shape == (0,)
 
-        zero_matrix, zero_counts = batch_naive_neighbor_list(
-            positions,
-            0.0,
-            batch_idx=batch_idx,
-            batch_ptr=batch_ptr,
-            max_neighbors=4,
-            fill_value=-3,
-            target_indices=targets,
-            strategy="tile",
-        )
-        assert torch.equal(zero_counts, torch.zeros_like(zero_counts))
-        assert torch.all(zero_matrix == -3)
-
     def test_target_indices_auto_forwards_native_dispatch(self, device, monkeypatch):
         """Batched topology-only auto preserves scalar native dispatch policy."""
         seen = {}

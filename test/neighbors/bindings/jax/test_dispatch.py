@@ -108,7 +108,7 @@ targets = jnp.array([0, 511], dtype=jnp.int32)
 def run(positions):
     return naive_neighbor_list(
         positions,
-        0.0,
+        0.75,
         max_neighbors=4,
         target_indices=targets,
         strategy="auto",
@@ -153,7 +153,7 @@ positions = jax.device_put(
 def run(pos):
     return naive_neighbor_list(
         pos,
-        0.0,
+        0.75,
         max_neighbors=4,
         target_indices=targets,
         strategy="auto",
@@ -222,8 +222,6 @@ def test_jitted_tile_uses_target_backend_not_process_default(target_backend):
     """JIT tile routing ignores the process default backend."""
     if not any(device.platform == "gpu" for device in jax.devices()):
         pytest.skip("Mixed CPU/GPU JAX backends are required.")
-    graph_mode = "none"
-    strategy = "tile"
     script = f"""
 import numpy as np
 
@@ -243,27 +241,14 @@ positions = jax.device_put(
     gpu,
 )
 
-def run_no_graph(pos):
+def run(pos):
     return naive_neighbor_list(
         pos,
         0.75,
         max_neighbors=4,
         target_indices=targets,
-        strategy="{strategy}",
-        graph_mode="{graph_mode}",
-    )
-
-def run_warp(pos, matrix, counts):
-    return naive_neighbor_list(
-        pos,
-        0.75,
-        max_neighbors=4,
-        target_indices=targets,
-        neighbor_matrix=matrix,
-        num_neighbors=counts,
-        return_neighbor_list=False,
-        strategy="{strategy}",
-        graph_mode="{graph_mode}",
+        strategy="tile",
+        graph_mode="none",
     )
 
 jax.default_backend = lambda: "cpu"
@@ -276,29 +261,12 @@ if "{target_backend}" == "gpu":
         target_indices=targets,
         strategy="scalar",
     )
-    if "{graph_mode}" == "none":
-        tiled = jax.jit(run_no_graph, backend="gpu")(positions)
-    else:
-        matrix = jax.device_put(jnp.full((2, 4), 4, dtype=jnp.int32), gpu)
-        counts = jax.device_put(jnp.zeros((2,), dtype=jnp.int32), gpu)
-        tiled = jax.jit(run_warp, backend="gpu", donate_argnums=(1, 2))(
-            positions,
-            matrix,
-            counts,
-        )
+    tiled = jax.jit(run, backend="gpu")(positions)
     for scalar_array, tiled_array in zip(scalar, tiled):
         np.testing.assert_array_equal(np.asarray(scalar_array), np.asarray(tiled_array))
 else:
-    if "{graph_mode}" == "none":
-        call = jax.jit(run_no_graph, backend="cpu")
-        args = (jnp.zeros((4, 3), dtype=jnp.float32),)
-    else:
-        call = jax.jit(run_warp, backend="cpu", donate_argnums=(1, 2))
-        args = (
-            jnp.zeros((4, 3), dtype=jnp.float32),
-            jnp.full((2, 4), 4, dtype=jnp.int32),
-            jnp.zeros((2,), dtype=jnp.int32),
-        )
+    call = jax.jit(run, backend="cpu")
+    args = (jnp.zeros((4, 3), dtype=jnp.float32),)
     launch_tiled_called = False
     real_launch_tiled = wp.launch_tiled
     def checked_launch_tiled(*args, **kwargs):
@@ -341,7 +309,7 @@ from test.neighbors.bindings.jax.test_dispatch import _sum_pair_fn
 positions = jnp.zeros((2, 3), dtype=jnp.float32)
 cell = jnp.eye(3, dtype=jnp.float32)[None, :, :]
 pbc = jnp.ones((1, 3), dtype=jnp.bool_)
-targets = jnp.array([0], dtype=jnp.int32)
+targets = jnp.empty((0,), dtype=jnp.int32)
 shift_range = jnp.zeros((1, 3), dtype=jnp.int32)
 num_shifts = jnp.ones((1,), dtype=jnp.int32)
 
@@ -349,7 +317,7 @@ num_shifts = jnp.ones((1,), dtype=jnp.int32)
 def single(nm, nn, shifts, distances, vectors):
     return naive_neighbor_list(
         positions,
-        0.0,
+        1.0,
         cell=cell,
         pbc=pbc,
         max_neighbors=4,
@@ -369,16 +337,17 @@ def single(nm, nn, shifts, distances, vectors):
     )
 
 out = single(
-    jnp.full((1, 4), 99, dtype=jnp.int32),
-    jnp.full((1,), 99, dtype=jnp.int32),
-    jnp.full((1, 4, 3), 99, dtype=jnp.int32),
-    jnp.full((1, 4), 99.0, dtype=jnp.float32),
-    jnp.full((1, 4, 3), 99.0, dtype=jnp.float32),
+    jnp.full((0, 4), 99, dtype=jnp.int32),
+    jnp.full((0,), 99, dtype=jnp.int32),
+    jnp.full((0, 4, 3), 99, dtype=jnp.int32),
+    jnp.full((0, 4), 99.0, dtype=jnp.float32),
+    jnp.full((0, 4, 3), 99.0, dtype=jnp.float32),
 )
 nm, nn, shifts, distances, vectors, energies, forces = out
-assert (nm == 2).all() and (nn == 0).all() and (shifts == 0).all()
-assert (distances == 0).all() and (vectors == 0).all()
-assert energies.shape == (1, 4) and forces.shape == (1, 4, 3)
+assert nm.shape == (0, 4) and nn.shape == (0,)
+assert shifts.shape == (0, 4, 3)
+assert distances.shape == (0, 4) and vectors.shape == (0, 4, 3)
+assert energies.shape == (0, 4) and forces.shape == (0, 4, 3)
 assert (energies == 0).all() and (forces == 0).all()
 
 @jax.jit

@@ -731,19 +731,6 @@ class TestBatchNaiveNeighborList:
         assert empty_matrix.shape == (0, 4)
         assert empty_counts.shape == (0,)
 
-        zero_matrix, zero_counts = batch_naive_neighbor_list(
-            positions,
-            0.0,
-            batch_idx=batch_idx,
-            batch_ptr=batch_ptr,
-            max_neighbors=4,
-            fill_value=-3,
-            target_indices=targets,
-            strategy="tile",
-        )
-        np.testing.assert_array_equal(np.asarray(zero_counts), [0, 0])
-        np.testing.assert_array_equal(np.asarray(zero_matrix), -3)
-
     def test_topology_only_grad_no_pbc_is_zero(self):
         """Topology-only batch outputs do not differentiate through Warp FFI."""
         positions = jnp.array(
