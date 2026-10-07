@@ -33,6 +33,36 @@ import warp as wp
 __all__ = []
 
 
+@wp.kernel(enable_backward=False)
+def _validated_cell_total(
+    counts: wp.array(dtype=wp.int32),
+    total: wp.array(dtype=wp.int64),
+) -> None:
+    """Reduce valid cell counts to one allocation size.
+
+    Notes
+    -----
+    Thread launch: One tiled block; lanes traverse strided system indices.
+    Modifies: ``total[0]`` receives the int64 sum, or zero if any count is
+    nonpositive. An empty input also produces zero.
+    """
+    _, lane = wp.tid()
+    partial = wp.int64(0)
+    valid = wp.int32(1)
+    for i in range(lane, counts.shape[0], wp.block_dim()):
+        count = counts[i]
+        partial += wp.int64(count)
+        if count <= 0:
+            valid = 0
+    summed = wp.tile_sum(wp.tile(partial))
+    all_valid = wp.tile_min(wp.tile(valid))
+    if lane == 0:
+        value = wp.int64(0)
+        if wp.tile_extract(all_valid, 0) != 0:
+            value = wp.tile_extract(summed, 0)
+        total[0] = value
+
+
 def _validate_grid_policy(grid_policy: str) -> None:
     """Require a supported cell-grid policy using host metadata only."""
     if grid_policy not in {"configured", "adaptive"}:

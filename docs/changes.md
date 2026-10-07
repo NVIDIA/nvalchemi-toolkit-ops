@@ -70,11 +70,55 @@
 - Added `rank_chunk_size` to bound reciprocal-mesh workspace at the cost of additional FFT
   passes.
 - Added multi-channel B-spline Warp launchers used by FourierD3.
+- `electrostatics_uses_legacy_fp32()` reports whether the legacy float64-core
+  path is forced, for callers that want to confirm which mode is active.
+- `nvalchemiops.math.wp_erfc_f32_fast` and `nvalchemiops.math.wp_erfc_input_precision`:
+  an explicitly float32-grade `erfc` approximation, and a dispatcher that uses
+  native `wp.erfc` at float64 and the approximation at float32.
+- Added `generate_k_squared_pme` to the Torch and JAX electrostatics namespaces
+  for reciprocal paths that use squared magnitudes.
 
 ### Changed
 
+- Torch and JAX PME mesh estimation now covers the requested spline support.
+  The default spline order is five, with accuracy-based dimensions rounded
+  upward to 2/3/5/7-smooth FFT sizes. The selector prefers power-of-two meshes,
+  then smooth dimensions divisible by four, within a 25% total-point budget.
+  Public sizing APIs expose `fft_padding_fraction=0.25`; `0` keeps the smallest
+  smooth mesh. Explicit other orders retain upstream power-of-two accuracy
+  sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
+  explicit mesh dimensions remain caller-controlled.
+  Cutoff and splitting-parameter formulas are preserved.
+  Calls that omit `spline_order` now use 5 instead of 4, which can change
+  numerical results and automatically selected meshes. Pass `spline_order=4`
+  to retain the previous interpolation order. To reproduce the previous PME
+  configuration, also pass the previous `mesh_dimensions` explicitly.
 - Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
   `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
+- Torch and JAX PME energy and force paths generate only the squared reciprocal
+  grid when Cartesian reciprocal vectors are unused, reducing peak memory.
+  Virial and cell-gradient paths generate the Cartesian vectors they require.
+
+- Monopole electrostatics (Ewald real-space per-pair cores and the reciprocal
+  no-store structure-factor path) now default to float32 evaluation for
+  float32 CUDA inputs, instead of promoting to float64 internally. Both real
+  and reciprocal space are affected -- real space is shared by Ewald and PME.
+  CPU execution is unchanged either way; the fast path is CUDA-only. Set
+  `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
+  (always float64-core) behavior. Changes float32 results at the ~1e-07
+  level; double-backward (Hessian-vector products, including ordinary
+  force- or stress-matching training losses) continues to use the standard
+  float64-materializing formulation regardless of which forward path ran, so
+  it is unaffected.
+
+### Deprecated
+
+- `nvalchemiops.math.wp_erfc` is deprecated in favor of
+  `wp_erfc_input_precision` (dispatches by input dtype) or
+  `wp_erfc_f32_fast` (the float32-grade approximation explicitly). `wp_erfc`
+  keeps its original behavior -- including evaluating the float32-grade
+  approximation at float64 -- for backward compatibility; it is not being
+  changed underneath existing callers.
 
 ### Notes
 
@@ -85,14 +129,16 @@
 
 ### Changed
 
-- Torch single-system and batched full-list pair-centric calls select grids from
+- Torch single-system and batched full-list pair-centric calls with
+  `grid_policy="adaptive"` select grids from
   current geometry and atom populations, balancing cell visits and cell crowding.
   Single-system alternatives must preserve or reduce estimated candidate pairs,
   serial neighbor-loop depth, cell storage, and logical block count. The configured
   grid wins ties and cost tradeoffs. Batched selection counts setup and
   neighbor-loop steps across every logical block and preserves source-pass count.
-  Default cell-list calls use the same sizing when their existing strategy rule
-  selects pair-centric execution. Batched selection reuses supplied boundaries.
+  `grid_policy="configured"` remains the default. With the adaptive policy,
+  automatic strategy selection uses the same sizing when it selects pair-centric
+  execution. Batched selection reuses supplied boundaries.
   Selected grids are reused during construction.
   Caller-provided workspaces apply the same rules during the GPU build, updating
   dimensions and search radii in place within their per-system capacity.
@@ -101,9 +147,10 @@
   Compiled full-list calls also use these rules when all cell buffers are supplied.
 - Eager JAX naive tile and cell-list queries reuse compiled inner calls across
   repeated inputs. Cell-list arrays remain runtime inputs to cached executables.
-- Eager JAX full-list CUDA calls that select `strategy="pair_centric"` reuse
+- Eager JAX full-list CUDA calls with `grid_policy="adaptive"` that select
+  `strategy="pair_centric"` reuse
   the geometry/population grid selector for single systems and batches.
-  Default eager cell-list calls also use it when their existing rule selects
+  Adaptive eager cell-list calls also use it when their existing rule selects
   pair-centric execution. Grid, search-radius, and cell-count preparation share
   one kernel; boxes remain runtime inputs. Public signatures and static/JIT
   launch-metadata paths are preserved.

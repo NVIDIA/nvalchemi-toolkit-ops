@@ -425,16 +425,20 @@ def _make_construct_bin_size_kernel(
 
 
 @lru_cache(maxsize=None)
-def _make_count_atoms_per_bin_kernel(wp_dtype: type, *, batched: bool):
+def _make_count_atoms_per_bin_kernel(
+    wp_dtype: type, *, batched: bool, fixed_cell: bool = False
+):
     """Build the ``count_atoms_per_bin`` kernel for the dtype/mode."""
     _require_supported_dtype(wp_dtype)
     vec_dtype, mat_dtype = _DTYPE_INFO[wp_dtype]
     BATCHED = wp.constant(bool(batched))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
 
     @wp.kernel(enable_backward=False)
     def _kernel(
         positions: wp.array(dtype=vec_dtype),
         cell: wp.array(dtype=mat_dtype),
+        inv_cell: wp.array(dtype=mat_dtype),
         pbc_single: wp.array(dtype=wp.bool),
         pbc_batch: wp.array2d(dtype=wp.bool),
         batch_idx: wp.array(dtype=wp.int32),
@@ -452,6 +456,9 @@ def _make_count_atoms_per_bin_kernel(wp_dtype: type, *, batched: bool):
             Atomic coordinates in Cartesian space.
         cell : wp.array, shape (num_systems,), dtype=wp.mat33*
             Cell matrices for coordinate transforms.
+        inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+            READONLY: Cached inverse cells when ``fixed_cell`` is enabled;
+            zero-size sentinel otherwise.
         pbc_single : wp.array, shape (3,), dtype=wp.bool
             Single-system PBC flags. Zero-size sentinel in batched mode.
         pbc_batch : wp.array, shape (num_systems, 3), dtype=wp.bool
@@ -500,7 +507,10 @@ def _make_count_atoms_per_bin_kernel(wp_dtype: type, *, batched: bool):
             pbc_x = pbc_batch[system_idx, 0]
             pbc_y = pbc_batch[system_idx, 1]
             pbc_z = pbc_batch[system_idx, 2]
-            fractional_position = positions[atom_idx] * wp.inverse(cell[system_idx])
+            if FIXED_CELL:
+                fractional_position = positions[atom_idx] * inv_cell[system_idx]
+            else:
+                fractional_position = positions[atom_idx] * wp.inverse(cell[system_idx])
         else:
             s_cells_per_dimension = wp.vec3i(
                 cells_per_dimension_single[0],
@@ -510,9 +520,12 @@ def _make_count_atoms_per_bin_kernel(wp_dtype: type, *, batched: bool):
             pbc_x = pbc_single[0]
             pbc_y = pbc_single[1]
             pbc_z = pbc_single[2]
-            fractional_position = (
-                wp.transpose(wp.inverse(cell[0])) * positions[atom_idx]
-            )
+            if FIXED_CELL:
+                fractional_position = wp.transpose(inv_cell[0]) * positions[atom_idx]
+            else:
+                fractional_position = (
+                    wp.transpose(wp.inverse(cell[0])) * positions[atom_idx]
+                )
 
         cell_coords = wp.vec3i(0, 0, 0)
         for dim in range(3):
@@ -550,6 +563,7 @@ def _make_count_atoms_per_bin_kernel(wp_dtype: type, *, batched: bool):
     name = kernel_specialization_name(
         _cell_list_build_base_name("count_atoms", batched=batched),
         wp_dtype=wp_dtype,
+        features=("fixed_cell" if fixed_cell else "",),
     )
     return set_fn_doc(
         set_fn_name(_kernel, name),
@@ -559,22 +573,25 @@ def _make_count_atoms_per_bin_kernel(wp_dtype: type, *, batched: bool):
             entries=(
                 ("stage", "count_atoms"),
                 ("batched", bool(batched)),
+                ("fixed_cell", bool(fixed_cell)),
             ),
         ),
     )
 
 
 @lru_cache(maxsize=None)
-def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool):
+def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool, fixed_cell: bool = False):
     """Build the ``bin_atoms`` kernel for the dtype/mode."""
     _require_supported_dtype(wp_dtype)
     vec_dtype, mat_dtype = _DTYPE_INFO[wp_dtype]
     BATCHED = wp.constant(bool(batched))
+    FIXED_CELL = wp.constant(bool(fixed_cell))
 
     @wp.kernel(enable_backward=False)
     def _kernel(
         positions: wp.array(dtype=vec_dtype),
         cell: wp.array(dtype=mat_dtype),
+        inv_cell: wp.array(dtype=mat_dtype),
         pbc_single: wp.array(dtype=wp.bool),
         pbc_batch: wp.array2d(dtype=wp.bool),
         batch_idx: wp.array(dtype=wp.int32),
@@ -594,6 +611,9 @@ def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool):
             Atomic coordinates in Cartesian space.
         cell : wp.array, shape (num_systems,), dtype=wp.mat33*
             Cell matrices for coordinate transforms.
+        inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+            READONLY: Cached inverse cells when ``fixed_cell`` is enabled;
+            zero-size sentinel otherwise.
         pbc_single : wp.array, shape (3,), dtype=wp.bool
             Single-system PBC flags. Zero-size sentinel in batched mode.
         pbc_batch : wp.array, shape (num_systems, 3), dtype=wp.bool
@@ -649,7 +669,10 @@ def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool):
             pbc_x = pbc_batch[system_idx, 0]
             pbc_y = pbc_batch[system_idx, 1]
             pbc_z = pbc_batch[system_idx, 2]
-            fractional_position = positions[atom_idx] * wp.inverse(cell[system_idx])
+            if FIXED_CELL:
+                fractional_position = positions[atom_idx] * inv_cell[system_idx]
+            else:
+                fractional_position = positions[atom_idx] * wp.inverse(cell[system_idx])
         else:
             s_cells_per_dimension = wp.vec3i(
                 cells_per_dimension_single[0],
@@ -659,9 +682,12 @@ def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool):
             pbc_x = pbc_single[0]
             pbc_y = pbc_single[1]
             pbc_z = pbc_single[2]
-            fractional_position = (
-                wp.transpose(wp.inverse(cell[0])) * positions[atom_idx]
-            )
+            if FIXED_CELL:
+                fractional_position = wp.transpose(inv_cell[0]) * positions[atom_idx]
+            else:
+                fractional_position = (
+                    wp.transpose(wp.inverse(cell[0])) * positions[atom_idx]
+                )
 
         cell_coords = wp.vec3i(0, 0, 0)
         for dim in range(3):
@@ -698,6 +724,7 @@ def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool):
     name = kernel_specialization_name(
         _cell_list_build_base_name("bin_atoms", batched=batched),
         wp_dtype=wp_dtype,
+        features=("fixed_cell" if fixed_cell else "",),
     )
     return set_fn_doc(
         set_fn_name(_kernel, name),
@@ -707,6 +734,7 @@ def _make_bin_atoms_kernel(wp_dtype: type, *, batched: bool):
             entries=(
                 ("stage", "bin_atoms"),
                 ("batched", bool(batched)),
+                ("fixed_cell", bool(fixed_cell)),
             ),
         ),
     )
@@ -2036,6 +2064,7 @@ def get_build_cell_list_kernel(
     *,
     batched: bool = False,
     min_cells_per_dimension: int = _DEFAULT_MIN_CELLS_PER_DIMENSION,
+    fixed_cell: bool = False,
 ) -> wp.Kernel:
     """Return a cached cell-list CSR build kernel.
 
@@ -2074,14 +2103,129 @@ def get_build_cell_list_kernel(
                 min_cells_per_dimension=int(min_cells_per_dimension),
             )
         case "count_atoms":
-            return _make_count_atoms_per_bin_kernel(wp_dtype, batched=batched_mode)
+            return _make_count_atoms_per_bin_kernel(
+                wp_dtype,
+                batched=batched_mode,
+                fixed_cell=bool(fixed_cell),
+            )
         case "bin_atoms":
-            return _make_bin_atoms_kernel(wp_dtype, batched=batched_mode)
+            return _make_bin_atoms_kernel(
+                wp_dtype,
+                batched=batched_mode,
+                fixed_cell=bool(fixed_cell),
+            )
 
     raise ValueError(
         "stage must be 'estimate_sizes', 'construct_bin_size', "
         f"'count_atoms', or 'bin_atoms'; got {stage!r}"
     )
+
+
+@wp.kernel(enable_backward=False)
+def _check_cell_list_radius_coverage(
+    cell: wp.array(dtype=Any),
+    cutoff: Any,
+    pbc: wp.array2d(dtype=wp.bool),
+    cells_per_dimension: wp.array(dtype=wp.vec3i),
+    prepared_radius: wp.array(dtype=wp.vec3i),
+    rebuild_flags: wp.array(dtype=wp.bool),
+    status: wp.array(dtype=wp.int32),
+) -> None:
+    """Compare runtime cell-list radii with prepared search coverage.
+
+    Parameters
+    ----------
+    cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+        Runtime unit cells.
+    cutoff : float
+        Prepared neighbor cutoff.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool
+        Periodic-boundary flags.
+    cells_per_dimension : wp.array, shape (num_systems,), dtype=wp.vec3i
+        Runtime grid produced by the existing ``construct_bin_size`` kernel.
+    prepared_radius : wp.array, shape (num_systems,), dtype=wp.vec3i
+        Fixed search radii allocated during preparation.
+    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+        Systems selected for rebuilding.
+    status : wp.array, shape (num_systems,), dtype=wp.int32
+        OUTPUT: 1 for covered, 0 for insufficient coverage, and 2 for an
+        invalid or singular runtime cell.
+
+    Returns
+    -------
+    None
+        Writes one coverage status for each system. Unselected systems receive
+        status 1; selected systems receive status 0 when a required cell-list
+        radius exceeds the prepared radius, or status 2 when the runtime cell
+        or a computed radius is invalid.
+
+    Notes
+    -----
+    - Thread launch: One thread per prepared system.
+    - Modifies: ``status``.
+
+    See Also
+    --------
+    _get_check_cell_list_radius_coverage_kernel : Create the dtype-specific kernel.
+    """
+    system_idx = wp.tid()
+    if not rebuild_flags[system_idx]:
+        status[system_idx] = 1
+        return
+
+    current_cell = cell[system_idx]
+    determinant = wp.determinant(current_cell)
+    if determinant != determinant or wp.abs(determinant) <= type(determinant)(1.0e-12):
+        status[system_idx] = 2
+        return
+
+    inverse_cell_transpose = wp.transpose(wp.inverse(current_cell))
+    current_grid = cells_per_dimension[system_idx]
+    fixed_radius = prepared_radius[system_idx]
+    status[system_idx] = 1
+    max_radius = type(inverse_cell_transpose[0, 0])(2147483648.0)
+    for dim in range(3):
+        face_distance = type(inverse_cell_transpose[0, 0])(1.0) / wp.length(
+            inverse_cell_transpose[dim]
+        )
+        if face_distance != face_distance or face_distance <= type(face_distance)(0.0):
+            status[system_idx] = 2
+            return
+
+        pbc_dim = pbc[system_idx, dim]
+        required_radius = wp.int32(0)
+        if current_grid[dim] != 1 or pbc_dim:
+            radius = wp.ceil(cutoff * type(cutoff)(current_grid[dim]) / face_distance)
+            if radius != radius or radius >= max_radius:
+                status[system_idx] = 2
+                return
+            required_radius = wp.int32(radius)
+        if required_radius > fixed_radius[dim]:
+            status[system_idx] = 0
+            return
+
+
+@lru_cache(maxsize=None)
+def _get_check_cell_list_radius_coverage_kernel(wp_dtype: type) -> wp.Kernel:
+    """Return the cell-list coverage kernel specialized for ``wp_dtype``."""
+    _require_supported_dtype(wp_dtype)
+    mat_dtype = _DTYPE_INFO[wp_dtype][1]
+    kernel = wp.overload(
+        _check_cell_list_radius_coverage,
+        [
+            wp.array(dtype=mat_dtype),
+            wp_dtype,
+            wp.array2d(dtype=wp.bool),
+            wp.array(dtype=wp.vec3i),
+            wp.array(dtype=wp.vec3i),
+            wp.array(dtype=wp.bool),
+            wp.array(dtype=wp.int32),
+        ],
+    )
+    name = kernel_specialization_name(
+        "_check_cell_list_radius_coverage", wp_dtype=wp_dtype
+    )
+    return set_fn_doc(set_fn_name(kernel, name), kernel.__doc__)
 
 
 @wp.kernel(enable_backward=False)

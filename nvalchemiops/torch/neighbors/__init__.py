@@ -92,15 +92,16 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
 )
-from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
-    ClusterTileState,
-    prepare_cluster_tile,
+from nvalchemiops.torch.neighbors.prepared_neighbor_list import (
+    NeighborListState,
+    _execute_prepared_neighbor_list,
+    prepare_neighbor_list,
 )
 
 
 def neighbor_list(
     positions: torch.Tensor,
-    cutoff: float,
+    cutoff: float | None = None,
     cell: torch.Tensor | None = None,
     pbc: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
@@ -113,13 +114,17 @@ def neighbor_list(
     wrap_positions: bool = True,
     *,
     grid_policy: str = "configured",
+    state: NeighborListState | None = None,
     **kwargs: Any,
 ):
-    """Compute neighbor list using the appropriate method based on the provided parameters.
+    """Compute a neighbor list or execute a prepared Torch route.
 
-    This is the main entry point for PyTorch users of the neighbor list API. It automatically
-    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system
-    size and parameters.
+    Without ``state``, this entry point selects and executes an algorithm from
+    the supplied geometry and options. With a state returned by
+    :func:`prepare_neighbor_list`, it bypasses repeated selection and sizing,
+    uses state-owned route storage, and returns the ordinary route tuple.
+    Prepared state is the recommended high-level interface for repeated Torch
+    execution.
 
     Parameters
     ----------
@@ -128,9 +133,10 @@ def neighbor_list(
         Each row represents one atom's (x, y, z) position.
         Unwrapped (box-crossing) coordinates are supported when PBC is used;
         the kernel wraps positions internally.
-    cutoff : float
+    cutoff : float, optional
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        May be omitted when ``state`` is supplied.
     cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3), optional
         Cell matrix defining the simulation box.
     pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=torch.bool, optional
@@ -146,7 +152,9 @@ def neighbor_list(
         Cumulative atom counts defining system boundaries.
     cutoff2 : float, optional
         Second cutoff distance for neighbor detection in Cartesian units.
-        Must be positive. Atoms within this distance are considered neighbors.
+        Must be positive. Naive dual-cutoff routes require
+        ``cutoff2 >= cutoff``; cluster-tile routes accept either ordering.
+        Atoms within this distance are considered neighbors.
     half_fill : bool, optional
         If True, only store half of the neighbor relationships to avoid double counting.
         Another half could be reconstructed by swapping source and target indices and inverting unit shifts.
@@ -187,6 +195,13 @@ def neighbor_list(
         ``"adaptive"`` opts into geometry/population-based grid selection;
         ``"configured"`` preserves the existing grid-sizing rule. Other neighbor
         methods retain their grid behavior.
+    state : NeighborListState, optional
+        State returned by :func:`prepare_neighbor_list`. Its fixed
+        configuration takes precedence. Prepared execution accepts positions,
+        an applicable current cell, selective ``rebuild_flags``, and current
+        ``pair_params`` as runtime inputs and returns the ordinary route tuple.
+        Prepared states use configured sizing; adaptive ``grid_policy`` is
+        available only for calls without ``state``.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -284,8 +299,10 @@ def neighbor_list(
             Inline Warp pair potential evaluated as neighbors are enumerated;
             requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.
             Forward-only (not differentiable). Pass ``compile_pair_fn(pair_fn)``
-            before ``torch.compile(fullgraph=True)`` to use fixed-shape matrix
-            outputs in compiled regions. See ``examples/neighbors/06_pair_outputs_lj.py``.
+            to supported method-specific functions before
+            ``torch.compile(fullgraph=True)`` to use fixed-shape matrix outputs
+            in compiled regions. Prepared callbacks remain eager-only. See
+            ``examples/neighbors/06_pair_outputs_lj.py``.
         pair_params, pair_energies, pair_forces : torch.Tensor, optional
             Per-atom parameter table and per-pair energy / force output buffers
             consumed and filled by ``pair_fn``.
@@ -378,7 +395,18 @@ def neighbor_list(
     cell_list : Direct access to cell list :math:`O(N)` algorithm
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
+    prepare_neighbor_list : Prepare managed repeated execution
     """
+    _validate_grid_policy(grid_policy)
+    if state is not None:
+        if grid_policy == "adaptive":
+            raise ValueError(
+                "grid_policy='adaptive' is not supported with state; "
+                "prepared states use configured sizing"
+            )
+        return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
+    if cutoff is None:
+        raise ValueError("cutoff is required when state is not provided")
     if cell is not None and pbc is None:
         raise ValueError(
             "`pbc` is required when `cell` is provided. "
@@ -389,7 +417,6 @@ def neighbor_list(
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
 
-    _validate_grid_policy(grid_policy)
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
     target_indices = kwargs.get("target_indices")
@@ -635,13 +662,13 @@ __all__ = [
     "compile_pair_fn",
     "NeighborOverflowError",
     "TileBufferOverflow",
+    "NeighborListState",
+    "prepare_neighbor_list",
     # Unbatched algorithms
     "cell_list",
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",
     "cluster_tile_neighbor_list",
-    "ClusterTileState",
-    "prepare_cluster_tile",
     "estimate_cell_list_sizes",
     # Batched algorithms
     "batch_cell_list",

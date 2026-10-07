@@ -11,7 +11,7 @@ This guide lists user-visible migrations by release.
 ### Upgrade PyTorch for compiled COO output
 
 Applications that request exact COO output from a matrix-backed neighbor method
-inside `torch.compile(fullgraph=True)` must upgrade to PyTorch >=2.10. No code
+inside `torch.compile(fullgraph=True)` must use PyTorch 2.10 or newer. No code
 change is required for eager execution.
 
 Compiled callers should allocate sufficient matrix capacity instead of relying
@@ -19,12 +19,32 @@ on `NeighborOverflowError`: overflow is reported by an asynchronous runtime
 assertion in a compiled graph. Exact output sizing uses `nonzero` and may
 synchronize the host.
 
+### Prepared Neighbor-List Execution
+
+Repeated Torch and JAX neighbor-list execution can now use the same public
+workflow. Call `prepare_neighbor_list(...)` eagerly to resolve a method,
+validate fixed metadata, choose capacities, and allocate reusable storage.
+Torch then calls `neighbor_list(..., state=state)` and receives the existing
+result tuple. JAX receives `(results, next_state)` and must thread the successor
+state through later calls.
+
+Existing state-free calls and result tuples are unchanged. Configuration stored
+in the state takes precedence over recognized call-time configuration. JAX
+automatic preparation may choose one of its documented compilation-eligible
+equivalents instead of the state-free eager route. Inspect `state.method` and
+`state.strategy`, or pass explicit choices when implementation identity
+matters. Torch preparation keeps the route resolved by its selector.
+
+See {ref}`prepared_neighbor_lists` for the workflow, lifecycle, selection,
+performance guidance, and supported boundaries. The backend API references
+document every state property and preparation parameter.
+
 ### JAX Neighbor-List Compilation Boundary
 
-Use `neighbor_list(...)` for eager method selection, capacity estimation,
-allocation, and dispatch. It returns the selected method's outputs without
-checking capacity or retrying. Compile a method-specific function such as
-`naive_neighbor_list(...)`, `cell_list(...)`, or
+Without `state`, use `neighbor_list(...)` for eager method selection, capacity
+estimation, allocation, and dispatch. It returns the selected method's outputs
+without checking capacity or retrying. Compile a method-specific function such
+as `naive_neighbor_list(...)`, `cell_list(...)`, or
 `cluster_tile_neighbor_list(...)` after choosing the method and capacities.
 After a compiled call, inspect its matrix counts or fixed-COO recovery metadata
 before consuming the output. If necessary, enlarge the buffers or recompute
@@ -169,6 +189,38 @@ explicit vectors as fixed metadata.
 
 A reciprocal-component cell derivative holds positions fixed. For a
 homogeneous-strain derivative, deform positions and cell together.
+
+### Float32 CUDA Electrostatics Default
+
+Monopole electrostatics (Ewald real-space per-pair cores, and the reciprocal
+no-store structure-factor path) now evaluate in float32 by default for
+float32 CUDA inputs, rather than promoting to float64 internally. This
+affects both Ewald and PME, since real space is shared between them. CPU
+execution is unchanged either way -- the fast path is CUDA-only.
+
+The change is numerically small: float32 results move at the ~1e-07 level.
+Second-order gradients move with the forward rather than staying fixed, so
+float32 Hessian-vector products -- including those from a force- or
+stress-matching loss -- shift to ~7e-07 relative and run 2.5-3.2x faster;
+float64 and CPU callers are unchanged.
+
+To keep the previous behavior, set `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1`
+before your process imports `nvalchemiops` (the flag is read once per
+process). Check which mode is active with:
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import (
+    electrostatics_uses_legacy_fp32,
+)
+
+electrostatics_uses_legacy_fp32()  # True if the legacy float64-core path is forced
+```
+
+`nvalchemiops.math.wp_erfc` is deprecated in favor of
+`wp_erfc_input_precision` (dispatches by input dtype: native `wp.erfc` at
+float64, the float32-grade approximation at float32) or `wp_erfc_f32_fast`
+(the approximation explicitly). `wp_erfc` keeps its original behavior for
+backward compatibility.
 
 ## v0.4.1: Energy Output Layout
 

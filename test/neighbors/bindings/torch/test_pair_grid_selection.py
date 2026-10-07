@@ -469,6 +469,53 @@ def test_selector_rejects_one_degenerate_cell(dtype, invalid_system):
         _select_pair_grid(cell, pbc, 6.0, None, ptr, DEFAULT_BATCH_MAX_NBINS, 4)
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_allocation_total_exceeds_int32(dtype):
+    """Accumulate valid per-system cell counts without int32 overflow."""
+    systems = 3000
+    cell = torch.eye(3, device="cuda", dtype=dtype).repeat(systems, 1, 1) * 100
+    pbc = torch.ones((systems, 3), device="cuda", dtype=torch.bool)
+    ptr = torch.arange(systems + 1, device="cuda", dtype=torch.int32)
+    total, _, grid = _select_pair_grid(cell, pbc, 1.0, None, ptr, 1_000_000, 4)
+    assert total > torch.iinfo(torch.int32).max
+    assert total == int(grid.to(torch.int64).prod(dim=1).sum())
+
+
+@pytest.mark.parametrize(
+    "systems,invalid",
+    [(0, False)]
+    + [
+        (systems, invalid)
+        for systems in (1, 7, 63, 64, 65, 129)
+        for invalid in (False, True)
+    ],
+)
+def test_allocation_reads_one_validated_scalar(systems, invalid):
+    """Automatic sizing reports valid sizes and errors through one scalar read."""
+    cell = torch.eye(3, device="cuda").repeat(systems, 1, 1) * 12
+    pbc = torch.ones((systems, 3), device="cuda", dtype=torch.bool)
+    ptr = torch.arange(systems + 1, device="cuda", dtype=torch.int32) * 32
+    _select_pair_grid(cell, pbc, 6.0, None, ptr, 64, 4)
+    if invalid:
+        cell[-1, 0].zero_()
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU]
+    ) as profile:
+        if invalid:
+            with pytest.raises(RuntimeError, match="volume == 0.0"):
+                _select_pair_grid(cell, pbc, 6.0, None, ptr, 64, 4)
+        else:
+            total, _, grid = _select_pair_grid(cell, pbc, 6.0, None, ptr, 64, 4)
+    reads = sum(
+        event.count
+        for event in profile.key_averages()
+        if event.key == "aten::_local_scalar_dense"
+    )
+    assert reads == 1
+    if not invalid:
+        assert total == int(grid.to(torch.int64).prod(dim=1).sum())
+
+
 @pytest.mark.parametrize("supplied_ptr", [False, True])
 @pytest.mark.parametrize("reuse_workspace", [False, True])
 def test_direct_binding_pair_geometry(supplied_ptr, reuse_workspace):
@@ -604,7 +651,8 @@ def test_uneven_current_boxes(dtype, nondefault_stream, reuse_workspace):
 
 @pytest.mark.parametrize("batched", [False, True])
 @pytest.mark.parametrize("public", [False, True])
-def test_grid_policy_default_and_opt_in(batched, public):
+@pytest.mark.parametrize("reuse_workspace", [False, True])
+def test_grid_policy_default_and_opt_in(batched, public, reuse_workspace):
     """Default grids retain configured sizing while adaptive preserves pairs."""
     systems = 3 if batched else 1
     populations = [17, 0, 32] if batched else [32]
@@ -644,16 +692,20 @@ def test_grid_policy_default_and_opt_in(batched, public):
         )
         workspace = _workspace_kwargs(atoms, 64 * systems, radius)
         policy_kwargs = {} if policy is None else {"grid_policy": policy}
-        result = call(**common, **workspace, **policy_kwargs)
+        result = call(
+            **common, **(workspace if reuse_workspace else {}), **policy_kwargs
+        )
         results.append(signature(result))
-        grids.append(workspace["cells_per_dimension"].clone())
+        if reuse_workspace:
+            grids.append(workspace["cells_per_dimension"].clone())
     assert results[0] == results[1] == results[2]
-    torch.testing.assert_close(grids[0], torch.full_like(grids[0], 4))
-    torch.testing.assert_close(grids[0], grids[1])
-    if batched:
-        assert not torch.equal(grids[1], grids[2])
-    else:
-        # This geometry increases estimated pair work on coarser grids.
-        torch.testing.assert_close(grids[1], grids[2])
+    if reuse_workspace:
+        torch.testing.assert_close(grids[0], torch.full_like(grids[0], 4))
+        torch.testing.assert_close(grids[0], grids[1])
+        if batched:
+            assert not torch.equal(grids[1], grids[2])
+        else:
+            # This geometry increases estimated pair work on coarser grids.
+            torch.testing.assert_close(grids[1], grids[2])
     with pytest.raises(ValueError, match="grid_policy"):
         call(**common, grid_policy="unknown")

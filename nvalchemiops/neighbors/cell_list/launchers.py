@@ -158,6 +158,9 @@ def build_cell_list(
     device: str,
     min_cells_per_dimension: int = 4,
     grid_is_prepared: bool = False,
+    *,
+    fixed_cell: bool = False,
+    inv_cell: wp.array | None = None,
 ) -> None:
     """Core warp launcher for building spatial cell list.
 
@@ -196,6 +199,10 @@ def build_cell_list(
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
     grid_is_prepared : bool, default False
         Use the dimensions already stored in ``cells_per_dimension``.
+    fixed_cell : bool, default False
+        Reuse caller-prepared grid geometry and the read-only inverse cell.
+    inv_cell : wp.array, shape (1,), dtype=wp.mat33*, optional
+        READONLY: Cached inverse cell required when ``fixed_cell=True``.
 
     Notes
     -----
@@ -211,8 +218,14 @@ def build_cell_list(
     total_atoms = positions.shape[0]
     max_total_cells = atoms_per_cell_count.shape[0]
     wp_cutoff = wp_dtype(cutoff)
+    _, mat_dtype = dtype_info(wp_dtype)
+    if fixed_cell and inv_cell is None:
+        raise ValueError("inv_cell is required when fixed_cell=True")
+    inv_cell_arg = (
+        inv_cell if inv_cell is not None else _empty_sentinel(1, mat_dtype, device)
+    )
 
-    if not grid_is_prepared:
+    if not fixed_cell and not grid_is_prepared:
         wp.launch(
             get_build_cell_list_kernel(
                 "construct_bin_size",
@@ -233,11 +246,14 @@ def build_cell_list(
         )
 
     wp.launch(
-        get_build_cell_list_kernel("count_atoms", wp_dtype),
+        get_build_cell_list_kernel(
+            "count_atoms", wp_dtype, fixed_cell=bool(fixed_cell)
+        ),
         dim=total_atoms,
         inputs=[
             positions,
             cell,
+            inv_cell_arg,
             pbc,
             _empty_sentinel(2, wp.bool, device),
             _empty_sentinel(1, wp.int32, device),
@@ -255,11 +271,12 @@ def build_cell_list(
     atoms_per_cell_count.zero_()
 
     wp.launch(
-        get_build_cell_list_kernel("bin_atoms", wp_dtype),
+        get_build_cell_list_kernel("bin_atoms", wp_dtype, fixed_cell=bool(fixed_cell)),
         dim=total_atoms,
         inputs=[
             positions,
             cell,
+            inv_cell_arg,
             pbc,
             _empty_sentinel(2, wp.bool, device),
             _empty_sentinel(1, wp.int32, device),
@@ -1017,6 +1034,9 @@ def batch_build_cell_list(
     min_cells_per_dimension: int = 4,
     grid_is_prepared: bool = False,
     cells_per_system_is_prepared: bool = False,
+    *,
+    fixed_cell: bool = False,
+    inv_cell: wp.array | None = None,
 ) -> None:
     """Core warp launcher for building batch spatial cell lists.
 
@@ -1066,6 +1086,10 @@ def batch_build_cell_list(
         allocation sizes and search radii for the current cell and cutoff.
     cells_per_system_is_prepared : bool, default False
         Reuse cell counts already written for the supplied grid dimensions.
+    fixed_cell : bool, default False
+        Reuse caller-prepared grids and the read-only inverse cells.
+    inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
+        READONLY: Cached inverse cells required when ``fixed_cell=True``.
 
     Notes
     -----
@@ -1082,8 +1106,14 @@ def batch_build_cell_list(
     num_systems = cell.shape[0]
     max_total_cells = atoms_per_cell_count.shape[0]
     wp_cutoff = wp_dtype(cutoff)
+    _, mat_dtype = dtype_info(wp_dtype)
+    if fixed_cell and inv_cell is None:
+        raise ValueError("inv_cell is required when fixed_cell=True")
+    inv_cell_arg = (
+        inv_cell if inv_cell is not None else _empty_sentinel(1, mat_dtype, device)
+    )
 
-    if not grid_is_prepared:
+    if not fixed_cell and not grid_is_prepared:
         wp.launch(
             get_build_cell_list_kernel(
                 "construct_bin_size",
@@ -1104,21 +1134,25 @@ def batch_build_cell_list(
             ),
         )
 
-    if not cells_per_system_is_prepared:
-        wp.launch(
-            _compute_cells_per_system,
-            dim=num_systems,
-            device=device,
-            inputs=(cells_per_dimension, cells_per_system),
-        )
-    wp.utils.array_scan(cells_per_system, cell_offsets, inclusive=False)
+    if not fixed_cell:
+        if not cells_per_system_is_prepared:
+            wp.launch(
+                _compute_cells_per_system,
+                dim=num_systems,
+                device=device,
+                inputs=(cells_per_dimension, cells_per_system),
+            )
+        wp.utils.array_scan(cells_per_system, cell_offsets, inclusive=False)
 
     wp.launch(
-        get_build_cell_list_kernel("count_atoms", wp_dtype, batched=True),
+        get_build_cell_list_kernel(
+            "count_atoms", wp_dtype, batched=True, fixed_cell=bool(fixed_cell)
+        ),
         dim=total_atoms,
         inputs=(
             positions,
             cell,
+            inv_cell_arg,
             _empty_sentinel(1, wp.bool, device),
             pbc,
             batch_idx,
@@ -1136,11 +1170,14 @@ def batch_build_cell_list(
     atoms_per_cell_count.zero_()
 
     wp.launch(
-        get_build_cell_list_kernel("bin_atoms", wp_dtype, batched=True),
+        get_build_cell_list_kernel(
+            "bin_atoms", wp_dtype, batched=True, fixed_cell=bool(fixed_cell)
+        ),
         dim=total_atoms,
         inputs=(
             positions,
             cell,
+            inv_cell_arg,
             _empty_sentinel(1, wp.bool, device),
             pbc,
             batch_idx,

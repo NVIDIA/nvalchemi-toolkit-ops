@@ -47,6 +47,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, TypedDict
 
+import numpy as np
 import torch
 import warp as wp
 
@@ -65,6 +66,7 @@ __all__ = [
     "current_alloc_gb",
     "ensure_jax_available",
     "failure_error_type",
+    "fixed_total_metadata",
     "format_num",
     "get_gpu_memory_info",
     "get_timestamp",
@@ -76,8 +78,11 @@ __all__ = [
     "make_row_meta",
     "measure_memory_jax",
     "measure_memory_torch",
+    "measure_timing_batches",
+    "neighbor_count_metadata",
     "save_results",
     "sync_gpu",
+    "summarize_timing_batches",
     "validate_result_files",
     "write_run_log",
 ]
@@ -299,6 +304,7 @@ def lazy_import_jax(
                 ewald_real_space,
                 ewald_reciprocal_space,
                 ewald_summation,
+                generate_k_squared_pme,
                 generate_k_vectors_ewald_summation,
                 generate_k_vectors_pme,
                 particle_mesh_ewald,
@@ -313,6 +319,7 @@ def lazy_import_jax(
                     "particle_mesh_ewald": particle_mesh_ewald,
                     "pme_reciprocal_space": pme_reciprocal_space,
                     "generate_k_vectors_pme": generate_k_vectors_pme,
+                    "generate_k_squared_pme": generate_k_squared_pme,
                     "generate_k_vectors_ewald_summation": generate_k_vectors_ewald_summation,
                     "estimate_pme_parameters": estimate_pme_parameters,
                     "estimate_ewald_parameters": estimate_ewald_parameters,
@@ -374,6 +381,8 @@ def make_row_meta(
     atoms_per_system: int,
     batch_size: int,
     total_atoms: int,
+    *,
+    mode_config: Mapping[str, Any] | None = None,
 ) -> dict:
     """Build the six identity columns shared by every CSV row.
 
@@ -383,7 +392,7 @@ def make_row_meta(
     values directly so EL (which extracts them from ``_el_setup_config``
     after ``data`` is released) can use it without reconstructing a dict.
     """
-    return {
+    row_meta = {
         "system": sys_name,
         "scaling_mode": mode_name,
         "backend": backend,
@@ -391,11 +400,187 @@ def make_row_meta(
         "batch_size": batch_size,
         "total_atoms": total_atoms,
     }
+    if mode_config is not None:
+        row_meta.update(fixed_total_metadata(mode_name, mode_config, total_atoms))
+    return row_meta
 
 
 # =============================================================================
 # Timing Functions
 # =============================================================================
+
+
+def neighbor_count_metadata(
+    num_neighbors: Any,
+    configured_max_neighbors: int,
+) -> dict[str, int]:
+    """Validate per-atom counts and return unambiguous row metrics.
+
+    Parameters
+    ----------
+    num_neighbors : array-like, shape (num_atoms,)
+        Observed directed neighbor count for each atom.
+    configured_max_neighbors : int
+        Capacity passed to the public ``max_neighbors`` argument.
+
+    Returns
+    -------
+    dict[str, int]
+        Configured capacity, observed maximum, and observed directed pair
+        count.
+    """
+    configured_max_neighbors = int(configured_max_neighbors)
+    if configured_max_neighbors <= 0:
+        raise ValueError("configured_max_neighbors must be positive")
+
+    if torch.is_tensor(num_neighbors):
+        counts = num_neighbors.detach().cpu().numpy()
+    else:
+        counts = np.asarray(num_neighbors)
+    if counts.ndim != 1:
+        raise ValueError(f"num_neighbors must be one-dimensional, got {counts.shape}")
+    if not np.issubdtype(counts.dtype, np.integer):
+        raise ValueError(f"num_neighbors must use an integer dtype, got {counts.dtype}")
+
+    counts = counts.astype(np.int64, copy=False)
+    if np.any(counts < 0):
+        raise ValueError("num_neighbors must not contain negative counts")
+    observed_max_neighbors = int(counts.max(initial=0))
+    if observed_max_neighbors > configured_max_neighbors:
+        raise ValueError(
+            "observed neighbor count exceeds configured capacity: "
+            f"observed={observed_max_neighbors}, "
+            f"configured={configured_max_neighbors}"
+        )
+
+    return {
+        "configured_max_neighbors": configured_max_neighbors,
+        "observed_max_neighbors": observed_max_neighbors,
+        "observed_directed_neighbor_pairs": int(counts.sum(dtype=np.int64)),
+    }
+
+
+def fixed_total_metadata(
+    mode_name: str,
+    mode_config: Mapping[str, Any] | None,
+    total_atoms: int,
+) -> dict[str, int | float | str]:
+    """Describe the configured target for fixed-total-atom rows."""
+    if mode_name != "constant_workload":
+        return {}
+    if mode_config is None:
+        raise ValueError("constant_workload rows require mode_config")
+    if "batch_rounding" in mode_config:
+        raise ValueError(
+            "constant_workload uses explicit batch_sizes, not batch_rounding"
+        )
+    if "batch_sizes" not in mode_config:
+        raise ValueError("constant_workload requires explicit batch_sizes")
+    target_atoms = int(mode_config["target_atoms"])
+    if target_atoms <= 0:
+        raise ValueError("constant_workload target_atoms must be positive")
+    target_delta_atoms = int(total_atoms) - target_atoms
+    return {
+        "target_total_atoms": target_atoms,
+        "target_delta_atoms": target_delta_atoms,
+        "target_delta_fraction": target_delta_atoms / target_atoms,
+        "batch_selection": "explicit",
+    }
+
+
+def measure_timing_batches(
+    fn: Callable[[], Any],
+    num_runs: int,
+    warmup_runs: int,
+    timing_batches: int,
+    *,
+    backend: str = "torch",
+    queued_warmup_batches: int = 0,
+    jax_batch_timer: Callable[..., float] | None = None,
+) -> tuple[float, ...]:
+    """Measure consecutive timing batches after one shared warmup.
+
+    Parameters
+    ----------
+    fn : callable
+        Prepared zero-argument benchmark closure.
+    num_runs : int
+        Number of measured calls in each batch.
+    warmup_runs : int
+        Number of warmup calls before the first batch.
+    timing_batches : int
+        Number of consecutive batches to measure.
+    backend : str, default='torch'
+        ``'torch'``, ``'warp'``, or ``'jax'``.
+    queued_warmup_batches : int, default=0
+        Number of unmeasured full ``num_runs`` batches dispatched before the
+        measured batches. This matches allocation and graph-capture behavior
+        that serial compile warmups do not exercise.
+    jax_batch_timer : callable, optional
+        JAX batch timer. This dependency is injectable for CPU-only scheduling
+        tests; normal benchmark runs use :func:`jax_timed_batch`.
+
+    Returns
+    -------
+    tuple[float, ...]
+        Mean seconds per call for every timing batch.
+    """
+    if timing_batches <= 0:
+        raise ValueError("timing_batches must be positive")
+    if queued_warmup_batches < 0:
+        raise ValueError("queued_warmup_batches must be nonnegative")
+    if backend == "jax":
+        timer = jax_timed_batch if jax_batch_timer is None else jax_batch_timer
+        if queued_warmup_batches:
+            timer(fn, num_runs, warmup_runs=warmup_runs)
+            for _ in range(queued_warmup_batches - 1):
+                timer(fn, num_runs, warmup_runs=None)
+            warmup_runs = None
+        return tuple(
+            timer(
+                fn,
+                num_runs,
+                warmup_runs=warmup_runs if batch_index == 0 else None,
+            )
+            for batch_index in range(timing_batches)
+        )
+    return tuple(
+        cuda_timed_runs(
+            fn,
+            num_runs,
+            warmup_runs=warmup_runs if batch_index == 0 else 0,
+            backend=backend,
+        )
+        for batch_index in range(timing_batches)
+    )
+
+
+def summarize_timing_batches(
+    samples_seconds: Sequence[float],
+) -> tuple[float, float, str]:
+    """Summarize consecutive steady-state timing batches.
+
+    Parameters
+    ----------
+    samples_seconds : sequence of float
+        Mean seconds per call from each timing batch.
+
+    Returns
+    -------
+    tuple[float, float, str]
+        Arithmetic mean seconds per call, maximum-to-minimum ratio, and compact
+        JSON containing every batch mean.
+    """
+    values = tuple(float(value) for value in samples_seconds)
+    if not values:
+        raise ValueError("timing batches must contain at least one sample")
+    if any(not math.isfinite(value) or value <= 0.0 for value in values):
+        raise ValueError(f"timing batches must be positive and finite: {values}")
+    return (
+        float(np.mean(values, dtype=np.float64)),
+        max(values) / min(values),
+        json.dumps(values, separators=(",", ":")),
+    )
 
 
 def cuda_timed_batch(
@@ -484,13 +669,15 @@ def cuda_timed_runs(
 # =============================================================================
 
 
-def _jax_compile_warmups(warmup_runs: int) -> int:
+def _jax_compile_warmups(warmup_runs: int | None) -> int:
     """Return warmup calls needed to keep JIT compile outside timed regions."""
+    if warmup_runs is None:
+        return 0
     return max(1, int(warmup_runs))
 
 
 def jax_timed_batch(
-    fn: Callable[[], Any], num_runs: int, warmup_runs: int = 3
+    fn: Callable[[], Any], num_runs: int, warmup_runs: int | None = 3
 ) -> float:
     """Time a JAX function using wall-clock timing — batch pattern.
 
@@ -506,8 +693,9 @@ def jax_timed_batch(
         so ``jax.block_until_ready`` can complete dispatch.
     num_runs : int
         Number of timing iterations.
-    warmup_runs : int, default=3
-        Number of warmup runs. First warmup triggers JIT compile.
+    warmup_runs : int or None, default=3
+        Number of warmup runs. First warmup triggers JIT compile. ``None``
+        continues a prepared timing group without additional warmup calls.
 
     Returns
     -------
@@ -690,6 +878,8 @@ _ROW_PROVENANCE_FIELDS = (
 _MEASUREMENT_PROTOCOL_FIELDS = (
     "timing_runs",
     "warmup_runs",
+    "timing_batches",
+    "timing_batch_aggregation",
     "compile_policy",
     "derivative_contract",
     "workload",
@@ -1189,12 +1379,11 @@ def validate_result_files(
     be uniform within each CSV, and runtime/allocator settings must be uniform
     across shards of the same backend.
 
-    With ``per_method=True``, validate each NL (backend, method) collection
+    With ``per_method=True``, validate each (module, backend, method) collection
     independently across all systems, cutoffs, and scaling modes. Single and
-    batch variants belong to the same collection. This supports complete NL
-    method refreshes in the published docs; callers must also validate the
-    planned case matrix. Other modules and collection writers retain the
-    suite-wide checks.
+    batch variants belong to the same collection. This supports complete method
+    refreshes in the published docs; callers must also validate the planned case
+    matrix. Collection writers retain the default suite-wide checks.
     """
     paths = [Path(path) for path in csv_paths]
     expected_context: dict[tuple[tuple[str, ...], str], str] = {}
@@ -1217,7 +1406,6 @@ def validate_result_files(
                     f"expected {previous!r}, found {value!r}"
                 )
 
-        group_nl_methods = per_method and path.name.startswith("nl-")
         for row_number, row in enumerate(rows, start=2):
             location = f"{path}:{row_number}"
             missing = [field for field in _ROW_PROVENANCE_FIELDS if not row.get(field)]
@@ -1239,10 +1427,10 @@ def validate_result_files(
                     backend,
                     row.get("method", "").removeprefix("batch_"),
                 )
-                if group_nl_methods
+                if per_method
                 else ()
             )
-            if group_nl_methods and (not backend or not row.get("method")):
+            if per_method and (not backend or not row.get("method")):
                 raise ValueError(f"Missing benchmark backend or method at {location}")
             for field in _PROVENANCE_FIELDS:
                 previous = expected_context.setdefault((collection, field), row[field])
@@ -1252,7 +1440,7 @@ def validate_result_files(
                         f"{previous!r}, found {row[field]!r}"
                     )
 
-            input_key = collection if group_nl_methods else (str(path),)
+            input_key = collection if per_method else (str(path),)
             previous_input = input_contexts.setdefault(input_key, row["input_context"])
             if row["input_context"] != previous_input:
                 raise ValueError(
@@ -1512,6 +1700,7 @@ def save_results(
     *,
     append: bool = False,
     replace_backend: str | None = None,
+    replace_methods: Sequence[str] | None = None,
 ) -> None:
     """Save benchmark results to CSV.
 
@@ -1520,8 +1709,10 @@ def save_results(
     intentional append workflows. Pass ``replace_backend`` when Torch and JAX
     rows intentionally share a docs CSV: existing rows for that backend are
     replaced, rows for other backends are preserved only when their run, GPU,
-    and software provenance matches. A hidden run-ID marker in the output
-    directory lets separate backend processes share the same run identity.
+    and software metadata matches. Pass ``replace_methods`` together with
+    ``replace_backend`` to replace only the selected backend/method rows.
+    An empty method-scoped result clears matching stale rows. A hidden run-ID
+    marker in the output directory lets separate processes share one run identity.
 
     Parameters
     ----------
@@ -1529,15 +1720,46 @@ def save_results(
         List of result dicts from build_result().
     output_path : str or Path
         Path to output CSV file.
+    append : bool, optional
+        Append rows to a compatible existing collection.
+    replace_backend : str or None, optional
+        Backend whose existing rows are replaced.
+    replace_methods : sequence of str or None, optional
+        Methods to replace within ``replace_backend``. Other rows are preserved.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if append and replace_backend is not None:
         raise ValueError("append and replace_backend are mutually exclusive")
+    if replace_methods is not None and replace_backend is None:
+        raise ValueError("replace_methods requires replace_backend")
+    replace_method_set = (
+        {str(method) for method in replace_methods}
+        if replace_methods is not None
+        else None
+    )
+    if replace_method_set == set():
+        raise ValueError("replace_methods must not be empty")
 
-    if not results:
+    if not results and replace_method_set is None:
         print(f"No results to save to {output_path}")
         return
+
+    if results and replace_backend is not None:
+        incoming_backends = {str(result.get("backend", "")) for result in results}
+        if incoming_backends != {replace_backend}:
+            raise ValueError(
+                "replace_backend must match every incoming row; "
+                f"expected {replace_backend!r}, got {sorted(incoming_backends)!r}"
+            )
+    if results and replace_method_set is not None:
+        incoming_methods = {str(result.get("method", "")) for result in results}
+        unexpected_methods = incoming_methods - replace_method_set
+        if unexpected_methods:
+            raise ValueError(
+                "replace_methods must include every incoming row method; "
+                f"unexpected {sorted(unexpected_methods)!r}"
+            )
 
     provenance = _run_provenance(output_path)
     stamped_results = _stamp_provenance(results, provenance)
@@ -1554,7 +1776,13 @@ def save_results(
                 reader = csv.DictReader(input_file)
                 existing_fields = reader.fieldnames or []
                 existing_rows = [
-                    row for row in reader if row.get("backend") != replace_backend
+                    row
+                    for row in reader
+                    if row.get("backend") != replace_backend
+                    or (
+                        replace_method_set is not None
+                        and row.get("method") not in replace_method_set
+                    )
                 ]
 
             _validate_preserved_provenance(existing_rows, provenance, output_path)
@@ -1572,10 +1800,17 @@ def save_results(
                 combined_fields,
                 combined_rows,
             )
+            replacement_label = replace_backend
+            if replace_method_set is not None:
+                replacement_label += "/" + ",".join(sorted(replace_method_set))
             print(
-                f"Replaced {replace_backend} rows with {len(stamped_results)} "
+                f"Replaced {replacement_label} rows with {len(stamped_results)} "
                 f"results in {output_path}"
             )
+            return
+
+        if not stamped_results:
+            print(f"No matching results to clear from {output_path}")
             return
 
         if output_path.exists() and append:

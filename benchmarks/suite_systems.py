@@ -36,6 +36,7 @@ import numpy as np
 import torch
 
 __all__ = [
+    "benchmark_system_metadata",
     "compute_atomic_density",
     "configs_for_mode",
     "configured_nh3_artifacts",
@@ -111,11 +112,21 @@ def compute_atomic_density(system: dict) -> float:
             raise ValueError(f"atomic_density must be positive and finite: {density}")
         return density
 
-    cell = system["cell"]
-    if hasattr(cell, "detach"):
-        cell = cell.detach().cpu().numpy()
-    else:
-        cell = np.asarray(cell)
+    volumes, counts = _system_volumes_and_counts(system)
+    return float(np.max(counts / volumes))
+
+
+# EL row metadata and explicit geometry validation.
+def _as_numpy(value) -> np.ndarray:
+    """Return a host NumPy view or copy of one benchmark array."""
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def _system_volumes_and_counts(system: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-system cell volumes and atom counts from actual inputs."""
+    cell = _as_numpy(system["cell"])
     if cell.ndim == 2:
         cell = cell[None, ...]
     if cell.ndim != 3 or cell.shape[1:] != (3, 3):
@@ -132,11 +143,7 @@ def compute_atomic_density(system: dict) -> float:
     if atoms_per_system is not None:
         counts = np.full(num_systems, int(atoms_per_system), dtype=np.int64)
     elif system.get("batch_idx") is not None:
-        batch_idx = system["batch_idx"]
-        if hasattr(batch_idx, "detach"):
-            batch_idx = batch_idx.detach().cpu().numpy()
-        else:
-            batch_idx = np.asarray(batch_idx)
+        batch_idx = _as_numpy(system["batch_idx"])
         counts = np.bincount(batch_idx.astype(np.int64), minlength=num_systems)
     else:
         total_atoms = int(
@@ -152,7 +159,330 @@ def compute_atomic_density(system: dict) -> float:
         raise ValueError(
             f"atom counts must be positive for {num_systems} systems: {counts}"
         )
-    return float(np.max(counts / volumes))
+    return volumes, counts
+
+
+def compute_minimum_cell_face_distance(system: dict) -> float:
+    r"""Return the shortest distance between opposite periodic cell faces.
+
+    For a cell matrix :math:`H`, the three face distances are the reciprocals
+    of the row norms of :math:`H^{-T}`. This works for orthogonal and triclinic
+    cells and matches the geometry used by automatic neighbor-list selection.
+
+    Parameters
+    ----------
+    system : dict
+        Benchmark system containing ``cell`` with shape ``(3, 3)`` or
+        ``(B, 3, 3)``.
+
+    Returns
+    -------
+    float
+        Smallest cell-face distance across every system in the batch.
+
+    Raises
+    ------
+    ValueError
+        If the cell shape is invalid or a face distance is not positive and
+        finite.
+    """
+    cell = _as_numpy(system["cell"])
+    if cell.ndim == 2:
+        cell = cell[None, ...]
+    if cell.ndim != 3 or cell.shape[1:] != (3, 3):
+        raise ValueError(f"cell must have shape (3, 3) or (B, 3, 3), got {cell.shape}")
+
+    try:
+        inverse_transpose = np.swapaxes(
+            np.linalg.inv(cell.astype(np.float64, copy=False)),
+            -1,
+            -2,
+        )
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("cell matrices must be invertible") from exc
+    reciprocal_norms = np.linalg.norm(inverse_transpose, axis=-1)
+    face_distances = 1.0 / reciprocal_norms
+    if np.any(~np.isfinite(face_distances)) or np.any(face_distances <= 0.0):
+        raise ValueError(
+            f"cell-face distances must be positive and finite: {face_distances}"
+        )
+    return float(np.min(face_distances))
+
+
+def benchmark_system_metadata(
+    system: dict,
+    system_type: str,
+) -> dict[str, float | int | str]:
+    """Validate one reportable system and return self-contained row metrics.
+
+    The checks use only the benchmark inputs. They verify finite coordinates,
+    uniform replicated cells, batch membership, the expected CsCl or NH3
+    composition and charges, and neutrality within floating-point roundoff.
+
+    Parameters
+    ----------
+    system : dict
+        System returned by :func:`create_system`.
+    system_type : str
+        ``"cscl"`` or ``"nh3"``.
+
+    Returns
+    -------
+    dict[str, float | int | str]
+        Geometric density, charge checks, and CsCl replication metadata.
+    """
+    if system_type not in {"cscl", "nh3"}:
+        raise ValueError(f"unsupported benchmark system: {system_type!r}")
+
+    volumes, counts = _system_volumes_and_counts(system)
+    float32_roundoff = 64 * np.finfo(np.float32).eps
+    if not np.allclose(volumes, volumes[0], rtol=float32_roundoff, atol=0.0):
+        raise ValueError(f"benchmark batches must repeat one cell volume: {volumes}")
+
+    positions = _as_numpy(system["positions"])
+    numbers = _as_numpy(system["atomic_numbers"])
+    charges = _as_numpy(system["charges"])
+    batch_idx = _as_numpy(system["batch_idx"])
+    total_atoms = int(counts.sum())
+    if positions.shape != (total_atoms, 3):
+        raise ValueError(
+            f"positions must have shape ({total_atoms}, 3), got {positions.shape}"
+        )
+    if numbers.shape != (total_atoms,) or charges.shape != (total_atoms,):
+        raise ValueError(
+            "atomic_numbers and charges must contain one value per atom: "
+            f"numbers={numbers.shape}, charges={charges.shape}"
+        )
+    if not np.all(np.isfinite(positions)) or not np.all(np.isfinite(charges)):
+        raise ValueError("benchmark positions and charges must be finite")
+
+    expected_batch_idx = np.repeat(np.arange(len(counts), dtype=np.int64), counts)
+    if batch_idx.shape != (total_atoms,) or not np.array_equal(
+        batch_idx.astype(np.int64, copy=False), expected_batch_idx
+    ):
+        raise ValueError("batch_idx must contain contiguous replicated systems")
+
+    expected_charge_by_number = (
+        {
+            ELEMENT_Z["Cs"]: CSCL_CHARGES["Cs"],
+            ELEMENT_Z["Cl"]: CSCL_CHARGES["Cl"],
+        }
+        if system_type == "cscl"
+        else {
+            ELEMENT_Z["H"]: NH3_PARTIAL_CHARGES["H"],
+            ELEMENT_Z["N"]: NH3_PARTIAL_CHARGES["N"],
+        }
+    )
+    observed_numbers, observed_counts = np.unique(numbers, return_counts=True)
+    composition = {
+        int(number): int(count)
+        for number, count in zip(observed_numbers, observed_counts, strict=True)
+    }
+    if set(composition) != set(expected_charge_by_number):
+        raise ValueError(
+            f"unexpected {system_type} atomic numbers: {sorted(composition)}"
+        )
+    if system_type == "cscl" and (
+        composition[ELEMENT_Z["Cs"]] != composition[ELEMENT_Z["Cl"]]
+    ):
+        raise ValueError(f"CsCl requires equal Cs and Cl counts: {composition}")
+    if system_type == "nh3" and (
+        composition[ELEMENT_Z["H"]] != 3 * composition[ELEMENT_Z["N"]]
+    ):
+        raise ValueError(f"NH3 requires three H atoms per N atom: {composition}")
+
+    expected_charges = np.fromiter(
+        (expected_charge_by_number[int(number)] for number in numbers),
+        dtype=np.float64,
+        count=total_atoms,
+    )
+    charge_dtype = charges.dtype if np.issubdtype(charges.dtype, np.floating) else None
+    if charge_dtype is None:
+        raise ValueError(f"charges must use a floating dtype, got {charges.dtype}")
+    charge_epsilon = np.finfo(charge_dtype).eps
+    charge_value_tolerance = 8 * charge_epsilon
+    if not np.allclose(
+        charges.astype(np.float64, copy=False),
+        expected_charges,
+        rtol=charge_value_tolerance,
+        atol=charge_value_tolerance,
+    ):
+        raise ValueError(f"{system_type} charges do not match the configured species")
+
+    system_charges = []
+    start = 0
+    max_absolute_charge_sum = 0.0
+    for count in counts:
+        stop = start + int(count)
+        system_charge_values = charges[start:stop].astype(np.float64, copy=False)
+        system_charges.append(float(system_charge_values.sum(dtype=np.float64)))
+        max_absolute_charge_sum = max(
+            max_absolute_charge_sum,
+            float(np.abs(system_charge_values).sum(dtype=np.float64)),
+        )
+        start = stop
+    max_abs_net_charge = max(abs(value) for value in system_charges)
+    charge_sum_tolerance = 16 * charge_epsilon * max(1.0, max_absolute_charge_sum)
+    if max_abs_net_charge > charge_sum_tolerance:
+        raise ValueError(
+            f"{system_type} systems must be neutral: charges={system_charges}, "
+            f"tolerance={charge_sum_tolerance}"
+        )
+
+    metadata: dict[str, float | int | str] = {
+        "atomic_density_atoms_per_angstrom3": compute_atomic_density(system),
+        "minimum_cell_face_distance_angstrom": compute_minimum_cell_face_distance(
+            system
+        ),
+        "max_abs_net_charge_per_system": max_abs_net_charge,
+    }
+    if system_type == "cscl":
+        factors = _normalize_cscl_replication_factors(
+            int(system["atoms_per_system"]),
+            system.get("cscl_replication_factors"),
+        )
+        if factors is None:
+            raise ValueError("CsCl benchmark input is missing replication factors")
+        metadata.update(
+            {
+                "cscl_replication_nx": factors[0],
+                "cscl_replication_ny": factors[1],
+                "cscl_replication_nz": factors[2],
+                "cscl_cell_shape": (
+                    "cubic" if len(set(factors)) == 1 else "orthorhombic"
+                ),
+            }
+        )
+    return metadata
+
+
+def _normalize_cscl_replication_factors(
+    num_atoms: int,
+    replication_factors,
+) -> tuple[int, int, int] | None:
+    """Validate explicit CsCl cell counts against the requested atom count."""
+    if replication_factors is None:
+        return None
+    if isinstance(replication_factors, (str, bytes)):
+        raise ValueError("CsCl replication_factors must contain three integers")
+    try:
+        factors = tuple(replication_factors)
+    except TypeError as exc:
+        raise ValueError(
+            "CsCl replication_factors must contain three integers"
+        ) from exc
+    if len(factors) != 3 or any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, np.integer))
+        or int(value) <= 0
+        for value in factors
+    ):
+        raise ValueError(
+            "CsCl replication_factors must contain three positive integers"
+        )
+    normalized = tuple(int(value) for value in factors)
+    actual_atoms = 2 * int(np.prod(normalized, dtype=np.int64))
+    if actual_atoms != int(num_atoms):
+        raise ValueError(
+            "CsCl replication_factors must produce the requested atom count: "
+            f"requested={num_atoms}, factors={normalized}, actual={actual_atoms}"
+        )
+    return normalized
+
+
+def _validated_cscl_replication_factors(
+    replication_factors,
+    atom_counts: list[int],
+    *,
+    context: str,
+) -> dict[int, tuple[int, int, int]]:
+    """Return a complete validated CsCl replication map."""
+    if not isinstance(replication_factors, dict):
+        raise ValueError(f"{context} CsCl replication_factors must be a mapping")
+
+    expected_counts = set(atom_counts)
+    configured_counts = set(replication_factors)
+    missing = sorted(expected_counts - configured_counts)
+    unexpected = sorted(configured_counts - expected_counts)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing requested atom counts {missing}")
+        if unexpected:
+            details.append(f"unexpected requested atom counts {unexpected}")
+        raise ValueError(
+            f"{context} CsCl replication_factors must exactly match the "
+            f"configured atom counts: {'; '.join(details)}"
+        )
+
+    return {
+        atom_count: _normalize_cscl_replication_factors(
+            atom_count,
+            replication_factors[atom_count],
+        )
+        for atom_count in atom_counts
+    }
+
+
+def _constant_total_batch_sizes(
+    mode_config: dict,
+    system_type: str,
+    atom_counts: list[int],
+) -> dict[int, int]:
+    """Return validated fixed-total batch sizes for one configured system."""
+    if "batch_rounding" in mode_config:
+        raise ValueError(
+            "constant_workload batch_rounding is not supported; "
+            "configure explicit batch_sizes"
+        )
+
+    target_atoms = mode_config.get("target_atoms")
+    if type(target_atoms) is not int or target_atoms <= 0:
+        raise ValueError("constant_workload target_atoms must be a positive integer")
+
+    configured = mode_config.get("batch_sizes")
+    if not isinstance(configured, dict):
+        raise ValueError("constant_workload batch_sizes must be a mapping")
+    system_batch_sizes = configured.get(system_type)
+    if not isinstance(system_batch_sizes, dict):
+        raise ValueError(
+            "constant_workload batch_sizes must contain a mapping for "
+            f"system {system_type!r}"
+        )
+
+    if any(
+        type(atom_count) is not int or atom_count <= 0 for atom_count in atom_counts
+    ):
+        raise ValueError("system atom_counts must contain positive integers")
+    expected_counts = set(atom_counts)
+    if len(expected_counts) != len(atom_counts):
+        raise ValueError("system atom_counts must not contain duplicates")
+
+    for requested_atoms, batch_size in system_batch_sizes.items():
+        if type(requested_atoms) is not int or requested_atoms <= 0:
+            raise ValueError(
+                "constant_workload batch_sizes keys must be positive integers"
+            )
+        if type(batch_size) is not int or batch_size <= 0:
+            raise ValueError(
+                "constant_workload batch_sizes values must be positive integers"
+            )
+
+    configured_counts = set(system_batch_sizes)
+    missing = sorted(expected_counts - configured_counts)
+    unexpected = sorted(configured_counts - expected_counts)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing requested atom counts {missing}")
+        if unexpected:
+            details.append(f"unexpected requested atom counts {unexpected}")
+        raise ValueError(
+            f"constant_workload batch_sizes[{system_type!r}] must exactly match "
+            f"systems[{system_type!r}].atom_counts: {'; '.join(details)}"
+        )
+
+    return dict(system_batch_sizes)
 
 
 def cscl_actual_atoms(n):
@@ -457,21 +787,31 @@ def create_nh3_batch(
 # =============================================================================
 
 
-def _build_cscl_single_numpy(num_atoms):
+def _build_cscl_single_numpy(num_atoms, *, replication_factors=None):
     """Build a single-system CsCl numpy dict (backend-agnostic)."""
     a = CSCL_LATTICE_CONSTANT
     atoms_per_cell = 2  # Cs + Cl
 
-    n_cells = max(1, int(np.ceil((num_atoms / atoms_per_cell) ** (1 / 3))))
-    actual_atoms = cscl_actual_atoms(num_atoms)
+    factors = _normalize_cscl_replication_factors(num_atoms, replication_factors)
+    if factors is None:
+        n_cells = max(1, int(np.ceil((num_atoms / atoms_per_cell) ** (1 / 3))))
+        factors = (n_cells, n_cells, n_cells)
+        actual_atoms = cscl_actual_atoms(num_atoms)
+        cell_size = n_cells * a
+        cell = np.eye(3, dtype=np.float32) * cell_size
+    else:
+        actual_atoms = 2 * int(np.prod(factors, dtype=np.int64))
+        cell_lengths = np.asarray(factors, dtype=np.float32) * a
+        cell = np.diag(cell_lengths).astype(np.float32)
+        cell_size = float(np.min(cell_lengths))
 
     positions = []
     atomic_numbers = []
     charges = []
 
-    for ix in range(n_cells):
-        for iy in range(n_cells):
-            for iz in range(n_cells):
+    for ix in range(factors[0]):
+        for iy in range(factors[1]):
+            for iz in range(factors[2]):
                 origin = np.array([ix, iy, iz], dtype=np.float32) * a
                 # Cs at corner
                 positions.append(origin)
@@ -483,9 +823,6 @@ def _build_cscl_single_numpy(num_atoms):
                 )
                 atomic_numbers.append(ELEMENT_Z["Cl"])
                 charges.append(CSCL_CHARGES["Cl"])
-
-    cell_size = n_cells * a
-    cell = np.eye(3, dtype=np.float32) * cell_size
 
     return {
         "positions": np.asarray(positions[:actual_atoms], dtype=np.float32),
@@ -499,12 +836,17 @@ def _build_cscl_single_numpy(num_atoms):
         "total_atoms": actual_atoms,
         "batch_size": 1,
         "cell_size": cell_size,
+        "cscl_replication_factors": factors,
     }
 
 
-def _build_cscl_batch_numpy(num_atoms_per_system, batch_size):
+def _build_cscl_batch_numpy(
+    num_atoms_per_system, batch_size, *, replication_factors=None
+):
     """Build a batched CsCl numpy dict (backend-agnostic)."""
-    single = _build_cscl_single_numpy(num_atoms_per_system)
+    single = _build_cscl_single_numpy(
+        num_atoms_per_system, replication_factors=replication_factors
+    )
     n = single["atoms_per_system"]
 
     positions = np.tile(single["positions"], (batch_size, 1))
@@ -526,10 +868,18 @@ def _build_cscl_batch_numpy(num_atoms_per_system, batch_size):
         "total_atoms": n * batch_size,
         "batch_size": batch_size,
         "cell_size": single["cell_size"],
+        "cscl_replication_factors": single["cscl_replication_factors"],
     }
 
 
-def create_cscl_system(num_atoms, device="cuda", dtype=torch.float32, backend="torch"):
+def create_cscl_system(
+    num_atoms,
+    device="cuda",
+    dtype=torch.float32,
+    backend="torch",
+    *,
+    replication_factors=None,
+):
     """Create a CsCl supercell with approximately num_atoms atoms.
 
     CsCl/B2 has a primitive-cubic lattice with Cs at (0,0,0) and Cl at
@@ -546,13 +896,17 @@ def create_cscl_system(num_atoms, device="cuda", dtype=torch.float32, backend="t
         Floating-point precision.
     backend : str, default='torch'
         Framework backend: ``'torch'`` or ``'jax'``.
+    replication_factors : tuple[int, int, int], optional
+        Exact B2 unit-cell counts; their product times two equals ``num_atoms``.
 
     Returns
     -------
     dict
         System with positions, atomic_numbers, charges, cell, pbc.
     """
-    np_data = _build_cscl_single_numpy(num_atoms)
+    np_data = _build_cscl_single_numpy(
+        num_atoms, replication_factors=replication_factors
+    )
     return _dispatch_backend(np_data, backend, device, dtype)
 
 
@@ -562,6 +916,8 @@ def create_cscl_batch(
     device="cuda",
     dtype=torch.float32,
     backend="torch",
+    *,
+    replication_factors=None,
 ):
     """Create a batched CsCl system by replicating a supercell.
 
@@ -577,13 +933,17 @@ def create_cscl_batch(
         Floating-point precision.
     backend : str, default='torch'
         Framework backend: ``'torch'`` or ``'jax'``.
+    replication_factors : tuple[int, int, int], optional
+        Exact B2 unit-cell counts for each replicated system.
 
     Returns
     -------
     dict
         Batched system with concatenated positions, tiled cells, batch_idx.
     """
-    np_data = _build_cscl_batch_numpy(num_atoms_per_system, batch_size)
+    np_data = _build_cscl_batch_numpy(
+        num_atoms_per_system, batch_size, replication_factors=replication_factors
+    )
     return _dispatch_backend(np_data, backend, device, dtype)
 
 
@@ -600,6 +960,7 @@ def create_system(
     device: str = "cuda",
     dtype: torch.dtype = torch.float32,
     backend: str = "torch",
+    cscl_replication_factors: tuple[int, int, int] | list[int] | None = None,
 ) -> dict:
     """Create a benchmark system (single or batched).
 
@@ -620,6 +981,8 @@ def create_system(
     backend : str, default='torch'
         Framework backend: ``'torch'`` or ``'jax'``. The returned dict has the
         same keys for both; array types are backend-specific.
+    cscl_replication_factors : tuple[int, int, int] or list[int], optional
+        Exact B2 unit-cell counts for EL's configured CsCl geometry.
 
     Returns
     -------
@@ -631,11 +994,20 @@ def create_system(
             raise ValueError("num_atoms required for CsCl systems")
         if batch_size == 1:
             return create_cscl_system(
-                num_atoms, device=device, dtype=dtype, backend=backend
+                num_atoms,
+                device=device,
+                dtype=dtype,
+                backend=backend,
+                replication_factors=cscl_replication_factors,
             )
         else:
             return create_cscl_batch(
-                num_atoms, batch_size, device=device, dtype=dtype, backend=backend
+                num_atoms,
+                batch_size,
+                device=device,
+                dtype=dtype,
+                backend=backend,
+                replication_factors=cscl_replication_factors,
             )
 
     elif system_type == "nh3":
@@ -852,6 +1224,48 @@ def configs_for_mode(
     """
     atom_counts = sys_config.get("atom_counts", [])
     constant_atoms_sizes = sys_config.get("constant_atoms_sizes", [1024, 8192])
+    replication_factors = (
+        sys_config.get("replication_factors") if sys_name == "cscl" else None
+    )
+    explicit_fixed_total = mode_name == "constant_workload" and (
+        "batch_sizes" in mode_config
+    )
+    exact_system_sizes = mode_name == "system_size" and replication_factors is not None
+    if explicit_fixed_total or exact_system_sizes:
+        factors_by_count = (
+            _validated_cscl_replication_factors(
+                replication_factors, atom_counts, context=mode_name
+            )
+            if replication_factors is not None
+            else {}
+        )
+        batch_sizes = (
+            _constant_total_batch_sizes(mode_config, sys_name, list(atom_counts))
+            if explicit_fixed_total
+            else dict.fromkeys(atom_counts, 1)
+        )
+        pdbs_by_count = {}
+        if sys_name == "nh3" and not plan_only:
+            try:
+                for pdb in find_nh3_pdbs(nh3_dir):
+                    coordinates, _, _, _ = parse_pdb(pdb)
+                    count = len(coordinates)
+                    if count in pdbs_by_count:
+                        raise ValueError(f"multiple NH3 PDBs contain {count} atoms")
+                    pdbs_by_count[count] = pdb
+            except FileNotFoundError:
+                pass
+        configs = []
+        for count in atom_counts:
+            case = {
+                "num_atoms": count,
+                "batch_size": batch_sizes[count],
+                "pdb_path": pdbs_by_count.get(count),
+            }
+            if factors_by_count:
+                case["cscl_replication_factors"] = factors_by_count[count]
+            configs.append(case)
+        return configs
     if sys_name == "nh3":
         nh3_missing = False
         if not plan_only:
@@ -936,7 +1350,14 @@ def planned_atom_counts(sys_name: str, cfg: dict) -> tuple[int, int, int]:
     """Return ``(atoms_per_system, batch_size, total_atoms)`` without allocation."""
     batch_size = int(cfg["batch_size"])
     if sys_name == "cscl":
-        atoms_per_system = cscl_actual_atoms(cfg["num_atoms"])
+        factors = _normalize_cscl_replication_factors(
+            cfg["num_atoms"], cfg.get("cscl_replication_factors")
+        )
+        atoms_per_system = (
+            cscl_actual_atoms(cfg["num_atoms"])
+            if factors is None
+            else 2 * int(np.prod(factors, dtype=np.int64))
+        )
     else:
         atoms_per_system = int(cfg["num_atoms"])
     return atoms_per_system, batch_size, atoms_per_system * batch_size

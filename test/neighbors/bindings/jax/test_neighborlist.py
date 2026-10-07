@@ -181,8 +181,15 @@ class TestNeighborListAutoSelection:
             )
 
         monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
+        # Uniform in a box at a density and size where cell_list genuinely
+        # wins; a sparser geometry selects naive, which returns no shifts.
+        num_atoms = 50_000
+        box_size = (num_atoms / 0.01) ** (1 / 3)
         key = jax.random.PRNGKey(0)
-        positions = jax.random.normal(key, (2000, 3), dtype=dtype) * 50.0
+        positions = jax.device_put(
+            jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * box_size,
+            jax.devices("gpu" if device.startswith("cuda") else "cpu")[0],
+        )
         cutoff = 2.0
 
         result = neighbor_list(positions, cutoff, return_neighbor_list=True)
@@ -192,7 +199,7 @@ class TestNeighborListAutoSelection:
         assert len(result) == 3
         neighbor_list_coo, neighbor_ptr, shifts = result
         assert neighbor_list_coo.shape[0] == 2
-        assert neighbor_ptr.shape[0] == 2001
+        assert neighbor_ptr.shape[0] == num_atoms + 1
         assert int(neighbor_ptr[0]) == 0
         assert shifts.shape[1] == 3
 
@@ -1405,11 +1412,23 @@ class TestNeighborListClusterTileAutoGuards:
         pbc = jnp.array([[True, True, True]])
         return batch_ptr, cell, pbc
 
-    def test_auto_dispatch_cluster_tile_eligible_metadata_selects_cluster_tile(self):
-        """Dense periodic float32 metadata crosses the cluster-tile selector gate."""
+    def test_auto_dispatch_cluster_tile_eligible_metadata_is_offered_not_chosen(self):
+        """Eligible metadata offers cluster_tile; naive still wins at this size.
+
+        Crossing the eligibility gate and winning the cost comparison are
+        separate things, and only the gate is a property of the metadata.
+        cluster_tile does win over much of its eligibility region, but not at
+        this atom count, which sits below its crossover against naive.
+        """
         batch_ptr, cell, pbc = self._cluster_tile_eligible_metadata()
 
-        assert suggest_neighbor_list_method(batch_ptr, cell, pbc, 3.0) == "cluster_tile"
+        report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, 3.0)
+        assert "cluster_tile" in [name for name, _ in report]
+        # Scalar vs tile is within measurement noise, so pin the family.
+        assert suggest_neighbor_list_method(batch_ptr, cell, pbc, 3.0) in {
+            "naive_tile",
+            "naive_scalar",
+        }
 
     def test_auto_dispatch_half_fill_excludes_cluster_tile(self):
         """Half-fill excludes an otherwise cluster-tile-eligible selector input."""

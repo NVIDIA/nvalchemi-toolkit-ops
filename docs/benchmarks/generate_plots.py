@@ -627,8 +627,8 @@ def _suite_csv_dirs(
         marker.read_text(encoding="ascii").strip() if marker.is_file() else None
     )
     try:
-        # Bundled NL results can refresh one complete method. Other modules and
-        # fresh externally supplied suites retain suite-wide validation.
+        # Bundled results can refresh one complete method while preserving the
+        # other measured methods. Fresh externally supplied suites remain one run.
         validate_result_files(
             csv_paths,
             expected_run_id=expected_run_id if override else None,

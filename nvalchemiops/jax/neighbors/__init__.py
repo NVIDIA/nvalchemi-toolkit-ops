@@ -103,6 +103,12 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
+from nvalchemiops.jax.neighbors.prepared_neighbor_list import (
+    NeighborListState,
+    _execute_prepared_neighbor_list,
+    check_neighbor_list_state,
+    prepare_neighbor_list,
+)
 
 # Rebuild detection
 from nvalchemiops.jax.neighbors.rebuild_detection import (
@@ -125,7 +131,7 @@ from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_poli
 
 def neighbor_list(
     positions: jax.Array,
-    cutoff: float,
+    cutoff: float | None = None,
     cell: jax.Array | None = None,
     pbc: jax.Array | None = None,
     batch_idx: jax.Array | None = None,
@@ -138,15 +144,17 @@ def neighbor_list(
     wrap_positions: bool = True,
     *,
     grid_policy: str = "configured",
+    state: NeighborListState | None = None,
     **kwargs: Any,
 ):
-    """Compute an eager neighbor list using the appropriate method.
+    """Compute an eager neighbor list or execute a prepared route.
 
-    This convenience entry point may select an algorithm, inspect host values,
-    and allocate buffers. It is therefore intentionally an eager API, not a
-    supported ``jax.jit`` boundary. For compiled execution, select a method
-    outside ``jax.jit`` and call its method-specific public function with fixed
-    capacities and, where useful, reusable buffers.
+    Without ``state``, this convenience entry point may select an algorithm,
+    inspect host values, and allocate buffers. That dispatcher is intentionally
+    eager and is not a supported ``jax.jit`` boundary. With a state returned by
+    :func:`prepare_neighbor_list`, it executes the resolved route and returns
+    ``(results, next_state)``. Method-specific functions with explicit buffers
+    and capacities remain the lower-overhead compiled interface.
 
     Parameters
     ----------
@@ -155,9 +163,10 @@ def neighbor_list(
         Each row represents one atom's (x, y, z) position.
         Unwrapped (box-crossing) coordinates are supported when PBC is used;
         the kernel wraps positions internally.
-    cutoff : float
+    cutoff : float, optional
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        May be omitted when ``state`` is supplied.
     cell : jax.Array, shape (3, 3) or (num_systems, 3, 3), optional
         Cell matrix defining the simulation box.
     pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool, optional
@@ -211,6 +220,13 @@ def neighbor_list(
         ``"adaptive"`` opts into geometry/population-based grid selection;
         ``"configured"`` preserves the existing grid-sizing rule. Other neighbor
         methods retain their grid behavior. JAX adaptive selection is eager-only.
+    state : NeighborListState, optional
+        State returned by :func:`prepare_neighbor_list`. Its fixed
+        configuration takes precedence. Prepared execution accepts positions,
+        an applicable current cell, selective ``rebuild_flags``, and current
+        ``pair_params`` as runtime inputs and returns ``(results, next_state)``.
+        Prepared states use configured sizing; adaptive ``grid_policy`` is
+        available only for eager calls without ``state``.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -400,13 +416,24 @@ def neighbor_list(
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
     batch_cluster_tile_neighbor_list : Batched cluster-pair tile algorithm
+    prepare_neighbor_list : Prepare managed repeated execution
+    check_neighbor_list_state : Report sticky prepared-state failures
     """
+    _validate_grid_policy(grid_policy)
+    if state is not None:
+        if grid_policy == "adaptive":
+            raise ValueError(
+                "grid_policy='adaptive' is not supported with state; "
+                "prepared states use configured sizing"
+            )
+        return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
+    if cutoff is None:
+        raise ValueError("cutoff is required when state is not provided")
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
     if cutoff2 is not None:
         _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
 
-    _validate_grid_policy(grid_policy)
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
     target_indices = kwargs.get("target_indices")
@@ -663,6 +690,9 @@ def neighbor_list(
 __all__ = [
     # High-level API
     "neighbor_list",
+    "NeighborListState",
+    "prepare_neighbor_list",
+    "check_neighbor_list_state",
     "estimate_neighbor_list_costs",
     "suggest_neighbor_list_method",
     # Unbatched neighbor list

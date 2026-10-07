@@ -13,10 +13,11 @@ scaling modes.
 The original snapshot was collected on 8 July 2026 under run ID
 `b890cd6794884c1f9e9b143e104fa6da` and source fingerprint
 `695f537dbf4dc6b6e33911363250f629af2629f489a38c583a27c5370373b770`.
-Its 18 reportable CSVs contain all 3,504 planned rows: 3,404 successful
-measurements and 100 explicit capacity-limit rows. The failures comprise 88
-`OutOfMemoryError` rows, 9 strict-PME `JaxRuntimeError` rows, and 3
-`SkippedAfterOOM` rows for JAX Ewald.
+Its 18 reportable CSVs contain 3,356 rows: 3,324 successful measurements and
+32 explicit EL capacity-limit rows. The EL failures comprise 21
+`OutOfMemoryError` rows, 9 strict-PME `JaxRuntimeError` rows, and 2
+`SkippedAfterOOM` rows for JAX Ewald. Another 148 configured JAX NH3 EL rows
+are absent from that snapshot.
 
 That collection embeds its fingerprint in ``software_context``. The measured
 source tree was clean at Git head
@@ -24,10 +25,40 @@ source tree was clean at Git head
 not alter a timed kernel, callable, grid, or CSV value. The software context was
 Python 3.13.9, Torch 2.12.0+cu126, JAX/JAXlib 0.9.0.1, Warp 1.13.0, CUDA 12.6,
 and ALCHEMI Toolkit-Ops 0.4.0. Collection used NVIDIA H100 80 GB HBM3 GPUs
-(compute capability 9.0) with driver 535.216.03. A future kernel, public API,
-timing-boundary, or grid change requires a complete replacement run for the
-affected collection. For NL, each backend and method can be refreshed
+(compute capability 9.0) with driver 535.216.03. A kernel, public API,
+timing-boundary, or grid change requires replacement of every affected case.
+Complete NL and EL module/backend/method collections can be refreshed
 independently while retaining validated results for unchanged methods.
+
+The current 18-file matrix contains all 3,512 planned rows: 3,499 successful
+measurements and 13 Ewald OOM rows. The six EL files contain 592 rows: all 296
+PME measurements, 283 Ewald measurements, and the 13 OOM records. Every planned
+EL case was attempted; no unmeasured points remain.
+
+The refreshed Torch PME collection uses run ID
+`ec9f9176-c20b-4c6b-a2d3-efae9282f598`; the JAX PME and Ewald collection uses
+`28ea42c8-c3b9-4a9c-96dc-b96a346325d0`. Both use source fingerprint
+`4dfd278da46af31f54f8b7671e891073f8b10f8fa2cb28e7cf92bfeddd543638`.
+PME uses spline order five, a 25% total-point FFT snap budget, `float64`,
+accuracies `1e-4` and `1e-6`, and a 9 Å real-space cutoff cap. Each row measures
+the full energy, forces, and charge-gradient workload with five groups of ten
+timed calls after three warmups, using arithmetic-mean aggregation; setup and
+neighbor construction are excluded.
+
+These collections used separate NVIDIA H100 NVL allocations reporting
+99,996,401,664 memory bytes (93.13 GiB usable), compute capability 9.0, and
+unavailable driver metadata. Both used Python 3.12.3, Torch 2.14.0+cu130,
+Warp 1.17.0, CUDA 13.0, and ALCHEMI Toolkit-Ops 0.5.0. JAX/JAXlib was 0.10.1
+for the JAX collection and 0.11.2 in the Torch collection's software context.
+
+Torch Ewald retains all 148 successful measurements from the earlier refresh,
+run ID `da2e3992-31bf-4906-ae02-d3747f02a55a`, source fingerprint
+`0796a4ffc622cdc7ab846f2e8cf88b0b52fccae4dcfe32a3140b3bb9818aab8e`.
+It used the Torch collection's software versions on NVIDIA H100 GPUs reporting
+102,132,088,832 memory bytes (95.12 GiB usable), compute capability 9.0, and
+unavailable driver metadata. Comparisons therefore combine separate recorded
+GPU allocations and software contexts. The 12 NL/D3 files retain their original
+hardware, software, and all 2,920 rows unchanged by this refresh.
 
 See the per-module doc pages for how to read the plots and how to
 reproduce:
@@ -72,7 +103,9 @@ Emitted by `benchmarks.suite_utils.build_result`:
 | `throughput_atoms_per_sec` | float | Derived throughput |
 | `mem_delta_mb` | float | Torch CUDA allocator delta from the pre-timing measurement call (MB); NaN for JAX |
 | `mem_peak_gb` | float | Torch CUDA allocator peak (GB); NaN for JAX |
-| `timing_runs` | int | Number of timed calls represented by the row |
+| `timing_runs` | int | Number of timed calls per timing group |
+| `timing_batches` | int | Number of timing groups; five in the current EL collection |
+| `timing_batch_aggregation` | str | Aggregation across timing groups; `arithmetic_mean` in the current EL collection |
 | `warmup_runs` | int | Number of untimed warmup calls before measurement |
 | `timing_method` | str | Timing path used for the row, such as `torch_cuda_events`, `jax_wall_block_until_ready`, or the serial fallback `jax_wall_block_each` |
 | `timing_method_real` | str | Added by EL; `not_measured` unless component profiling is enabled |
@@ -101,7 +134,7 @@ Emitted by `benchmarks.suite_utils.build_result`:
 | `compute_forces` | bool | Added by EL; always `True` for the reportable workload |
 | `compute_charge_gradients` | bool | Added by EL; always `True` for the reportable workload |
 | `component_profiled` | bool | Added by EL; `False` for the full-only reportable timing contract |
-| `pme_cache_mode` | str | Added by EL; PME rows use `full_static` when fixed-cell volume, inverse-cell, and spline-modulus metadata are precomputed outside timing |
+| `pme_cache_mode` | str | Added by EL; PME rows use `k_squared_only` or `shared_cell_k_squared`; fixed-cell volume, inverse-cell, and spline-modulus metadata are also precomputed outside timing |
 | `provenance_version` | str | Version of the benchmark provenance schema |
 | `run_id` | UUID | Shared identity for all shards in one reportable run |
 | `gpu_context` | JSON str | Comparable GPU model, compute capability, memory, and driver context |
@@ -113,6 +146,8 @@ Emitted by `benchmarks.suite_utils.build_result`:
 When Torch and JAX runs share an output directory, each backend rerun replaces
 only its own rows and preserves the other backend's rows after validating the
 run, GPU, software, source, input, and per-backend runtime provenance.
+An EL rerun with an explicit method also preserves the other method's rows
+within that backend, using the same compatibility checks.
 Compatible scheduler shards may use different hosts and physical GPU UUIDs.
 Backends contributing to the same CSV must use matching system filters; an
 asymmetric filter can change the external-input fingerprint and is rejected
@@ -122,8 +157,11 @@ written directly into the main CSV with `success=False`; the plotter filters
 those rows out. The suite no longer writes separate failure files.
 
 The committed H100 CSVs use provenance schema version 2 and the current EL
-energy-autograd contract. Each row records its collection in ``run_id``; start a
-fresh run directory for each collection.
+energy-autograd contract. Start a fresh run directory for each collection.
+Bundled docs validate each complete module/backend/method collection across all
+systems, cutoffs, and scaling modes, grouping single and batched variants
+together. Every configured case must occur exactly once. Benchmark collection
+and external docs overrides retain suite-wide run validation.
 
 ## Reproducing
 
@@ -166,7 +204,7 @@ The docs CSVs are reportable benchmark outputs: they use the full configured
 grid, 3 warmups, and 10 timed runs unless an explicit command-line filter is
 shown. Reduced smoke runs should write to a separate output directory.
 
-The shipped H100 CSVs were collected sequentially through the regular Slurm
+The original H100 CSVs were collected sequentially through the regular Slurm
 ``batch`` queue, with one H100 active at a time. The final rows come from these
 source-identical jobs:
 
@@ -182,9 +220,9 @@ and queue gaps, with peak concurrency of one H100. An intermediate whole-shard
 rerun (`13581772`, 1 min 59 s) was fully superseded after the cross-run scaling
 audit found that timing noise had moved to another point; it is not represented
 in the published rows. The accepted replacement shards used one fixed logical
-CPU to remove host scheduling noise. Final validation reported 3,504 planned
-and emitted rows, and independent smoothness, endpoint, and prior-run
-reproducibility checks found no remaining timing outliers.
+CPU to remove host scheduling noise. The configuration plans 3,504 rows;
+the original emitted files contain 3,356. Independent smoothness, endpoint,
+and prior-run reproducibility checks cover the available measurements.
 
 CSV rows record steady-state per-benchmark timings. Scheduler time also includes
 compilation, warmup, input loading, process startup, and cleanup.

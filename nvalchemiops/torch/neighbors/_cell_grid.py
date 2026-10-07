@@ -19,7 +19,10 @@
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.cell_list._grid_selection import _get_pair_grid_kernel
+from nvalchemiops.neighbors.cell_list._grid_selection import (
+    _get_pair_grid_kernel,
+    _validated_cell_total,
+)
 from nvalchemiops.neighbors.cell_list.launchers import _PAIR_CENTRIC_BLOCK_DIM
 from nvalchemiops.neighbors.neighbor_utils import empty_sentinel
 from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
@@ -72,6 +75,8 @@ def _select_pair_grid(
     Torch owns every buffer and the current stream through the sizing launch.
     Single-system callers can pass the known ``num_atoms`` directly, avoiding
     allocation and transfer of a two-element boundary tensor.
+    Counts are validated and summed on the device. Automatic allocation reads
+    one int64 size; zero reports an invalid cell in a nonempty batch.
     """
     if max_nbins <= 0:
         raise ValueError("max_nbins must be positive")
@@ -104,11 +109,18 @@ def _select_pair_grid(
             wp.from_torch(counts, dtype=wp.int32),
         ],
     )
-    cell_counts = counts.cpu().tolist()
-    if any(count < 1 for count in cell_counts):
+    allocation_size = torch.empty(1, device=cell.device, dtype=torch.int64)
+    wp.launch_tiled(
+        _validated_cell_total,
+        dim=1,
+        block_dim=_PAIR_CENTRIC_BLOCK_DIM,
+        device=str(cell.device),
+        inputs=[wp.from_torch(counts), wp.from_torch(allocation_size)],
+    )
+    total = int(allocation_size.item())
+    if systems > 0 and total == 0:
         raise RuntimeError(
             "Cells with volume == 0.0 detected and are not supported."
             " Please pass unit cells with `det(cell) != 0.0`."
         )
-    total = sum(cell_counts)
     return total, radii, grids

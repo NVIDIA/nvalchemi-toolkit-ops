@@ -36,6 +36,7 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
 )
+from nvalchemiops.jax.neighbors.cluster_tile import _fixed_cluster_geometry_args
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
@@ -485,6 +486,7 @@ class TestBatchClusterTileGraphPreload:
         coo_list = neighbor_list.T.copy()
         coo_shifts = jnp.zeros((max_pairs, 3), dtype=jnp.int32)
         inv_cell_batch = jnp.linalg.inv(cell_batch)
+        qr, axis, fractional, height, bbox, fixed = _fixed_cluster_geometry_args(None)
         registration = _BATCH_CLUSTER_TILE_QUERIES["coo_segmented"]
 
         @jax.jit
@@ -511,6 +513,11 @@ class TestBatchClusterTileGraphPreload:
                 sorted_pos_z,
                 cell_batch,
                 inv_cell_batch,
+                qr,
+                axis,
+                fractional,
+                height,
+                bbox,
                 num_tiles,
                 tile_offsets,
                 tile_counts,
@@ -526,6 +533,7 @@ class TestBatchClusterTileGraphPreload:
                 cutoff,
                 positions.shape[0],
                 max_pairs,
+                fixed,
             )
 
         pair_counter, pair_counts, coo_list, coo_shifts = query(

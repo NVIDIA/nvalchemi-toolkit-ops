@@ -41,11 +41,16 @@ from nvalchemiops.neighbors.cell_list import (
     get_cell_list_gather_kernel,
     get_query_cell_list_kernel,
 )
+from nvalchemiops.neighbors.cluster_tile.kernels import (
+    TILE_GROUP_SIZE,
+    get_prepare_cluster_tile_geometry_kernel,
+)
 from nvalchemiops.neighbors.naive import (
     get_naive_neighbor_matrix_dual_cutoff_kernel,
     get_naive_neighbor_matrix_kernel,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
+    get_compute_inv_cells_kernel,
     get_gather_positions_and_shifts_kernel,
 )
 
@@ -99,7 +104,9 @@ def _cached_jax_kernel_call(kernel_call: Any) -> Any:
     )
 
 
-def _register_jax_kernel(kernel: Any, outputs: _Outputs) -> Any:
+def _register_jax_kernel(
+    kernel: Any, outputs: _Outputs, *, block_dim: int | None = None
+) -> Any:
     """Register a Warp kernel using a shared output tuple.
 
     Parameters
@@ -108,6 +115,8 @@ def _register_jax_kernel(kernel: Any, outputs: _Outputs) -> Any:
         Warp kernel to expose to JAX.
     outputs : tuple[str, ...]
         Ordered names of the kernel's in-place output arguments.
+    block_dim : int or None, optional
+        Warp launch width for kernels with a fixed thread-group contract.
 
     Returns
     -------
@@ -119,6 +128,7 @@ def _register_jax_kernel(kernel: Any, outputs: _Outputs) -> Any:
         num_outputs=len(outputs),
         in_out_argnames=list(outputs),
         enable_backward=False,
+        **({"block_dim": block_dim} if block_dim is not None else {}),
     )
 
 
@@ -269,6 +279,7 @@ def _cluster_tile_build_registration(
     batched: bool,
     segmented: bool,
     selective: bool,
+    fixed_cell: bool = False,
 ) -> _GraphRegistration:
     """Build a Warp graph registration for a cluster-tile build callback.
 
@@ -300,7 +311,9 @@ def _cluster_tile_build_registration(
     )
     return _GraphRegistration(
         callable=registered,
-        preload=_preload_cluster_tile_build_kernel,
+        preload=functools.partial(
+            _preload_cluster_tile_build_kernel, fixed_cell=fixed_cell
+        ),
     )
 
 
@@ -313,6 +326,7 @@ def _cluster_tile_matrix_registration(
     dual_cutoff: bool = False,
     geometry: bool = False,
     pair_fn: Any | None = None,
+    fixed_cell: bool = False,
 ) -> _GraphRegistration:
     """Build a Warp graph registration for a cluster-tile matrix query.
 
@@ -355,6 +369,7 @@ def _cluster_tile_matrix_registration(
         dual_cutoff=dual_cutoff,
         geometry=geometry,
         pair_fn=pair_fn,
+        fixed_cell=fixed_cell,
     )
     return _GraphRegistration(callable=registered, preload=preload)
 
@@ -366,6 +381,7 @@ def _cluster_tile_coo_registration(
     tile_segmented: bool = False,
     coo_segmented: bool = False,
     selective: bool = False,
+    fixed_cell: bool = False,
 ) -> _GraphRegistration:
     """Build a Warp graph registration for a cluster-tile COO query.
 
@@ -398,6 +414,7 @@ def _cluster_tile_coo_registration(
         tile_segmented=tile_segmented,
         coo_segmented=coo_segmented,
         selective=selective,
+        fixed_cell=fixed_cell,
     )
     return _GraphRegistration(callable=registered, preload=preload)
 
@@ -411,12 +428,14 @@ class _LazyJaxKernel:
         dtype_map: Mapping[object, type],
         *,
         cache_key: Callable[[type], object] | None = None,
+        block_dim: int | None = None,
     ) -> None:
         self._build = build
         self._dtype_map = {
             jnp.dtype(jax_dtype): wp_dtype for jax_dtype, wp_dtype in dtype_map.items()
         }
         self._cache_key = cache_key or (lambda wp_dtype: wp_dtype)
+        self._block_dim = block_dim
         self._cache: dict[object, Any] = {}
 
     def __contains__(self, jax_dtype: object) -> bool:
@@ -440,7 +459,9 @@ class _LazyJaxKernel:
         key = self._cache_key(wp_dtype)
         if key not in self._cache:
             kernel, outputs = self._build(wp_dtype)
-            self._cache[key] = _register_jax_kernel(kernel, outputs)
+            self._cache[key] = _register_jax_kernel(
+                kernel, outputs, block_dim=self._block_dim
+            )
         return self._cache[key]
 
 
@@ -611,6 +632,7 @@ def _lazy_cell_list_build_kernel(
         "cells_per_system",
     ],
     batched: bool,
+    fixed_cell: bool = False,
 ) -> _LazyJaxKernel:
     """Return a lazy direct cell-list build JAX registration."""
     cache_key = (
@@ -636,6 +658,7 @@ def _lazy_cell_list_build_kernel(
                 stage,
                 wp_dtype,
                 batched=batched,
+                fixed_cell=fixed_cell,
             )
         return kernel, _cell_list_build_outputs(stage, batched)
 
@@ -644,6 +667,37 @@ def _lazy_cell_list_build_kernel(
         _CELL_LIST_DTYPE_MAP,
         cache_key=cache_key,
     )
+
+
+def _lazy_cell_inverse_kernel() -> _LazyJaxKernel:
+    """Return the private registration for Warp-precision inverse cells."""
+
+    def build(wp_dtype: type) -> tuple[Any, _Outputs]:
+        if wp_dtype not in {wp.float32, wp.float64}:
+            raise ValueError(f"Unsupported cell-list Warp dtype: {wp_dtype!r}.")
+        return get_compute_inv_cells_kernel(wp_dtype), ("inv_cell",)
+
+    return _LazyJaxKernel(build, _CELL_LIST_DTYPE_MAP)
+
+
+def _lazy_cluster_geometry_kernel() -> _LazyJaxKernel:
+    """Return the fixed-cell cluster geometry preparation registration."""
+
+    def build(wp_dtype: type) -> tuple[Any, _Outputs]:
+        if wp_dtype != wp.float32:
+            raise ValueError("Cluster geometry preparation requires float32 cells.")
+        return (
+            get_prepare_cluster_tile_geometry_kernel(),
+            (
+                "qr_values",
+                "axis_aligned",
+                "fractional_rounding_certified",
+                "qr_height_certified",
+                "bbox_cutoff_bounds",
+            ),
+        )
+
+    return _LazyJaxKernel(build, {jnp.float32: wp.float32}, block_dim=TILE_GROUP_SIZE)
 
 
 def _cell_list_query_outputs(

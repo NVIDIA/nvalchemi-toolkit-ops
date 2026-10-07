@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.suite_utils import validate_result_files
+from benchmarks.suite_utils import save_results, validate_result_files
 
 
 def _row(method: str = "cell_list_pair_centric", run_id: str = "run-a") -> dict:
@@ -66,14 +66,58 @@ class TestMethodRefreshValidation:
 
     @pytest.mark.parametrize("module,method", [("el", "pme"), ("d3", "dftd3")])
     @pytest.mark.parametrize("field", ["run_id", "software_context", "runtime_context"])
-    def test_other_modules_remain_suite_wide(self, tmp_path, module, method, field):
-        """NL refresh validation preserves other modules' consistency checks."""
+    def test_module_method_collections_remain_consistent(
+        self, tmp_path, module, method, field
+    ):
+        """A module and method collection has consistent provenance across systems."""
         first = _write(tmp_path / f"{module}-cscl.csv", [_row(method)])
         second = _write(
             tmp_path / f"{module}-nh3.csv", [dict(_row(method), **{field: "changed"})]
         )
         with pytest.raises(ValueError, match=field):
             validate_result_files([first, second], per_method=True)
+
+    @pytest.mark.parametrize("field", ["timing_batches", "timing_batch_aggregation"])
+    def test_el_timing_groups_are_consistent(self, tmp_path, field):
+        """EL timing groups stay identical across systems and scaling modes."""
+        row = dict(
+            _row("pme"), timing_batches="5", timing_batch_aggregation="arithmetic_mean"
+        )
+        first = _write(tmp_path / "el-cscl.csv", [row])
+        changed = dict(row)
+        changed[field] = "changed"
+        second = _write(tmp_path / "el-nh3.csv", [changed])
+        with pytest.raises(ValueError, match=field):
+            validate_result_files([first, second], per_method=True)
+
+    def test_module_is_part_of_collection_identity(self, tmp_path):
+        """Different modules may use separate provenance for a same-named method."""
+        el = _row("shared_method", "el-run")
+        d3 = _row("shared_method", "d3-run")
+        d3.update(
+            gpu_context="d3-gpu",
+            software_context="d3-software",
+            input_context="d3-inputs",
+            runtime_context="d3-runtime",
+        )
+        first = _write(tmp_path / "el-cscl.csv", [el])
+        second = _write(tmp_path / "d3-cscl.csv", [d3])
+        assert validate_result_files([first, second], per_method=True)["rows"] == 2
+
+    def test_backend_is_part_of_collection_identity(self, tmp_path):
+        """Different backends may use separate provenance for one method."""
+        torch_row = _row("pme", "torch-run")
+        jax_row = _row("pme", "jax-run")
+        jax_row.update(
+            backend="jax",
+            gpu_context="jax-gpu",
+            software_context="jax-software",
+            input_context="jax-inputs",
+            runtime_context="jax-runtime",
+        )
+        first = _write(tmp_path / "el-cscl.csv", [torch_row])
+        second = _write(tmp_path / "el-nh3.csv", [jax_row])
+        assert validate_result_files([first, second], per_method=True)["rows"] == 2
 
     @pytest.mark.parametrize(
         "field",
@@ -137,3 +181,84 @@ class TestMethodRefreshValidation:
         path = _write(tmp_path / "nl-cscl.csv", [row])
         with pytest.raises(ValueError, match="Missing benchmark backend or method"):
             validate_result_files([path], per_method=True)
+
+
+class TestElMethodReplacement:
+    """EL method reruns preserve the other measured methods and backends."""
+
+    @pytest.mark.parametrize("backend", ["torch", "jax"])
+    def test_method_rerun_preserves_other_rows(self, tmp_path, backend):
+        """The EL progress-writer call replaces only its selected method."""
+        path = tmp_path / "el-cscl-system-size-scaling.csv"
+        initial = [
+            dict(_row(method), backend=framework, time_us_per_atom="old")
+            for framework in ("torch", "jax")
+            for method in ("pme", "ewald")
+        ]
+        save_results(initial, path)
+        with path.open(newline="") as stream:
+            before = list(csv.DictReader(stream))
+        replacement = dict(_row("pme"), backend=backend, time_us_per_atom="new")
+
+        save_results(
+            [replacement], path, replace_backend=backend, replace_methods=["pme"]
+        )
+
+        with path.open(newline="") as stream:
+            after = list(csv.DictReader(stream))
+        preserved = [
+            row for row in before if (row["backend"], row["method"]) != (backend, "pme")
+        ]
+        assert after[:-1] == preserved
+        assert after[-1]["backend"] == backend
+        assert after[-1]["method"] == "pme"
+        assert after[-1]["time_us_per_atom"] == "new"
+        assert validate_result_files([path])["rows"] == 4
+
+    def test_default_backend_replacement(self, tmp_path):
+        """Existing callers replace all rows for the requested backend."""
+        path = tmp_path / "el-cscl-system-size-scaling.csv"
+        save_results(
+            [_row("pme"), _row("ewald"), dict(_row("pme"), backend="jax")], path
+        )
+        save_results([_row("pme")], path, replace_backend="torch")
+        with path.open(newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        assert [(row["backend"], row["method"]) for row in rows] == [
+            ("jax", "pme"),
+            ("torch", "pme"),
+        ]
+
+    def test_empty_method_rerun_clears_matching_rows(self, tmp_path):
+        """An empty method rerun removes its stale rows and retains Ewald."""
+        path = tmp_path / "el-cscl-system-size-scaling.csv"
+        save_results([_row("pme"), _row("ewald")], path)
+        save_results([], path, replace_backend="torch", replace_methods=["pme"])
+        with path.open(newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        assert [row["method"] for row in rows] == ["ewald"]
+
+    @pytest.mark.parametrize(
+        "options,message",
+        [
+            ({"replace_methods": ["pme"]}, "requires replace_backend"),
+            (
+                {"replace_backend": "torch", "replace_methods": []},
+                "must not be empty",
+            ),
+            (
+                {"replace_backend": "torch", "replace_methods": ["ewald"]},
+                "include every incoming row method",
+            ),
+            (
+                {"replace_backend": "jax", "replace_methods": ["pme"]},
+                "match every incoming row",
+            ),
+        ],
+    )
+    def test_invalid_replacement_arguments(self, tmp_path, options, message):
+        """Invalid replacement scopes fail before writing a CSV."""
+        path = tmp_path / "el-cscl-system-size-scaling.csv"
+        with pytest.raises(ValueError, match=message):
+            save_results([_row("pme")], path, **options)
+        assert not path.exists()
