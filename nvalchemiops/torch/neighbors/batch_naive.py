@@ -298,10 +298,6 @@ def _batch_naive_neighbor_matrix_pbc(
     )
 
     if max_atoms_per_system is None and target_indices is None:
-        _warn_compile_missing_argument_inference(
-            missing="`max_atoms_per_system`",
-            inference="inferring it from `batch_ptr`",
-        )
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
     wp_rebuild_flags = None
@@ -1988,6 +1984,11 @@ def batch_naive_neighbor_list(
         else:
             return neighbor_matrix, num_neighbors
     else:
+        if max_atoms_per_system is None:
+            _warn_compile_missing_argument_inference(
+                missing="`max_atoms_per_system`",
+                inference="inferring it from `batch_ptr`",
+            )
         _batch_naive_neighbor_matrix_pbc(
             positions=positions,
             cell=cell,

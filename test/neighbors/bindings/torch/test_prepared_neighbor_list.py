@@ -2461,10 +2461,44 @@ def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
         **common,
     )
 
+    def coo_signature(
+        result: tuple[torch.Tensor, ...],
+    ) -> tuple[tuple[tuple[int, ...], ...], ...]:
+        """Return active pair/shift records per system, preserving duplicates."""
+        indices, offsets, counts, shifts = result
+        system_records = []
+        for start, count in zip(offsets[:-1].tolist(), counts.tolist(), strict=True):
+            stop = start + count
+            pairs = indices[:, start:stop].T.cpu().tolist()
+            shifts_for_system = shifts[start:stop].cpu().tolist()
+            system_records.append(
+                tuple(
+                    sorted(
+                        (
+                            int(pair[0]),
+                            int(pair[1]),
+                            *map(int, shift),
+                        )
+                        for pair, shift in zip(pairs, shifts_for_system, strict=True)
+                    )
+                )
+            )
+        return tuple(system_records)
+
     def assert_outputs_equal(
         actual: tuple[torch.Tensor, ...], expected: tuple[torch.Tensor, ...]
     ) -> None:
-        if format != "tile":
+        """Compare active cluster results while retaining tensor metadata checks."""
+        if format == "coo":
+            torch.testing.assert_close(actual[1], expected[1])
+            torch.testing.assert_close(actual[2], expected[2])
+            for index in (0, 3):
+                assert actual[index].shape == expected[index].shape
+                assert actual[index].dtype == expected[index].dtype
+                assert actual[index].device == expected[index].device
+            assert coo_signature(actual) == coo_signature(expected)
+            return
+        if format == "matrix":
             _assert_cluster_route_equal(actual, expected, format)
             return
         torch.testing.assert_close(actual[0], expected[0])
@@ -2535,22 +2569,7 @@ def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
         batch_ptr,
         **direct_kwargs,
     )
-    if format == "coo":
-        torch.testing.assert_close(second_per_system[1], direct[1])
-        torch.testing.assert_close(second_per_system[2], direct[2])
-        for start, count in zip(
-            second_per_system[1][:-1], second_per_system[2], strict=True
-        ):
-            begin = int(start)
-            end = begin + int(count)
-            torch.testing.assert_close(
-                second_per_system[0][:, begin:end], direct[0][:, begin:end]
-            )
-            torch.testing.assert_close(
-                second_per_system[3][begin:end], direct[3][begin:end]
-            )
-    else:
-        assert_outputs_equal(second_per_system, direct)
+    assert_outputs_equal(second_per_system, direct)
 
 
 @pytest.mark.gpu

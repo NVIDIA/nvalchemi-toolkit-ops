@@ -1644,6 +1644,7 @@ def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
     )
 
     def signature(result: tuple[jax.Array, ...]) -> tuple[Any, ...]:
+        """Build a format-specific signature without assuming tile order."""
         if format == "matrix":
             matrix, counts, shifts = map(np.asarray, result[:3])
             pairs = {
@@ -1664,10 +1665,21 @@ def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
             }
             return tuple(map(int, np.diff(pointer))), pairs
         active_tiles = int(np.asarray(result[0])[0])
+        tile_row_group = np.asarray(result[1])[:active_tiles]
+        tile_col_group = np.asarray(result[2])[:active_tiles]
+        tile_system = np.asarray(result[3])[:active_tiles]
+        active_records = tuple(
+            sorted(
+                (int(system), int(row_group), int(col_group))
+                for system, row_group, col_group in zip(
+                    tile_system, tile_row_group, tile_col_group, strict=True
+                )
+            )
+        )
         return (
             active_tiles,
-            *(np.asarray(result[index])[:active_tiles] for index in (1, 2)),
-            *(np.asarray(value) for value in result[3:]),
+            active_records,
+            *(np.asarray(value) for value in result[4:]),
         )
 
     def assert_periodic_images(result: tuple[jax.Array, ...]) -> None:
@@ -1701,9 +1713,9 @@ def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
         actual_signature = signature(result)
         direct_signature = signature(direct)
         if format == "tile":
-            assert actual_signature[0] == direct_signature[0]
+            assert actual_signature[:2] == direct_signature[:2]
             for actual, expected in zip(
-                actual_signature[1:], direct_signature[1:], strict=True
+                actual_signature[2:], direct_signature[2:], strict=True
             ):
                 np.testing.assert_array_equal(actual, expected)
         else:
@@ -1715,11 +1727,11 @@ def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
         actual_signature = signature(actual)
         expected_signature = signature(expected)
         if format == "tile":
-            assert actual_signature[0] == expected_signature[0]
-            for actual_value, expected_value in zip(
-                actual_signature[1:], expected_signature[1:], strict=True
+            assert actual_signature[:2] == expected_signature[:2]
+            for actual, expected in zip(
+                actual_signature[2:], expected_signature[2:], strict=True
             ):
-                np.testing.assert_array_equal(actual_value, expected_value)
+                np.testing.assert_array_equal(actual, expected)
         else:
             assert actual_signature == expected_signature
 
