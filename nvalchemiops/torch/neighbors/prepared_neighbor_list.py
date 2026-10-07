@@ -40,6 +40,9 @@ from nvalchemiops.torch.neighbors._dispatch import (
     _reject_unsupported_cluster_tile_combo,
 )
 from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
+from nvalchemiops.torch.neighbors._naive_partial import (
+    _PreparedTargetValidationHandle,
+)
 from nvalchemiops.torch.neighbors._naive_prepared_guard import (
     check_prepared_naive_shift_coverage,
 )
@@ -527,6 +530,7 @@ class NeighborListState:
         "_batch_ptr",
         "_batch_ranges",
         "_target_indices",
+        "_prepared_target_handle",
         "_max_neighbors2",
         "_max_neighbors",
         "_max_pairs",
@@ -639,6 +643,11 @@ class NeighborListState:
         self._batch_ptr = batch_ptr
         self._batch_ranges = batch_ranges
         self._target_indices = target_indices
+        self._prepared_target_handle = (
+            _PreparedTargetValidationHandle(target_indices)
+            if target_indices is not None and route in ("naive", "batch_naive")
+            else None
+        )
         self._max_neighbors2 = max_neighbors2
         self._max_pairs = max_pairs
         self._max_tiles_per_group = max_tiles_per_group
@@ -1473,6 +1482,8 @@ def _route_kwargs(
         )
     if state._route in ("naive", "batch_naive", "cell_list", "batch_cell_list"):
         kwargs["target_indices"] = state._target_indices
+    if state._route in ("naive", "batch_naive") and not torch.compiler.is_compiling():
+        kwargs["_prepared_target_handle"] = state._prepared_target_handle
     if state.fixed_cell:
         kwargs["_fixed_cell_geometry"] = state._fixed_cell_geometry
         if state._route in ("cell_list", "batch_cell_list"):

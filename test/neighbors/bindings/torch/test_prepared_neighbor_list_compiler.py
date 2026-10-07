@@ -424,6 +424,35 @@ torch.cuda.synchronize()
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_compiled_prepared_naive_does_not_validate_target_for_later_eager_call() -> (
+    None
+):
+    """A compiled safe invalid row does not bypass the first eager bounds check."""
+    positions = torch.zeros((3, 3), dtype=torch.float32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        method="naive",
+        strategy="scalar",
+        target_indices=torch.tensor([3], dtype=torch.int32, device="cuda"),
+        max_neighbors=2,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values):
+        return neighbor_list(values, state=state)
+
+    matrix, counts = run(positions)
+    torch.cuda.synchronize()
+    assert torch.equal(counts, torch.zeros_like(counts))
+    assert torch.equal(matrix, torch.full_like(matrix, positions.shape[0]))
+
+    with pytest.raises(ValueError, match="in-bounds atom indices"):
+        neighbor_list(positions, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_compiled_overflow_failure_isolated_process() -> None:
     """Compiled row overflow asserts in a fresh process after a valid control."""
     result = subprocess.run(  # noqa: S603

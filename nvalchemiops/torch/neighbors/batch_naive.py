@@ -49,6 +49,7 @@ from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors._naive_partial import (
     _pack_partial_outputs,
     _prepare_partial_outputs,
+    _PreparedTargetValidationHandle,
     _validate_partial_output,
     _validate_partial_request,
 )
@@ -1359,6 +1360,7 @@ def batch_naive_neighbor_list(
     pair_forces: torch.Tensor | None = None,
     strategy: str = "auto",
     _fixed_cell_geometry: _FixedCellGeometry | None = None,
+    _prepared_target_handle: _PreparedTargetValidationHandle | None = None,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -1574,6 +1576,7 @@ def batch_naive_neighbor_list(
             rebuild_flags,
             strategy=strategy,
             has_geometry_or_pair_outputs=has_geometry_or_pair_outputs,
+            prepared_target_handle=_prepared_target_handle,
         )
 
     if topology_only_partial:

@@ -1747,6 +1747,48 @@ def test_prepared_naive_guard_rejects_insufficient_periodic_coverage() -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_naive_target_bounds_are_checked_on_first_eager_use() -> None:
+    """Prepared naive targets defer value bounds checks until eager execution."""
+    positions = torch.zeros((3, 3), dtype=torch.float32, device="cuda")
+    target_indices = torch.tensor([3], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        method="naive",
+        target_indices=target_indices,
+        max_neighbors=2,
+    )
+
+    with pytest.raises(ValueError, match="in-bounds atom indices"):
+        neighbor_list(positions, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_naive_target_clone_survives_input_mutation() -> None:
+    """Prepared naive routes retain their protected copy of target indices."""
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [5.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    target_indices = torch.tensor([1], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        method="naive",
+        target_indices=target_indices,
+        max_neighbors=2,
+    )
+    target_indices.fill_(3)
+
+    neighbor_matrix, num_neighbors = neighbor_list(positions, state=state)
+    assert num_neighbors.tolist() == [1]
+    assert neighbor_matrix[0, 0].item() == 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_selective_guard_checks_selected_systems_only() -> None:
     """Selective prepared naive validates only systems requested for rebuild."""
     positions = torch.tensor(

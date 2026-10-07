@@ -27,6 +27,25 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
 __all__: list[str] = []
 
 
+class _PreparedTargetValidationHandle:
+    """Remember successful eager bounds validation for a protected target clone."""
+
+    __slots__ = ("_target_indices", "_bounds_validated")
+
+    def __init__(self, target_indices: torch.Tensor) -> None:
+        self._target_indices = target_indices
+        self._bounds_validated = False
+
+    def needs_bounds_validation(self, target_indices: torch.Tensor) -> bool:
+        """Return whether this exact protected tensor still needs eager checking."""
+        return self._target_indices is not target_indices or not self._bounds_validated
+
+    def mark_bounds_validated(self, target_indices: torch.Tensor) -> None:
+        """Record successful checking only for the protected tensor identity."""
+        if self._target_indices is target_indices:
+            self._bounds_validated = True
+
+
 def _validate_partial_request(
     positions: torch.Tensor,
     target_indices: torch.Tensor,
@@ -34,6 +53,7 @@ def _validate_partial_request(
     *,
     strategy: str,
     has_geometry_or_pair_outputs: bool,
+    prepared_target_handle: _PreparedTargetValidationHandle | None = None,
 ) -> None:
     """Validate compact naive request metadata before output preparation.
 
@@ -72,10 +92,17 @@ def _validate_partial_request(
         raise ValueError("target_indices must be a rank-one int32 tensor.")
     if target_indices.device != positions.device:
         raise ValueError("target_indices must be on the same device as positions.")
-    if not torch.compiler.is_compiling() and bool(
-        torch.any((target_indices < 0) | (target_indices >= positions.shape[0]))
-    ):
-        raise ValueError("target_indices must contain in-bounds atom indices.")
+    if not torch.compiler.is_compiling():
+        check_bounds = (
+            prepared_target_handle is None
+            or prepared_target_handle.needs_bounds_validation(target_indices)
+        )
+        if check_bounds and bool(
+            torch.any((target_indices < 0) | (target_indices >= positions.shape[0]))
+        ):
+            raise ValueError("target_indices must contain in-bounds atom indices.")
+        if check_bounds and prepared_target_handle is not None:
+            prepared_target_handle.mark_bounds_validated(target_indices)
     if rebuild_flags is not None:
         raise NotImplementedError(
             "Partial neighbor lists do not support rebuild_flags",
