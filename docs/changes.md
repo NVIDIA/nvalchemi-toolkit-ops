@@ -6,126 +6,49 @@
 
 ### Added
 
-- New L-BFGS geometry optimizer, with a Warp core plus PyTorch and JAX
-  bindings. L-BFGS is a quasi-Newton method: it builds an approximation to the
-  inverse Hessian from recent position and gradient differences and picks a
-  step length bounded by a trust region. On Lennard-Jones clusters it
-  reaches a given force tolerance in roughly an eighth of the force evaluations
-  FIRE2 needs, measured against a per-case tuned FIRE2 baseline, which is the
-  cost that dominates relaxation with a machine-learned potential.
-- The optimizer is caller-driven, and matches FIRE2's division of labour: each
-  step consumes exactly one force evaluation, updates the curvature history,
-  restarts the direction if it stops descending, and takes one bounded step.
-  It owns no force or stress tolerance and has no terminal status -- testing
-  convergence and ending the loop are the caller's, so the stopping rule stays
-  where the physics is. A whole batch relaxes in one stream of kernel launches
-  with no per-system host control flow.
-- **No energy is required.** The step length comes from a `maxstep` trust
-  region rather than from a line search, so models whose forces are not the
-  gradient of their reported energy -- direct force heads, and anything with a
-  rough energy surface -- relax as well as conservative ones.
-- Every array in the state follows the coordinate dtype, so float32
-  coordinates give an fp32 optimizer end to end and float64 an fp64 one, with
-  no mixed configuration. In JAX this means an fp32 relaxation needs no
-  `JAX_ENABLE_X64`. The curvature threshold `curvature_eps` follows the same
-  rule and now defaults per precision -- `1e-6` for float32, `1e-10` for
-  float64 -- because `ys` is accumulated in the coordinate precision and one
-  value cannot sit above both noise floors.
-- State is grouped into two transparent dataclasses, `LBFGSState` and
-  `LBFGSCellState`, with every array indexed by its owning entity first: a
-  per-degree-of-freedom buffer leads with `num_packed`, a per-system one with
-  `num_systems`, and the history depth is the trailing axis. A batched driver
-  can therefore select systems, or concatenate two states, by gathering along
-  dimension zero. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
-  allocate, initialize and validate a complete state in one call -- shapes,
-  dtypes, devices, history depth and the packed cell relationship -- and
-  calling them again is how you restart. Every field stays reachable by name,
-  so you can equally build a state from arrays you already own and check it
-  with `validate()`, which compares shapes, dtypes and device without touching
-  the GPU; each step then only verifies that its own inputs are compatible.
-  A step still allocates nothing, so it stays capturable in a CUDA
-  graph. In JAX both classes are registered pytrees and the step returns a new
-  state functionally, so one `donate_argnums` entry donates every field.
-- Both coordinate-only and variable-cell relaxation are supported.
-  `lbfgs_prepare_cell_state` takes the ordinary `atom_ptr` and the aligned
-  cells and derives the packed topology, captures the reference chart and
-  computes `kappa` itself, so nothing needs repairing before the first step;
-  ragged batches are unaffected, since `atom_ptr` already carries each
-  system's atom count. The
-  variable-cell path maps positions and cell into a single packed coordinate
-  vector following ASE's `UnitCellFilter` convention, so the two-loop recursion
-  couples them without special handling, and convergence is always evaluated on
-  the Cartesian forces and the stress so tolerances keep their physical meaning
-  as the cell deforms. Because the extended topology is built with the generic
-  batch utilities rather than by a dedicated allocator, ragged batches whose
-  systems have different atom counts work the same way uniform ones do.
-- Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and optional
-  virial for batched CSR or dense neighbor lists in float32 and float64. `cell` is required,
-  and `cutoff` has no default and must equal the radius the neighbor list was built with.
-- Added `FourierD3Parameters` for reusable C6 decomposition, with
-  `FourierD3Parameters.uncovered_species` to check the coverage precondition, and Torch
-  `FourierD3Setup` as an optional cache of cell and mesh preprocessing. The setup is a
-  performance cache, not a requirement for any execution mode; keeping it consistent with
-  the cell is the caller's responsibility, as with the PME and multipole caches.
-- Added `rank_chunk_size` to bound reciprocal-mesh workspace at the cost of additional FFT
-  passes.
-- Added multi-channel B-spline Warp launchers used by FourierD3.
-- `electrostatics_uses_legacy_fp32()` reports whether the legacy float64-core
-  path is forced, for callers that want to confirm which mode is active.
-- `nvalchemiops.math.wp_erfc_f32_fast` and `nvalchemiops.math.wp_erfc_input_precision`:
-  an explicitly float32-grade `erfc` approximation, and a dispatcher that uses
-  native `wp.erfc` at float64 and the approximation at float32.
-- Added `generate_k_squared_pme` to the Torch and JAX electrostatics namespaces
-  for reciprocal paths that use squared magnitudes.
+- **L-BFGS optimizer:** Added an L-BFGS geometry optimizer with Warp, PyTorch, and JAX bindings for fixed-cell and variable-cell relaxation.
+- **Trust-region step control:** L-BFGS bounds step sizes with a trust region without energy evaluations.
+- **Batch state management:** Added `LBFGSState` and `LBFGSCellState` structures with preparation functions that allocate and validate optimizer state.
+- **Precision preservation:** L-BFGS matches coordinate precision end-to-end and selects curvature thresholds for float32 and float64.
+- **Fourier DFT-D3 dispersion:** Added periodic `fourier_dftd3` in PyTorch and JAX for energy, forces, and optional virial on batched neighbor lists.
+- **Fourier DFT-D3 caching:** Added `FourierD3Parameters` for reusable C6 coefficients and `FourierD3Setup` for optional cell and mesh preprocessing caches.
+- **Prepared cluster-tile execution:** Added `prepare_cluster_tile` and `batch_prepare_cluster_tile` in PyTorch for reusable neighbor list storage.
+- **Compiled cluster-tile lists:** PyTorch cluster-tile neighbor lists support `torch.compile` and `torch.cuda.CUDAGraph` replay with selective rebuilds.
+- **Reciprocal Miller topology:** Added `generate_ewald_miller_indices` and `k_vectors_from_miller_indices` in PyTorch and JAX to cache reciprocal grids.
+- **Buffer overflow detection:** Added the `TileBufferOverflow` exception and `max_tiles_per_group` parameter to detect undersized cluster-tile buffers.
+- **JAX compilation boundaries:** Added fixed-capacity `jax.jit` support for naive and cell-list neighbor lists through `coo_capacity`.
+- **JAX D3 parameters:** JAX `dftd3` accepts `D3Parameters` directly under `jax.jit` without manual array unpacking.
+- **Precision-selective erfc:** Added `wp_erfc_f32_fast` (an explicitly float32-grade approximation) and `wp_erfc_input_precision` (dispatches by input dtype) in `nvalchemiops.math`.
+- **Squared-magnitude PME grids:** Added `generate_k_squared_pme` in the Torch and JAX electrostatics namespaces for reciprocal paths that use squared magnitudes.
+- **Legacy electrostatics mode query:** Added `electrostatics_uses_legacy_fp32()` to report whether the legacy float64-core path is forced.
 
 ### Changed
 
-- Torch and JAX PME mesh estimation now covers the requested spline support.
-  The default spline order is five, with accuracy-based dimensions rounded
-  upward to 2/3/5/7-smooth FFT sizes. The selector prefers power-of-two meshes,
-  then smooth dimensions divisible by four, within a 25% total-point budget.
-  Public sizing APIs expose `fft_padding_fraction=0.25`; `0` keeps the smallest
-  smooth mesh. Explicit other orders retain upstream power-of-two accuracy
-  sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
-  explicit mesh dimensions remain caller-controlled.
-  Cutoff and splitting-parameter formulas are preserved.
-  Calls that omit `spline_order` now use 5 instead of 4, which can change
-  numerical results and automatically selected meshes. Pass `spline_order=4`
-  to retain the previous interpolation order. To reproduce the previous PME
-  configuration, also pass the previous `mesh_dimensions` explicitly.
-- Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
-  `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
-- Torch and JAX PME energy and force paths generate only the squared reciprocal
-  grid when Cartesian reciprocal vectors are unused, reducing peak memory.
-  Virial and cell-gradient paths generate the Cartesian vectors they require.
-
-- Monopole electrostatics (Ewald real-space per-pair cores and the reciprocal
-  no-store structure-factor path) now default to float32 evaluation for
-  float32 CUDA inputs, instead of promoting to float64 internally. Both real
-  and reciprocal space are affected -- real space is shared by Ewald and PME.
-  CPU execution is unchanged either way; the fast path is CUDA-only. Set
-  `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
-  (always float64-core) behavior. Changes float32 results at the ~1e-07
-  level; double-backward (Hessian-vector products, including ordinary
-  force- or stress-matching training losses) continues to use the standard
-  float64-materializing formulation regardless of which forward path ran, so
-  it is unaffected.
+- **Minimum Warp version:** Raised the minimum `warp-lang` requirement to 1.16.0.
+- **Minimum PyTorch version:** PyTorch extras now require PyTorch 2.10 or newer for compiled matrix-to-COO conversions.
+- **JAX dual-cutoff validation:** JAX dual-cutoff neighbor functions now require the second cutoff to be greater than or equal to the first.
+- **Segmented index types:** PyTorch segmented operations now accept int64 indices whose values fit in int32.
+- **Fourier DFT-D3 coordination numbers:** Fourier DFT-D3 tapers coordination numbers to zero at the cutoff radius. This produces small numerical differences from standard DFT-D3.
+- **PME mesh sizing:** PME mesh estimation now covers the requested spline support and prefers FFT-smooth dimensions. The default spline order is now 5 (previously 4), which can change numerical results; pass `spline_order=4` and the previous `mesh_dimensions` to reproduce the old configuration.
+- **Reduced PME peak memory:** PME energy and force paths generate only the squared reciprocal grid when Cartesian reciprocal vectors are unused; virial and cell-gradient paths still generate them.
+- **float32 electrostatics fast path:** Monopole Ewald and PME now evaluate in float32 for float32 CUDA inputs instead of promoting to float64; float32 results change at the ~1e-07 level, CPU execution is unchanged, and double-backward still uses the float64 formulation. Set `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to keep the previous behavior.
 
 ### Deprecated
 
-- `nvalchemiops.math.wp_erfc` is deprecated in favor of
-  `wp_erfc_input_precision` (dispatches by input dtype) or
-  `wp_erfc_f32_fast` (the float32-grade approximation explicitly). `wp_erfc`
-  keeps its original behavior -- including evaluating the float32-grade
-  approximation at float64 -- for backward compatibility; it is not being
-  changed underneath existing callers.
+- `nvalchemiops.math.wp_erfc` is deprecated in favor of `wp_erfc_input_precision` or `wp_erfc_f32_fast`; it keeps its original behavior for existing callers.
 
-### Notes
+### Fixed
 
-- FourierD3 uses a modified coordination-number function that reaches zero at the neighbour
-  list cutoff, so its coordination numbers do not depend on the list used to build them.
-  Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
-  `dftd3`; pass both the same table.
+- Fixed PyTorch bindings to execute Warp kernels on the active CUDA stream across all modules.
+- Corrected the uniform background neutralizing term in multipole Ewald and PME for charged systems.
+- Fixed PyTorch segmented operations to avoid retaining CUDA graph pool allocations during cached launches.
+- Corrected JAX `ewald_reciprocal_space` derivatives to include reciprocal cell gradient contributions.
+- Changed `neighbor_list` keyword argument type annotations from `dict` to `Any` in PyTorch and JAX.
+- Fixed PyTorch matrix-to-COO conversions for variable output edge counts under `torch.compile`.
+- Registered FIRE2 custom operators with PyTorch library dispatch to support compilation.
+- Fixed symbolic shape tracing for PyTorch electrostatics and multipole operations under `torch.compile`.
+- Prevented host synchronization during cell matrix inversion inside CUDA graph capture.
+- Corrected cluster-tile neighbor periodic image selection for skewed triclinic cells.
 
 ## v0.4.1 - 2026-08-03
 

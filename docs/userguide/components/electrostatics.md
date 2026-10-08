@@ -424,7 +424,7 @@ Removes the spurious self-interaction introduced by the Gaussian charge distribu
 **Background Correction** (for non-neutral systems):
 
 ```{math}
-E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q_{\text{total}}^2
+E_{\text{background}} = \frac{\pi}{2 \alpha^2 V} \sum_i q_i Q_{\text{total}}
 ```
 
 ### Usage Examples
