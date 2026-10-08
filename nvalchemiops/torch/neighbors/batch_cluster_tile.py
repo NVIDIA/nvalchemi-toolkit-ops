@@ -26,13 +26,10 @@ Scope: float32, orthorhombic or triclinic PBC, one cell per system,
 arbitrary natom per system (padded internally).
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
 import torch
 import warp as wp
-
-if TYPE_CHECKING:
-    from nvalchemiops.torch.neighbors.prepared_cluster_tile import ClusterTileState
 
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -75,6 +72,7 @@ from nvalchemiops.torch.neighbors._autograd import (
     _reconstruct_coo_geometry,
     _reconstruct_matrix_geometry,
 )
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
     _check_tile_buffer_capacity,
@@ -99,6 +97,122 @@ __all__ = [
 ]
 
 
+def _fixed_cluster_op_args(
+    geometry: _FixedCellGeometry | None,
+) -> tuple[
+    bool,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+]:
+    """Return static fixed mode and readonly per-system geometry tensors."""
+    if geometry is None:
+        return False, None, None, None, None, None
+    return (
+        True,
+        geometry.qr,
+        geometry.axis_aligned,
+        geometry.fractional_rounding_certified,
+        geometry.qr_height_certified,
+        geometry.bbox_cutoff_bounds,
+    )
+
+
+def _fixed_cluster_kwargs(
+    geometry: _FixedCellGeometry | None,
+) -> dict[str, object]:
+    """Return fixed geometry tensors as private query kwargs."""
+    return dict(
+        zip(
+            (
+                "fixed_cell",
+                "qr",
+                "axis_aligned",
+                "fractional_rounding_certified",
+                "qr_height_certified",
+                "bbox_cutoff_bounds",
+            ),
+            _fixed_cluster_op_args(geometry),
+        )
+    )
+
+
+def _wp_fixed_cluster_geometry(
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> dict[str, object]:
+    """Convert optional prepared cluster geometry arrays for a Warp launcher."""
+    return {
+        "fixed_cell": fixed_cell,
+        "qr": wp.from_torch(qr, dtype=wp.float32, requires_grad=False)
+        if qr is not None
+        else None,
+        "axis_aligned": wp.from_torch(axis_aligned, dtype=wp.bool, requires_grad=False)
+        if axis_aligned is not None
+        else None,
+        "fractional_rounding_certified": wp.from_torch(
+            fractional_rounding_certified,
+            dtype=wp.bool,
+            requires_grad=False,
+        )
+        if fractional_rounding_certified is not None
+        else None,
+        "qr_height_certified": wp.from_torch(
+            qr_height_certified, dtype=wp.bool, requires_grad=False
+        )
+        if qr_height_certified is not None
+        else None,
+        "bbox_cutoff_bounds": wp.from_torch(
+            bbox_cutoff_bounds,
+            dtype=wp.float32,
+            requires_grad=False,
+        )
+        if bbox_cutoff_bounds is not None
+        else None,
+    }
+
+
+def _wp_direct_csr_geometry_inputs(
+    device: torch.device,
+    geometry: _FixedCellGeometry | None,
+) -> tuple[wp.array, wp.array, wp.array, wp.array, wp.array]:
+    """Convert direct-CSR cache arrays or empty dynamic sentinels."""
+    device_str = str(device)
+    return (
+        wp.from_torch(geometry.qr, dtype=wp.float32, requires_grad=False)
+        if geometry is not None and geometry.qr is not None
+        else wp.empty((0, 15), dtype=wp.float32, device=device_str),
+        wp.from_torch(geometry.axis_aligned, dtype=wp.bool, requires_grad=False)
+        if geometry is not None and geometry.axis_aligned is not None
+        else wp.empty(0, dtype=wp.bool, device=device_str),
+        wp.from_torch(
+            geometry.fractional_rounding_certified,
+            dtype=wp.bool,
+            requires_grad=False,
+        )
+        if geometry is not None and geometry.fractional_rounding_certified is not None
+        else wp.empty(0, dtype=wp.bool, device=device_str),
+        wp.from_torch(
+            geometry.qr_height_certified,
+            dtype=wp.bool,
+            requires_grad=False,
+        )
+        if geometry is not None and geometry.qr_height_certified is not None
+        else wp.empty(0, dtype=wp.bool, device=device_str),
+        wp.from_torch(
+            geometry.bbox_cutoff_bounds, dtype=wp.float32, requires_grad=False
+        )
+        if geometry is not None and geometry.bbox_cutoff_bounds is not None
+        else wp.empty((0, 3), dtype=wp.float32, device=device_str),
+    )
+
+
 @torch.library.custom_op(
     "nvalchemiops::_batch_cluster_tile_direct_csr_count", mutates_args=("row_counts",)
 )
@@ -118,9 +232,35 @@ def _batch_cluster_tile_direct_csr_count_op(
     tile_system: torch.Tensor,
     row_counts: torch.Tensor,
     launch_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
+    geometry = _wp_direct_csr_geometry_inputs(
+        sorted_pos_x.device,
+        _FixedCellGeometry(
+            inv_cell=None,
+            cell=None,
+            cells_per_dimension=None,
+            neighbor_search_radius=None,
+            cells_per_system=None,
+            cell_offsets=None,
+            qr=qr,
+            axis_aligned=axis_aligned,
+            fractional_rounding_certified=fractional_rounding_certified,
+            qr_height_certified=qr_height_certified,
+            bbox_cutoff_bounds=bbox_cutoff_bounds,
+        )
+        if fixed_cell
+        else None,
+    )
     wp.launch_tiled(
-        _get_query_cluster_tile_direct_csr_count_kernel(batched=True),
+        _get_query_cluster_tile_direct_csr_count_kernel(
+            batched=True, fixed_cell=fixed_cell
+        ),
         dim=[launch_tiles],
         inputs=[
             wp.from_torch(x, dtype=d, return_ctype=True)
@@ -133,6 +273,7 @@ def _batch_cluster_tile_direct_csr_count_op(
                 (inv_cell.contiguous(), wp.mat33f),
             )
         ]
+        + list(geometry)
         + [
             float(cutoff * cutoff),
             int(natom),
@@ -185,10 +326,35 @@ def _batch_cluster_tile_direct_csr_fill_op(
     return_distances: bool,
     max_pairs: int,
     launch_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
+    geometry = _wp_direct_csr_geometry_inputs(
+        sorted_pos_x.device,
+        _FixedCellGeometry(
+            inv_cell=None,
+            cell=None,
+            cells_per_dimension=None,
+            neighbor_search_radius=None,
+            cells_per_system=None,
+            cell_offsets=None,
+            qr=qr,
+            axis_aligned=axis_aligned,
+            fractional_rounding_certified=fractional_rounding_certified,
+            qr_height_certified=qr_height_certified,
+            bbox_cutoff_bounds=bbox_cutoff_bounds,
+        )
+        if fixed_cell
+        else None,
+    )
     wp.launch_tiled(
         _get_query_cluster_tile_direct_csr_fill_kernel(
             batched=True,
+            fixed_cell=fixed_cell,
             return_vectors=return_vectors,
             return_distances=return_distances,
         ),
@@ -204,6 +370,7 @@ def _batch_cluster_tile_direct_csr_fill_op(
                 (inv_cell.contiguous(), wp.mat33f),
             )
         ]
+        + list(geometry)
         + [
             float(cutoff * cutoff),
             int(natom),
@@ -258,6 +425,7 @@ def _batch_cluster_tile_direct_csr_fill_pair_outputs(
     return_distances: bool,
     max_pairs: int,
     launch_tiles: int,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Fill batched compact CSR rows and raw pair outputs together."""
     device = str(sorted_pos_x.device)
@@ -294,6 +462,7 @@ def _batch_cluster_tile_direct_csr_fill_pair_outputs(
     wp.launch_tiled(
         _get_query_cluster_tile_direct_csr_fill_kernel(
             batched=True,
+            fixed_cell=_fixed_cell_geometry is not None,
             return_vectors=return_vectors,
             return_distances=return_distances,
             pair_fn=pair_fn,
@@ -306,6 +475,7 @@ def _batch_cluster_tile_direct_csr_fill_pair_outputs(
             wp.from_torch(sorted_atom_index, dtype=wp.int32),
             wp.from_torch(cell.contiguous(), dtype=wp.mat33f),
             wp.from_torch(inv_cell.contiguous(), dtype=wp.mat33f),
+            *_wp_direct_csr_geometry_inputs(sorted_pos_x.device, _fixed_cell_geometry),
             float(cutoff * cutoff),
             int(natom),
             int(max_pairs),
@@ -794,30 +964,8 @@ def _batched_morton_sort_padded(
 # =============================================================================
 # Component ops (torch wrappers around the warp launchers)
 # =============================================================================
-@torch.library.custom_op(
-    "nvalchemiops::_batch_build_cluster_tile_list",
-    mutates_args=(
-        "sorted_atom_index",
-        "sort_inv",
-        "sorted_pos_x",
-        "sorted_pos_y",
-        "sorted_pos_z",
-        "group_ctr_x",
-        "group_ctr_y",
-        "group_ctr_z",
-        "group_ext_x",
-        "group_ext_y",
-        "group_ext_z",
-        "inv_cell_batch",
-        "num_tiles",
-        "tile_row_group",
-        "tile_col_group",
-        "tile_system",
-        "tile_counts",
-    ),
-)
 @scoped_torch_warp_stream
-def _batch_build_cluster_tile_list_op(
+def _batch_build_cluster_tile_list_impl(
     positions: torch.Tensor,
     cutoff: float,
     cell_batch: torch.Tensor,
@@ -850,6 +998,12 @@ def _batch_build_cluster_tile_list_op(
     use_rebuild_flags: bool,
     use_segmented: bool,
     compute_inv_cell_batch: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     device = positions.device
     if compute_inv_cell_batch:
@@ -931,6 +1085,34 @@ def _batch_build_cluster_tile_list_op(
             if use_segmented
             else None
         ),
+        fixed_cell=fixed_cell,
+        qr=(
+            wp.from_torch(qr, dtype=wp.float32, return_ctype=True)
+            if qr is not None
+            else None
+        ),
+        axis_aligned=(
+            wp.from_torch(axis_aligned, dtype=wp.bool, return_ctype=True)
+            if axis_aligned is not None
+            else None
+        ),
+        fractional_rounding_certified=(
+            wp.from_torch(
+                fractional_rounding_certified, dtype=wp.bool, return_ctype=True
+            )
+            if fractional_rounding_certified is not None
+            else None
+        ),
+        qr_height_certified=(
+            wp.from_torch(qr_height_certified, dtype=wp.bool, return_ctype=True)
+            if qr_height_certified is not None
+            else None
+        ),
+        bbox_cutoff_bounds=(
+            wp.from_torch(bbox_cutoff_bounds, dtype=wp.float32, return_ctype=True)
+            if bbox_cutoff_bounds is not None
+            else None
+        ),
         group_ctr_x_buffer=wp.from_torch(
             group_ctr_x, dtype=wp_dtype, return_ctype=True
         ),
@@ -949,6 +1131,205 @@ def _batch_build_cluster_tile_list_op(
         group_ext_z_buffer=wp.from_torch(
             group_ext_z, dtype=wp_dtype, return_ctype=True
         ),
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_build_cluster_tile_list",
+    mutates_args=(
+        "sorted_atom_index",
+        "sort_inv",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "inv_cell_batch",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+        "tile_system",
+        "tile_counts",
+    ),
+)
+def _batch_build_cluster_tile_list_op(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    atom_system: torch.Tensor,
+    real_sorted_rank_to_padded_slot: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sort_inv: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    batch_idx_sorted: torch.Tensor,
+    batch_ptr_padded: torch.Tensor,
+    group_system: torch.Tensor,
+    group_ptr: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    use_rebuild_flags: bool,
+    use_segmented: bool,
+    compute_inv_cell_batch: bool,
+) -> None:
+    _batch_build_cluster_tile_list_impl(
+        positions,
+        cutoff,
+        cell_batch,
+        inv_cell_batch,
+        batch_ptr,
+        atom_system,
+        real_sorted_rank_to_padded_slot,
+        sorted_atom_index,
+        sort_inv,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        batch_idx_sorted,
+        batch_ptr_padded,
+        group_system,
+        group_ptr,
+        group_ctr_x,
+        group_ctr_y,
+        group_ctr_z,
+        group_ext_x,
+        group_ext_y,
+        group_ext_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        tile_system,
+        rebuild_flags,
+        tile_offsets,
+        tile_counts,
+        use_rebuild_flags,
+        use_segmented,
+        compute_inv_cell_batch,
+        False,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_build_cluster_tile_list_fixed",
+    mutates_args=(
+        "sorted_atom_index",
+        "sort_inv",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+        "tile_system",
+        "tile_counts",
+    ),
+)
+def _batch_build_cluster_tile_list_fixed_op(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    atom_system: torch.Tensor,
+    real_sorted_rank_to_padded_slot: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sort_inv: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    batch_idx_sorted: torch.Tensor,
+    batch_ptr_padded: torch.Tensor,
+    group_system: torch.Tensor,
+    group_ptr: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    use_rebuild_flags: bool,
+    use_segmented: bool,
+    qr: torch.Tensor,
+    axis_aligned: torch.Tensor,
+    fractional_rounding_certified: torch.Tensor,
+    qr_height_certified: torch.Tensor,
+    bbox_cutoff_bounds: torch.Tensor,
+) -> None:
+    _batch_build_cluster_tile_list_impl(
+        positions,
+        cutoff,
+        cell_batch,
+        inv_cell_batch,
+        batch_ptr,
+        atom_system,
+        real_sorted_rank_to_padded_slot,
+        sorted_atom_index,
+        sort_inv,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        batch_idx_sorted,
+        batch_ptr_padded,
+        group_system,
+        group_ptr,
+        group_ctr_x,
+        group_ctr_y,
+        group_ctr_z,
+        group_ext_x,
+        group_ext_y,
+        group_ext_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        tile_system,
+        rebuild_flags,
+        tile_offsets,
+        tile_counts,
+        use_rebuild_flags,
+        use_segmented,
+        False,
+        True,
+        qr,
+        axis_aligned,
+        fractional_rounding_certified,
+        qr_height_certified,
+        bbox_cutoff_bounds,
     )
 
 
@@ -986,6 +1367,48 @@ def _(
     use_rebuild_flags: bool,
     use_segmented: bool,
     compute_inv_cell_batch: bool,
+) -> None:
+    return None
+
+
+@_batch_build_cluster_tile_list_fixed_op.register_fake
+def _(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    atom_system: torch.Tensor,
+    real_sorted_rank_to_padded_slot: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sort_inv: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    batch_idx_sorted: torch.Tensor,
+    batch_ptr_padded: torch.Tensor,
+    group_system: torch.Tensor,
+    group_ptr: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    use_rebuild_flags: bool,
+    use_segmented: bool,
+    qr: torch.Tensor,
+    axis_aligned: torch.Tensor,
+    fractional_rounding_certified: torch.Tensor,
+    qr_height_certified: torch.Tensor,
+    bbox_cutoff_bounds: torch.Tensor,
 ) -> None:
     return None
 
@@ -1137,6 +1560,8 @@ def _batch_build_cluster_tile_list_normalized(
     rebuild_flags: torch.Tensor | None = None,
     tile_offsets: torch.Tensor | None = None,
     tile_counts: torch.Tensor | None = None,
+    force_compute_inv_cell: bool = False,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> torch.Tensor:
     """Build batched tile neighbor list state into pre-allocated outputs.
 
@@ -1272,7 +1697,10 @@ def _batch_build_cluster_tile_list_normalized(
     ):
         raise ValueError("prepared partition metadata must belong to batch scratch")
 
-    compute_inv_cell_batch = inv_cell_batch is None and torch.compiler.is_compiling()
+    compute_inv_cell_batch = _fixed_cell_geometry is None and (
+        force_compute_inv_cell
+        or (inv_cell_batch is None and torch.compiler.is_compiling())
+    )
     if inv_cell_batch is None:
         inv_cell_batch = (
             torch.empty_like(cell_batch)
@@ -1291,7 +1719,7 @@ def _batch_build_cluster_tile_list_normalized(
     dummy_i32 = torch.empty(1, dtype=torch.int32, device=positions.device)
     dummy_bool = torch.empty(1, dtype=torch.bool, device=positions.device)
 
-    _batch_build_cluster_tile_list_op(
+    build_args = (
         positions,
         float(cutoff),
         cell_batch,
@@ -1323,8 +1751,30 @@ def _batch_build_cluster_tile_list_normalized(
         tile_counts if tile_counts is not None else dummy_i32,
         bool(use_rebuild_flags),
         bool(use_segmented),
-        bool(compute_inv_cell_batch),
     )
+    if _fixed_cell_geometry is None:
+        _batch_build_cluster_tile_list_op(*build_args, bool(compute_inv_cell_batch))
+    else:
+        geometry = _fixed_cell_geometry
+        if any(
+            value is None
+            for value in (
+                geometry.qr,
+                geometry.axis_aligned,
+                geometry.fractional_rounding_certified,
+                geometry.qr_height_certified,
+                geometry.bbox_cutoff_bounds,
+            )
+        ):
+            raise RuntimeError("prepared cluster geometry cache is incomplete")
+        _batch_build_cluster_tile_list_fixed_op(
+            *build_args,
+            geometry.qr,
+            geometry.axis_aligned,
+            geometry.fractional_rounding_certified,
+            geometry.qr_height_certified,
+            geometry.bbox_cutoff_bounds,
+        )
     return inv_cell_batch
 
 
@@ -1427,6 +1877,12 @@ def _batch_query_cluster_tile_op(
     n_tiles: int,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     # ``n_tiles`` (host-synced compact tile count) tightens the launch; the
     # kernel still guards per-tile defensively.  ``n_tiles <= 0`` (segmented
@@ -1497,6 +1953,14 @@ def _batch_query_cluster_tile_op(
             if return_distances
             else None
         ),
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -1522,6 +1986,12 @@ def _(
     n_tiles: int,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -1572,6 +2042,12 @@ def _batch_query_cluster_tile_topology_op(
     use_segmented: bool,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     if use_rebuild_flags:
         wp_selective_zero_num_neighbors(
@@ -1641,6 +2117,12 @@ def _batch_query_cluster_tile_topology_op(
         neighbor_distances=neighbor_distances if return_distances else None,
         pair_energies=None,
         pair_forces=None,
+        fixed_cell=fixed_cell,
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
     )
 
 
@@ -1677,6 +2159,12 @@ def _(
     use_segmented: bool,
     return_vectors: bool,
     return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -1793,6 +2281,7 @@ def batch_query_cluster_tile(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Convert the batched tile pair list to neighbor_matrix in place.
 
@@ -2002,6 +2491,7 @@ def batch_query_cluster_tile(
             bool(tile_offsets is not None),
             bool(return_vectors),
             bool(return_distances),
+            *_fixed_cluster_op_args(_fixed_cell_geometry),
         )
         return
     if geometry_only:
@@ -2029,6 +2519,7 @@ def batch_query_cluster_tile(
             n_tiles,
             bool(return_vectors),
             bool(return_distances),
+            *_fixed_cluster_op_args(_fixed_cell_geometry),
         )
         return
     if needs_direct:
@@ -2080,6 +2571,7 @@ def batch_query_cluster_tile(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            **_fixed_cluster_kwargs(_fixed_cell_geometry),
         )
         return
 
@@ -2104,6 +2596,7 @@ def batch_query_cluster_tile(
         n_tiles,
         False,
         False,
+        *_fixed_cluster_op_args(_fixed_cell_geometry),
     )
 
 
@@ -2141,6 +2634,12 @@ def _batch_query_cluster_tile_optional(
     neighbor_distances: torch.Tensor | None,
     pair_energies: torch.Tensor | None,
     pair_forces: torch.Tensor | None,
+    fixed_cell: bool = False,
+    qr: torch.Tensor | None = None,
+    axis_aligned: torch.Tensor | None = None,
+    fractional_rounding_certified: torch.Tensor | None = None,
+    qr_height_certified: torch.Tensor | None = None,
+    bbox_cutoff_bounds: torch.Tensor | None = None,
 ) -> None:
     """Pair-output path for the batched binding.  Bypasses the torch
     custom op and calls the warp launcher directly so a callable
@@ -2233,6 +2732,14 @@ def _batch_query_cluster_tile_optional(
         neighbor_distances=wp_neighbor_distances,
         pair_energies=wp_pair_energies,
         pair_forces=wp_pair_forces,
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -2259,6 +2766,12 @@ def _batch_query_cluster_tile_coo_op(
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
     n_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     # ``n_tiles`` (host-synced compact tile count) tightens the launch; the
     # kernel still guards per-tile defensively.
@@ -2298,6 +2811,14 @@ def _batch_query_cluster_tile_coo_op(
         coo_shifts=wp.from_torch(coo_shifts, dtype=wp.int32, return_ctype=True),
         wp_dtype=wp_dtype,
         device=wp_device,
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
 
 
@@ -2320,6 +2841,12 @@ def _(
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
     n_tiles: int,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
 ) -> None:
     return None
 
@@ -2357,6 +2884,12 @@ def _batch_query_cluster_tile_coo_optional(
     neighbor_distances: torch.Tensor | None,
     pair_energies: torch.Tensor | None,
     pair_forces: torch.Tensor | None,
+    fixed_cell: bool = False,
+    qr: torch.Tensor | None = None,
+    axis_aligned: torch.Tensor | None = None,
+    fractional_rounding_certified: torch.Tensor | None = None,
+    qr_height_certified: torch.Tensor | None = None,
+    bbox_cutoff_bounds: torch.Tensor | None = None,
 ) -> None:
     """Pair-output COO path for the batched binding.
 
@@ -2442,7 +2975,240 @@ def _batch_query_cluster_tile_coo_optional(
         neighbor_distances=wp_neighbor_distances,
         pair_energies=wp_pair_energies,
         pair_forces=wp_pair_forces,
+        **_wp_fixed_cluster_geometry(
+            fixed_cell,
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ),
     )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_query_cluster_tile_coo_segmented",
+    mutates_args=("pair_counter", "pair_counts", "coo_list", "coo_shifts"),
+)
+@scoped_torch_warp_stream
+def _batch_query_cluster_tile_coo_segmented_op(
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    natom: int,
+    max_pairs: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> None:
+    _batch_query_cluster_tile_coo_optional(
+        cell_batch,
+        inv_cell_batch,
+        natom,
+        max_pairs,
+        cutoff,
+        sorted_atom_index,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        tile_system,
+        pair_counter,
+        coo_list,
+        coo_shifts,
+        n_tiles=0,
+        rebuild_flags=None,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+        pair_offsets=pair_offsets,
+        pair_counts=pair_counts,
+        return_vectors=False,
+        return_distances=False,
+        pair_fn=None,
+        pair_params=None,
+        neighbor_vectors=None,
+        neighbor_distances=None,
+        pair_energies=None,
+        pair_forces=None,
+        fixed_cell=fixed_cell,
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
+
+
+@_batch_query_cluster_tile_coo_segmented_op.register_fake
+def _(
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    natom: int,
+    max_pairs: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> None:
+    return None
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_query_cluster_tile_coo_segmented_no_pair_fn",
+    mutates_args=(
+        "pair_counter",
+        "pair_counts",
+        "coo_list",
+        "coo_shifts",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+@scoped_torch_warp_stream
+def _batch_query_cluster_tile_coo_segmented_no_pair_fn_op(
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    natom: int,
+    max_pairs: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    return_vectors: bool,
+    return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> None:
+    _batch_query_cluster_tile_coo_optional(
+        cell_batch,
+        inv_cell_batch,
+        natom,
+        max_pairs,
+        cutoff,
+        sorted_atom_index,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        tile_system,
+        pair_counter,
+        coo_list,
+        coo_shifts,
+        n_tiles=0,
+        rebuild_flags=None,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+        pair_offsets=pair_offsets,
+        pair_counts=pair_counts,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=None,
+        pair_params=None,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=None,
+        pair_forces=None,
+        fixed_cell=fixed_cell,
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
+
+
+@_batch_query_cluster_tile_coo_segmented_no_pair_fn_op.register_fake
+def _(
+    cell_batch: torch.Tensor,
+    inv_cell_batch: torch.Tensor,
+    natom: int,
+    max_pairs: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    tile_offsets: torch.Tensor,
+    tile_counts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    return_vectors: bool,
+    return_distances: bool,
+    fixed_cell: bool,
+    qr: torch.Tensor | None,
+    axis_aligned: torch.Tensor | None,
+    fractional_rounding_certified: torch.Tensor | None,
+    qr_height_certified: torch.Tensor | None,
+    bbox_cutoff_bounds: torch.Tensor | None,
+) -> None:
+    return None
 
 
 def batch_query_cluster_tile_coo(
@@ -2476,6 +3242,7 @@ def batch_query_cluster_tile_coo(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Convert the batched tile pair list to flat COO pair list in place.
 
@@ -2604,6 +3371,70 @@ def batch_query_cluster_tile_coo(
         )
     )
     if needs_direct:
+        if (
+            rebuild_flags is None
+            and tile_offsets is not None
+            and tile_counts is not None
+            and pair_offsets is not None
+            and pair_counts is not None
+            and pair_fn is None
+            and pair_params is None
+            and pair_energies is None
+            and pair_forces is None
+        ):
+            if return_vectors or return_distances:
+                _batch_query_cluster_tile_coo_segmented_no_pair_fn_op(
+                    cell_batch,
+                    inv_cell_batch,
+                    natom,
+                    max_pairs,
+                    cutoff,
+                    sorted_atom_index,
+                    sorted_pos_x,
+                    sorted_pos_y,
+                    sorted_pos_z,
+                    num_tiles,
+                    tile_row_group,
+                    tile_col_group,
+                    tile_system,
+                    pair_counter,
+                    coo_list,
+                    coo_shifts,
+                    tile_offsets,
+                    tile_counts,
+                    pair_offsets,
+                    pair_counts,
+                    neighbor_vectors,
+                    neighbor_distances,
+                    return_vectors,
+                    return_distances,
+                    *_fixed_cluster_op_args(_fixed_cell_geometry),
+                )
+            else:
+                _batch_query_cluster_tile_coo_segmented_op(
+                    cell_batch,
+                    inv_cell_batch,
+                    natom,
+                    max_pairs,
+                    cutoff,
+                    sorted_atom_index,
+                    sorted_pos_x,
+                    sorted_pos_y,
+                    sorted_pos_z,
+                    num_tiles,
+                    tile_row_group,
+                    tile_col_group,
+                    tile_system,
+                    pair_counter,
+                    coo_list,
+                    coo_shifts,
+                    tile_offsets,
+                    tile_counts,
+                    pair_offsets,
+                    pair_counts,
+                    *_fixed_cluster_op_args(_fixed_cell_geometry),
+                )
+            return
         _batch_query_cluster_tile_coo_optional(
             cell_batch,
             inv_cell_batch,
@@ -2635,6 +3466,7 @@ def batch_query_cluster_tile_coo(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            **_fixed_cluster_kwargs(_fixed_cell_geometry),
         )
         return
 
@@ -2656,6 +3488,7 @@ def batch_query_cluster_tile_coo(
         coo_list,
         coo_shifts,
         n_tiles,
+        *_fixed_cluster_op_args(_fixed_cell_geometry),
     )
 
 
@@ -2788,8 +3621,10 @@ def _batch_cluster_tile_neighbor_list_impl(
     pair_forces: torch.Tensor | None = None,
     max_tiles_per_group: int | None = None,
     *,
-    state: "ClusterTileState | None" = None,
     eager_rebuild_count: int | None = None,
+    force_compute_inv_cell: bool = False,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
+    _live_cell: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call.
 
@@ -2803,12 +3638,10 @@ def _batch_cluster_tile_neighbor_list_impl(
     positions : torch.Tensor, shape (total_atoms, 3), dtype=float32
         Concatenated atomic coordinates across systems.
     cutoff : float, optional
-        Cutoff distance in Cartesian units. Must be positive. Required without
-        ``state`` and ignored when ``state`` is provided.
+        Cutoff distance in Cartesian units. Must be positive.
     cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32
         Per-system unit cell matrices. Cluster-tile assumes fully
-        periodic boundaries. Required on every call, including prepared
-        execution.
+        periodic boundaries. Required on every call.
     batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32 or int64, optional
         CSR pointer separating systems.  Assumes positions are laid out
         in system-contiguous order (system 0 atoms first, then system 1,
@@ -2817,8 +3650,7 @@ def _batch_cluster_tile_neighbor_list_impl(
         :func:`nvalchemiops.torch.neighbors.neighbor_list` with a
         ``batch_idx`` argument, the dispatcher derives ``batch_ptr`` by
         assuming ``batch_idx`` is sorted by system — the same contract.
-        Required without ``state``. A prepared state owns its partition, so a
-        supplied ``batch_ptr`` is ignored when ``state`` is provided.
+        Required for every call.
     max_neighbors : int, optional
         Falls back to ``estimate_max_neighbors`` using the larger active cutoff.
         Matrix format only.
@@ -2923,8 +3755,6 @@ def _batch_cluster_tile_neighbor_list_impl(
         ``(r_ij, distance, pair_params, i, j) -> (energy, force)``.
     pair_params : torch.Tensor, optional
         Per-atom pair-function parameters; required with ``pair_fn``.
-        ``pair_params`` is rejected with prepared state because prepared pair
-        callbacks are unsupported.
     neighbor_vectors, neighbor_distances, pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers, written only when the corresponding enable flag
         / ``pair_fn`` is active. Geometry buffers must not require gradients.
@@ -2938,14 +3768,6 @@ def _batch_cluster_tile_neighbor_list_impl(
         Eager calls estimate the value when it is ``None``. Caller-owned tile
         arrays determine the actual physical capacity. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
-    state : ClusterTileState, optional
-        Prepared configuration and reusable storage returned by
-        :func:`prepare_cluster_tile`. The cell remains a required per-call
-        input. The state controls cutoffs, format, capacities, optional outputs,
-        and scratch storage; redundant static arguments are ignored. Explicit
-        scratch or output buffers and ``return_state=True`` are rejected. The
-        state must be batched; its prepared partition is used even when
-        ``batch_ptr`` is supplied.
 
     Returns
     -------
@@ -3016,81 +3838,6 @@ def _batch_cluster_tile_neighbor_list_impl(
         Lower-level query step.
     """
 
-    if state is not None:
-        from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
-            ClusterTileState,
-            _execute_prepared_cluster_tile,
-        )
-
-        if not isinstance(state, ClusterTileState):
-            raise TypeError("state must be a ClusterTileState")
-        if not state.is_batched:
-            raise ValueError(
-                "batch_cluster_tile_neighbor_list requires a batched state"
-            )
-        if cell_batch is None:
-            raise ValueError("cell_batch is required when state is provided")
-        conflicts = [
-            name
-            for name, value in {
-                "neighbor_matrix": neighbor_matrix,
-                "neighbor_matrix_shifts": neighbor_matrix_shifts,
-                "num_neighbors": num_neighbors,
-                "neighbor_matrix2": neighbor_matrix2,
-                "neighbor_matrix_shifts2": neighbor_matrix_shifts2,
-                "num_neighbors2": num_neighbors2,
-                "neighbor_list": neighbor_list,
-                "neighbor_list_shifts": neighbor_list_shifts,
-                "pair_counter": pair_counter,
-                "pair_offsets": pair_offsets,
-                "pair_counts": pair_counts,
-                "inv_cell_batch": inv_cell_batch,
-                "sorted_atom_index": sorted_atom_index,
-                "sort_inv": sort_inv,
-                "sorted_pos_x": sorted_pos_x,
-                "sorted_pos_y": sorted_pos_y,
-                "sorted_pos_z": sorted_pos_z,
-                "batch_idx_sorted": batch_idx_sorted,
-                "batch_ptr_padded": batch_ptr_padded,
-                "group_system": group_system,
-                "group_ptr": group_ptr,
-                "group_ctr_x": group_ctr_x,
-                "group_ctr_y": group_ctr_y,
-                "group_ctr_z": group_ctr_z,
-                "group_ext_x": group_ext_x,
-                "group_ext_y": group_ext_y,
-                "group_ext_z": group_ext_z,
-                "num_tiles": num_tiles,
-                "tile_row_group": tile_row_group,
-                "tile_col_group": tile_col_group,
-                "tile_system": tile_system,
-                "tile_offsets": tile_offsets,
-                "tile_counts": tile_counts,
-                "neighbor_vectors": neighbor_vectors,
-                "neighbor_distances": neighbor_distances,
-                "pair_energies": pair_energies,
-                "pair_forces": pair_forces,
-            }.items()
-            if value is not None
-        ]
-        if return_state:
-            conflicts.insert(0, "return_state")
-        if conflicts:
-            raise ValueError(
-                "state controls configuration and storage; conflicting arguments: "
-                + ", ".join(conflicts)
-            )
-        if pair_params is not None:
-            raise ValueError(
-                "pair_params is not supported with state because prepared pair "
-                "callbacks are unsupported"
-            )
-        return _execute_prepared_cluster_tile(
-            positions,
-            cell_batch,
-            state,
-            rebuild_flags=rebuild_flags,
-        )
     if cutoff is None or cell_batch is None or batch_ptr is None:
         missing = [
             name
@@ -3101,9 +3848,7 @@ def _batch_cluster_tile_neighbor_list_impl(
             )
             if value is None
         ]
-        raise ValueError(
-            "missing required arguments without state: " + ", ".join(missing)
-        )
+        raise ValueError("missing required arguments: " + ", ".join(missing))
     if positions.dtype != torch.float32:
         raise TypeError("positions must be float32")
     if format not in ("matrix", "coo", "tile"):
@@ -3412,8 +4157,16 @@ def _batch_cluster_tile_neighbor_list_impl(
     requires_reconstruction = (
         geometry_requested
         and torch.is_grad_enabled()
-        and (positions.requires_grad or cell_batch.requires_grad)
+        and (
+            positions.requires_grad
+            or (_live_cell if _live_cell is not None else cell_batch).requires_grad
+        )
     )
+    geometry_cell_batch = _live_cell if _live_cell is not None else cell_batch
+    if requires_reconstruction and geometry_cell_batch.ndim == 2:
+        geometry_cell_batch = geometry_cell_batch.unsqueeze(0).expand(
+            num_systems, -1, -1
+        )
     snapshot_vectors = neighbor_vectors is not None
     snapshot_distances = neighbor_distances is not None
     if format == "coo" and pair_offsets is None:
@@ -3618,6 +4371,8 @@ def _batch_cluster_tile_neighbor_list_impl(
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
+        force_compute_inv_cell=force_compute_inv_cell,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
 
     if format == "tile":
@@ -3718,6 +4473,7 @@ def _batch_cluster_tile_neighbor_list_impl(
                 tile_system,
                 row_counts,
                 launch_tiles,
+                *_fixed_cluster_op_args(_fixed_cell_geometry),
             )
             neighbor_ptr = torch.cat(
                 (
@@ -3756,6 +4512,7 @@ def _batch_cluster_tile_neighbor_list_impl(
                     copy_distances,
                     int(max_pairs),
                     launch_tiles,
+                    *_fixed_cluster_op_args(_fixed_cell_geometry),
                 )
             else:
                 if pair_params is None or pair_energies is None or pair_forces is None:
@@ -3788,6 +4545,7 @@ def _batch_cluster_tile_neighbor_list_impl(
                     return_distances,
                     int(max_pairs),
                     launch_tiles,
+                    _fixed_cell_geometry=_fixed_cell_geometry,
                 )
             nl, nls, exact_vectors, exact_distances = _compact_coo_prefix(
                 total,
@@ -3812,7 +4570,11 @@ def _batch_cluster_tile_neighbor_list_impl(
                         )
                     )
                     exact_distances, exact_vectors = _reconstruct_coo_geometry(
-                        positions, cell_batch, nl, nls, batch_idx_atom
+                        positions,
+                        geometry_cell_batch,
+                        nl,
+                        nls,
+                        batch_idx_atom,
                     )
                     if return_vectors and snapshot_vectors:
                         neighbor_vectors[: exact_vectors.shape[0]].copy_(
@@ -3859,6 +4621,7 @@ def _batch_cluster_tile_neighbor_list_impl(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            _fixed_cell_geometry=_fixed_cell_geometry,
         )
         if segmented_coo:
             segment_caps = pair_offsets[1:] - pair_offsets[:-1]
@@ -3992,6 +4755,7 @@ def _batch_cluster_tile_neighbor_list_impl(
         neighbor_distances=None if requires_reconstruction else neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
 
     if max_neighbors > 0:
@@ -4041,7 +4805,7 @@ def _batch_cluster_tile_neighbor_list_impl(
     if requires_reconstruction:
         distances, vectors = _reconstruct_matrix_geometry(
             positions,
-            cell_batch,
+            geometry_cell_batch,
             neighbor_matrix,
             num_neighbors,
             neighbor_matrix_shifts,
@@ -4106,9 +4870,9 @@ def _batch_cluster_tile_neighbor_list_impl(
 
 def batch_cluster_tile_neighbor_list(
     positions: torch.Tensor,
-    cutoff: float | None = None,
-    cell_batch: torch.Tensor | None = None,
-    batch_ptr: torch.Tensor | None = None,
+    cutoff: float,
+    cell_batch: torch.Tensor,
+    batch_ptr: torch.Tensor,
     max_neighbors: int | None = None,
     fill_value: int | None = None,
     format: str = "matrix",
@@ -4158,8 +4922,6 @@ def batch_cluster_tile_neighbor_list(
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
     max_tiles_per_group: int | None = None,
-    *,
-    state: "ClusterTileState | None" = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call."""
     return _batch_cluster_tile_neighbor_list_impl(
@@ -4217,7 +4979,6 @@ def batch_cluster_tile_neighbor_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
         max_tiles_per_group=max_tiles_per_group,
-        state=state,
     )
 
 

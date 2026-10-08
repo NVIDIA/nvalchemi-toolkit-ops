@@ -4,9 +4,9 @@
 
 # User Guide
 
-Welcome to the ALCHEMI Toolkit-Ops user guide: this side of the documentation
-is to provide a high-level and conceptual understanding of the philosophy
-and supported features in `nvalchemiops`.
+Welcome to the ALCHEMI Toolkit-Ops user guide: this guide provides a
+high-level and conceptual understanding of the philosophy and supported
+features in `nvalchemiops`.
 
 ## Quick Start
 
@@ -134,6 +134,7 @@ See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
 - [Install](about/install)
 - [Introduction](about/intro)
 - [Conventions](about/conventions)
+- [Performance Guide](about/performance)
 
 ## Core Components
 
@@ -143,8 +144,6 @@ See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
 - [Dynamics](components/dynamics)
 - [Segment Operations](components/segment_ops)
 
-## Advanced Usage
-
 ```{toctree}
 :caption: About
 :maxdepth: 1
@@ -153,6 +152,7 @@ See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
 about/install
 about/intro
 about/conventions
+about/performance
 about/migration
 about/faq
 

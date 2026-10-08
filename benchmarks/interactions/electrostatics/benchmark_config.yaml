@@ -15,6 +15,7 @@
 parameters:
   warmup_runs: 3
   timing_runs: 10
+  timing_batches: 5
   profile_components: false
   # Cap PME's real-space neighbor-list radius. Direct Ewald keeps the
   # automatically balanced real- and reciprocal-space cutoffs.
@@ -28,6 +29,20 @@ systems:
     enabled: true
     atom_counts: [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
     constant_atoms_sizes: [250, 8192]   # CsCl valid: 2*5^3=250, 2*16^3=8192
+    # Exact B2 replica grids shared by system-size and constant-workload scaling.
+    # The longest cell axis stays first so the PME FFT orientation is fixed.
+    replication_factors:
+      128: [4, 4, 4]
+      256: [8, 4, 4]
+      512: [8, 8, 4]
+      1024: [8, 8, 8]
+      2048: [16, 8, 8]
+      4096: [16, 16, 8]
+      8192: [16, 16, 16]
+      16384: [32, 16, 16]
+      32768: [32, 32, 16]
+      65536: [32, 32, 32]
+      131072: [64, 32, 32]
 
   nh3:
     enabled: true
@@ -46,6 +61,31 @@ scaling:
   constant_workload:
     enabled: true
     target_atoms: 131072
+    batch_sizes:
+      cscl:
+        128: 1024       # 128 x 1024 = 131072
+        256: 512        # 256 x 512 = 131072
+        512: 256        # 512 x 256 = 131072
+        1024: 128       # 1024 x 128 = 131072
+        2048: 64        # 2048 x 64 = 131072
+        4096: 32        # 4096 x 32 = 131072
+        8192: 16        # 8192 x 16 = 131072
+        16384: 8        # 16384 x 8 = 131072
+        32768: 4        # 32768 x 4 = 131072
+        65536: 2        # 65536 x 2 = 131072
+        131072: 1       # 131072 x 1 = 131072
+      nh3:
+        128: 1024
+        256: 512
+        512: 256
+        1024: 128
+        2048: 64
+        4096: 32
+        8192: 16
+        16384: 8
+        32768: 4
+        65536: 2
+        131072: 1
 
   batch_scaling:
     enabled: true
@@ -58,7 +98,7 @@ methods:
   - name: pme
     enabled: true
     description: "Particle Mesh Ewald - recommended for large systems"
-    spline_order: 4
+    spline_order: 5
 
   - name: ewald
     enabled: true

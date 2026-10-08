@@ -87,7 +87,10 @@ os.makedirs(os.environ["WARP_CACHE_PATH"], exist_ok=True)
 def _configure_jax_allocator_environment() -> None:
     """Set XLA allocator variables before collection-time imports can load JAX."""
     for name, value in _JAX_IMPORT_ENVIRONMENT.items():
-        os.environ[name] = value
+        if name == "XLA_PYTHON_CLIENT_ALLOCATOR":
+            os.environ.setdefault(name, value)
+        else:
+            os.environ[name] = value
 
 
 _configure_jax_allocator_environment()

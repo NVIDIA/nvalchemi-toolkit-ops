@@ -4,9 +4,49 @@
 
 ### Added
 
-- **Forthcoming (#191):**
-  Added `generate_k_squared_pme` to the Torch and JAX electrostatics
-  namespaces for reciprocal paths that use squared magnitudes.
+- JAX and Torch naive neighbor APIs support CUDA-only tiled topology-only
+  `target_indices` rows. Matrix and COO central rows are compact: row `r`
+  corresponds to `target_indices[r]`. For direct single-system CUDA naive
+  calls with concrete placement, `auto` selects tile at float64 `N >= 256` and
+  float32 `N >= 1024`. Torch and the Warp launchers also use the `N >= 1024`
+  threshold for float16; JAX supports float32 and float64. Under `jax.jit`,
+  tracer placement may be unavailable during
+  Python tracing, so `auto` may conservatively remain scalar above those
+  thresholds. Pass `strategy="tile"` for deterministic tiled execution.
+  CPU auto and batched partial auto remain scalar. Explicit tile supports single
+  and batched partial topology-only calls, but rejects CPU and geometry,
+  distance, vector, and pair-function outputs. Scalar and tiled stored
+  `(neighbor, shift)` multisets agree when neither overflows capacity, although
+  their ordering can differ.
+  Eager calls reject out-of-bounds targets; compiled JAX and Torch calls require
+  prevalidated indices and safely leave invalid rows empty.
+- Torch and JAX neighbor lists now share a prepared execution workflow.
+  ``prepare_neighbor_list(...)`` resolves an existing route, validates fixed
+  metadata, and owns reusable storage. Torch reuses a mutable
+  ``NeighborListState`` through ``neighbor_list(..., state=state)``; JAX
+  threads an immutable state and returns ``(results, next_state)``. Existing
+  scientific result tuples remain unchanged. State properties expose the
+  resolved configuration, applicable latest results, and compilation
+  eligibility; JAX additionally provides sticky per-system validity and
+  ``check_neighbor_list_state(...)``. Synthesized nonperiodic cell-list states
+  accept a bounded, translation-invariant ``span_margin``. Their span checks
+  tolerate bounded floating-point rounding, which can also admit equally small
+  real expansion. Both preparation APIs accept ``atomic_density`` to estimate
+  omitted neighbor widths; explicit capacities take precedence.
+- Prepared Torch and JAX neighbor states accept ``fixed_cell=True`` to cache
+  cell-dependent search geometry, including inverse cells, cell-list grids,
+  and cluster-tile lattice factors and cutoff certificates. The option requires
+  an explicit cell and promises unchanged values until re-preparation; no
+  per-call cell-value comparison is performed. The default retains applicable
+  changing-cell execution, and pair geometry retains its existing position
+  and cell gradients.
+- Added `generate_k_squared_pme` to the Torch and JAX electrostatics namespaces
+  for reciprocal paths that use squared magnitudes.
+- Prepared JAX naive neighbor lists now support CUDA tiled execution for compact
+  `target_indices`, including batched wrapped and prewrapped periodic inputs.
+  Partial tiling retains compact row order, prepared cell geometry, and sticky
+  state failure reporting under `jax.jit`. Torch automatic preparation now
+  includes target rows in method selection.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
@@ -35,35 +75,59 @@
 - PyTorch cluster-tile neighbor lists now support
   `torch.compile(fullgraph=True)` for tile, matrix, dual-cutoff matrix, and
   exact COO output, including differentiable pair geometry. Exact COO is
-  written directly in source-grouped CSR order. Prepare reusable fixed-layout
-  storage with `prepare_cluster_tile(...)`, then execute it with
-  `cluster_tile_neighbor_list(..., state=state)` or
-  `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
-  matrix rebuilds for single systems and batches. Eager all-false selective
-  calls return immediately. Ordinary compiled calls keep rebuild flags on the
-  device and use a fixed inverse, sort, build, query, and tail sequence while
-  false flags preserve existing topology.
+  written directly in source-grouped CSR order. The general prepared workflow
+  provides reusable fixed-layout storage and optional selective matrix rebuilds
+  for single systems and batches. Eager all-false selective calls return
+  immediately. Ordinary compiled calls keep rebuild flags on the device and
+  use a fixed inverse, sort, build, query, and tail sequence while false flags
+  preserve existing topology.
 - Warmed, compiled prepared matrix-topology calls can be captured with
   `torch.cuda.CUDAGraph` and replayed after copying new positions, cells, or
   selective rebuild flags into the original input tensors. Replay retains the
   fixed captured inverse, sort, build, query, and tail sequence even when every
   selective flag is false. Capture covers forward matrix topology, not geometry
   or backward execution.
+- `electrostatics_uses_legacy_fp32()` reports whether the legacy float64-core
+  path is forced, for callers that want to confirm which mode is active.
+- `nvalchemiops.math.wp_erfc_f32_fast` and `nvalchemiops.math.wp_erfc_input_precision`:
+  an explicitly float32-grade `erfc` approximation, and a dispatcher that uses
+  native `wp.erfc` at float64 and the approximation at float32.
 
 ### Changed
 
-- **Forthcoming (#191):**
-  Torch and JAX PME now default to spline order 5. Automatic mesh sizing rounds
-  upward to dimensions with prime factors 2, 3, 5, and 7. It prefers power-of-two
-  meshes, then smooth dimensions divisible by 4, allowing at most 25% more total
-  mesh points than the smallest smooth mesh (`fft_padding_fraction=0.25`).
-  Setting this to `0` keeps the smallest smooth mesh. Explicit other spline
-  orders retain power-of-two accuracy sizing.
-- **Forthcoming (#191):**
-  Torch and JAX PME energy/force paths reduce peak memory by generating squared
-  reciprocal lengths without unused Cartesian vectors.
-- **Forthcoming (#191):**
-  JAX extras now require `>=0.10.0,<0.10.2`.
+- Torch and JAX single and batched naive neighbor APIs now reject zero and
+  negative cutoffs before allocating or modifying output buffers. Eager calls
+  raise `ValueError`; this replaces the earlier empty-result behavior for zero
+  cutoffs.
+- Recalibrated neighbor-list strategy selection. Free-boundary systems no longer
+  double-count the periodic-image saving, cluster-tile is selected where it wins
+  rather than across its whole eligibility region, and float64 work is scaled by
+  the device's FP64 rate (overridable via
+  `NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`). `neighbor_list(method=None)` may now
+  resolve to a different, faster strategy; explicit `method=` is unaffected.
+- JAX `estimate_neighbor_list_costs` and `suggest_neighbor_list_method` now take
+  optional `cell`/`pbc`, with `positions` supplied instead for free-boundary
+  systems, matching the Torch signature.
+- Torch and JAX PME mesh estimation now covers the requested spline support.
+  The default spline order is five, with accuracy-based dimensions rounded
+  upward to 2/3/5/7-smooth FFT sizes. The selector snaps to power-of-two meshes
+  first, then smooth dimensions divisible by four, allowing at most 25% more
+  total mesh points than the smallest smooth mesh.
+  Public sizing APIs expose `fft_padding_fraction=0.25`; `0` keeps the smallest
+  smooth mesh. Explicit other orders retain upstream power-of-two accuracy
+  sizing. Spacing-based sizing uses the same smooth-grid snap preferences;
+  explicit mesh dimensions remain caller-controlled.
+  Cutoff and splitting-parameter formulas are preserved.
+  Calls that omit `spline_order` now use 5 instead of 4, which can change
+  numerical results and automatically selected meshes. Pass `spline_order=4`
+  to retain the previous interpolation order. To reproduce the previous PME
+  configuration, also pass the previous `mesh_dimensions` explicitly.
+- Supported JAX versions are `>=0.10.0,<0.10.2`; the lockfile selects 0.10.1
+  to avoid GPU scatter slowdowns in newer releases
+  ([JAX #38806](https://github.com/jax-ml/jax/issues/38806)).
+- Torch and JAX PME energy and force paths generate only the squared reciprocal
+  grid when Cartesian reciprocal vectors are unused, reducing peak memory.
+  Virial and cell-gradient paths generate the Cartesian vectors they require.
 - Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
   APIs. Naive and cell-list methods, including batched variants, accept
   ``coo_capacity`` for padded COO output with clipped pointers, raw required row
@@ -71,8 +135,8 @@
   cell-list calls additionally need static launch metadata under ``jax.jit``.
   Invalid static launch relationships raise before the CUDA query, while runtime
   metadata mismatches invalidate the returned counts.
-  ``neighbor_list`` performs eager orchestration, and compact COO output uses
-  eager shape compaction.
+  Without prepared state, ``neighbor_list`` performs eager orchestration, and
+  compact COO output uses eager shape compaction.
 - JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
   require ``cutoff2 >= cutoff1`` and cluster-tile methods require
   ``cutoff2 >= cutoff``; equal cutoffs remain valid.
@@ -91,14 +155,13 @@
   `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
 - PyTorch segmented operations now accept int64 segment indices whose values
   fit in int32; these inputs are converted to int32 internally.
-
 - Differentiable Torch cluster-tile matrix geometry is returned independently
   from reusable output buffers. Supplied buffers receive detached value
   snapshots and remain non-differentiable storage. Prepared state exposes these
   buffers as borrowed snapshots that later executions may overwrite.
-- Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
+- Torch prepared state rejects cluster-tile dual-cutoff vectors or
   distances during preparation instead of failing later during execution.
-- Prepared batched Torch cluster-tile state now reuses fixed partition and
+- Batched Torch cluster-tile prepared state reuses fixed partition and
   padded-layout metadata while recomputing geometry-dependent data for rebuilt
   executions or systems.
 - Torch cluster-tile compact COO outputs are now trimmed to the actual pair
@@ -118,14 +181,6 @@
   `max_tiles_per_group` to be a positive static Python integer. Complete
   caller-supplied tile-index storage determines capacity without that factor.
   Compiled calls do not raise `TileBufferOverflow`.
-- Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
-  `generate_ewald_miller_indices(...)` and
-  `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
-  keyword-only `miller_indices=` and materializes Cartesian reciprocal vectors
-  from the current cell. Both backends provide
-  `ewald_reciprocal_space_from_miller_indices(...)` for the reciprocal
-  component. This avoids rebuilding the integer index grid while preserving
-  the reciprocal vectors' dependence on the current cell.
 - Batched L-BFGS geometry optimization, with PyTorch and JAX bindings, for both
   fixed-cell and variable-cell relaxation. State is prepared once into an
   `LBFGSState` and each call takes one force evaluation; as with FIRE2, testing
@@ -146,40 +201,23 @@
   `docs/benchmarks/dynamics.md` for performance, and
   `examples/dynamics/12_lbfgs_optimization.py` and
   `13_lbfgs_variable_cell.py` for worked examples.
-
 - Torch matrix-to-COO conversion now supports `torch.compile(fullgraph=True)`
   when the output edge count changes. Torch extras now require PyTorch >=2.10.
-
-- **Forthcoming (#190):**
-  Torch single-system and batched full-list pair-centric calls select grids from
-  current geometry and atom populations, balancing cell visits and cell crowding.
-  Single-system alternatives must preserve or reduce estimated candidate pairs,
-  serial neighbor-loop depth, cell storage, and logical block count. The configured
-  grid wins ties and cost tradeoffs. Batched selection counts setup and
-  neighbor-loop steps across every logical block and preserves source-pass count.
-  Default cell-list calls use the same sizing when their existing strategy rule
-  selects pair-centric execution. Batched selection reuses supplied boundaries.
-  Selected grids are reused during construction.
-  Caller-provided workspaces apply the same rules during the GPU build, updating
-  dimensions and search radii in place within their per-system capacity.
-  Single-system sizing passes the known population directly, and supplied-workspace
-  builds avoid population/count scratch allocation and redundant workspace clears.
-  Compiled full-list calls also use these rules when all cell buffers are supplied.
-- **Forthcoming (#190):**
-  Eager JAX naive tile and cell-list queries reuse compiled inner calls across
-  repeated inputs. Cell-list arrays remain runtime inputs to cached executables.
-- **Forthcoming (#190):**
-  Eager JAX full-list CUDA calls that select `strategy="pair_centric"` reuse
-  the geometry/population grid selector for single systems and batches.
-  Default eager cell-list calls also use it when their existing rule selects
-  pair-centric execution. Grid, search-radius, and cell-count preparation share
-  one kernel; boxes remain runtime inputs. Public signatures and static/JIT
-  launch-metadata paths are preserved.
+- Monopole electrostatics (Ewald real-space per-pair cores and the reciprocal
+  no-store structure-factor path) now default to float32 evaluation for
+  float32 CUDA inputs, instead of promoting to float64 internally. Both real
+  and reciprocal space are affected -- real space is shared by Ewald and PME.
+  CPU execution is unchanged either way; the fast path is CUDA-only. Set
+  `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
+  (always float64-core) behavior. Changes float32 results at the ~1e-07 level
+  and float32 Hessian-vector products at ~7e-07, the latter also 2.5-3.2x
+  faster.
 
 ### Fixed
 
-- **Forthcoming (#191):**
-  Fixed JAX PME cell gradients when reusing cached setup.
+- Corrected stress-to-cell forces and FIRE2 affine position updates to use the
+  row-vector lattice convention, preserving fractional coordinates during cell
+  changes (#193).
 - Torch multipole direct energy now supports symbolic tracing with explicit
   reciprocal vectors, batched valid-k counts, and source overlap constants;
   multipole features can reuse a prepared cache. The shared moment conversion
@@ -210,19 +248,16 @@
   `ewald_summation(k_vectors=...)` semantics are unchanged.
 - `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
   `dict`, so type checkers no longer reject valid keyword options.
-
-- **Forthcoming (#190):**
-  Pair-centric grid selection accounts for logical blocks and neighbor-loop
-  steps in dense batched systems. Single-system alternatives preserve estimated
-  candidate-pair work and loop depth. Cell-list allocation and construction retain
-  the existing configured-minimum rule.
+- Fixed JAX PME cell gradients when reusing cached setup.
 
 ### Deprecated
 
-- **Forthcoming:** The original FIRE optimizer (`fire_step` and `fire_update`)
-  will be deprecated in favor of FIRE2. These APIs will remain callable and emit
-  `DeprecationWarning` once the warning implementation lands, with removal
-  planned for a future release.
+- `nvalchemiops.math.wp_erfc` is deprecated in favor of
+  `wp_erfc_input_precision` (dispatches by input dtype) or
+  `wp_erfc_f32_fast` (the float32-grade approximation explicitly). `wp_erfc`
+  keeps its original behavior -- including evaluating the float32-grade
+  approximation at float64 -- for backward compatibility; it is not being
+  changed underneath existing callers.
 
 ### Notes
 

@@ -42,13 +42,14 @@ orchestration stays outside, on Torch autograd.
 
 import enum
 import math
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
 
 import warp as wp
 
-from nvalchemiops.math import wp_erfc
+from nvalchemiops.math import wp_erfc_input_precision
 
 __all__ = ["get_backward_scale_kernel"]
 
@@ -126,7 +127,84 @@ _DISTANCE_EPSILON = 1e-8
 _K_SQUARED_EPSILON = 1e-10
 
 
-# === Shared per-pair scalar cores (float64) ===
+@lru_cache(maxsize=1)
+def _read_legacy_fp32_env() -> bool:
+    """Read ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` once and cache it.
+
+    ``lru_cache`` on a zero-argument function is a memoized read: the
+    environment is consulted on the first call in a process and never
+    again, so behavior cannot change mid-process if something sets or
+    mutates the variable later (a test fixture, code running after import
+    time, etc). Use :func:`electrostatics_uses_legacy_fp32` rather than
+    calling this directly.
+
+    Raises
+    ------
+    ValueError
+        If the environment variable is set to a value that is neither a
+        recognized truthy nor a recognized falsy spelling.
+    """
+    value = os.environ.get("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32")
+    if value is None or value == "":
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "on", "y", "yes", "t"}:
+        return True
+    if normalized in {"0", "false", "off", "n", "no", "f"}:
+        return False
+    raise ValueError(
+        "NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32 must be "
+        "one of: 1, true, on, yes, t, y, 0, false, off, no, f, n"
+    )
+
+
+def electrostatics_uses_legacy_fp32() -> bool:
+    """Whether electrostatics kernels are forced onto the legacy float64-core path.
+
+    Reads ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` once per process (see
+    :func:`_read_legacy_fp32_env`). Unset or falsy (the default) means the
+    fast float32-core path is used for float32 CUDA inputs; set truthy to
+    force every float32 input back onto the same float64-evaluated cores
+    float64 inputs always use.
+
+    Governs both halves of the monopole split -- the real-space per-pair
+    cores and the reciprocal no-store structure factors -- each of which is
+    additionally gated to CUDA only; float32 CPU execution is unaffected by
+    this flag either way. Real space is shared by Ewald and PME, so this
+    affects both.
+
+    Returns
+    -------
+    bool
+        ``True`` if the legacy (always float64 core) path is forced,
+        ``False`` if the fast float32-core path may be used on CUDA.
+    """
+    return _read_legacy_fp32_env()
+
+
+def _use_fp32_electrostatics() -> bool:
+    """Device-agnostic fast/legacy decision (no CUDA gate).
+
+    Equivalent to ``not electrostatics_uses_legacy_fp32()``. Kept as the
+    fallback for call sites that have not been updated to gate on device
+    explicitly and pass a resolved ``core_scalar`` instead (the JAX
+    bindings, the low-level direct warp helpers in ``ewald_kernels.py``) --
+    for those, this makes the fast path available on CPU too, unlike the
+    torch chain call sites, which pass an explicit, CUDA-gated
+    ``core_scalar`` and never reach this function.
+    """
+    return not electrostatics_uses_legacy_fp32()
+
+
+# === Shared per-pair scalar cores (input precision) ===
+#
+# These evaluate in whatever precision the caller passes. They used to be
+# hard-typed float64, which cost the float32 kernels a float64 exp and several
+# divides on every pair while buying nothing. erfc itself goes through
+# wp_erfc_input_precision, which uses native wp.erfc at float64 and the
+# ~1.5e-7 Abramowitz-Stegun approximation only at float32, where that error is
+# already below float32 epsilon. Accumulators in the calling kernels stay
+# float64 -- that is where the cancellation lives.
 #
 # Component-agnostic erfc calculus shared by the ewald_real forward / backward /
 # double-backward kernels. Charge-unbundled factors (no division by a charge, so
@@ -139,21 +217,19 @@ _K_SQUARED_EPSILON = 1e-10
 
 
 @wp.func
-def _ewald_half_force_scale(distance: wp.float64, alpha: wp.float64) -> wp.float64:
+def _ewald_half_force_scale(distance: Any, alpha: Any) -> Any:
     """``(1/2) S(r)`` -- charge-unbundled force-magnitude scale."""
-    two_over_sqrt_pi = wp.float64(_TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     s = erfc_alpha_r / (r2 * distance) + two_over_sqrt_pi * alpha * exp_term / r2
-    return wp.float64(0.5) * s
+    return type(distance)(0.5) * s
 
 
 @wp.func
-def _ewald_half_force_scale_deriv(
-    distance: wp.float64, alpha: wp.float64
-) -> wp.float64:
+def _ewald_half_force_scale_deriv(distance: Any, alpha: Any) -> Any:
     """``(1/2) S'(r)`` -- radial derivative of the force-magnitude scale.
 
     .. math::
@@ -161,17 +237,18 @@ def _ewald_half_force_scale_deriv(
         S'(r) = -3\\,\\mathrm{erfc}(a r)/r^4
                 - (2a/\\sqrt{\\pi}) e^{-a^2 r^2} (3/r^3 + 2 a^2 / r).
     """
-    two_over_sqrt_pi = wp.float64(_TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     r3 = r2 * distance
     r4 = r3 * distance
-    s_prime = -wp.float64(3.0) * erfc_alpha_r / r4 - two_over_sqrt_pi * alpha * (
-        exp_term * (wp.float64(3.0) / r3 + wp.float64(2.0) * alpha * alpha / distance)
+    three = type(distance)(3.0)
+    s_prime = -three * erfc_alpha_r / r4 - two_over_sqrt_pi * alpha * (
+        exp_term * (three / r3 + type(distance)(2.0) * alpha * alpha / distance)
     )
-    return wp.float64(0.5) * s_prime
+    return type(distance)(0.5) * s_prime
 
 
 @wp.func
@@ -192,9 +269,7 @@ def _pair_virial_outer(sep: Any, force: Any) -> wp.mat33d:
 
 
 @wp.func
-def _ewald_charge_potential_deriv(
-    distance: wp.float64, alpha: wp.float64
-) -> wp.float64:
+def _ewald_charge_potential_deriv(distance: Any, alpha: Any) -> Any:
     """``g'(r) = (1/2) d/dr[erfc(a r)/r]``.
 
     .. math::
@@ -202,12 +277,12 @@ def _ewald_charge_potential_deriv(
         g'(r) = -\\tfrac{1}{2}\\left[(2a/\\sqrt{\\pi}) e^{-a^2 r^2}/r
                 + \\mathrm{erfc}(a r)/r^2\\right].
     """
-    two_over_sqrt_pi = wp.float64(_TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
-    return -wp.float64(0.5) * (
+    return -type(distance)(0.5) * (
         two_over_sqrt_pi * alpha * exp_term / distance + erfc_alpha_r / r2
     )
 
