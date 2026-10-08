@@ -58,6 +58,7 @@ from nvalchemiops.neighbors.cell_list import (
     query_cell_list as wp_query_cell_list,
 )
 from nvalchemiops.neighbors.cell_list._grid_selection import (
+    _get_grid_radius_kernel,
     _get_pair_grid_kernel,
     _validate_grid_policy,
 )
@@ -487,6 +488,7 @@ def _build_cell_list_op(
     min_cells_per_dimension: int = 4,
     grid_is_prepared: bool = False,
     select_pair_grid: bool = False,
+    refresh_search_radius: bool = False,
 ) -> None:
     """Internal custom op for building spatial cell list.
 
@@ -596,6 +598,28 @@ def _build_cell_list_op(
         min_cells_per_dimension=int(min_cells_per_dimension),
         grid_is_prepared=grid_is_prepared,
     )
+    if refresh_search_radius:
+        # Reused target queries need coverage for the grid just constructed.
+        wp.launch(
+            _get_grid_radius_kernel(wp_dtype),
+            dim=1,
+            device=wp_device,
+            inputs=[
+                wp_cell,
+                wp.from_torch(pbc.reshape(1, 3), dtype=wp.bool, return_ctype=True),
+                wp.from_torch(
+                    cells_per_dimension.reshape(1, 3),
+                    dtype=wp.vec3i,
+                    return_ctype=True,
+                ),
+                wp_dtype(cutoff),
+                wp.from_torch(
+                    neighbor_search_radius.reshape(1, 3),
+                    dtype=wp.vec3i,
+                    return_ctype=True,
+                ),
+            ],
+        )
 
 
 @_build_cell_list_op.register_fake
@@ -614,6 +638,7 @@ def _(
     min_cells_per_dimension: int = 4,
     grid_is_prepared: bool = False,
     select_pair_grid: bool = False,
+    refresh_search_radius: bool = False,
 ) -> None:
     return None
 
@@ -2152,6 +2177,9 @@ def cell_list(
     - Uses automatic memory allocation estimation for torch.compile compatibility
     - For advanced users who want to cache cell lists, use build_cell_list and query_cell_list separately
     - Returns appropriate empty tensors for systems with <= 1 atom or cutoff <= 0
+    - Ordinary targeted calls refresh search radii in reused workspaces from
+      the constructed grid. Supplied storage must cover the current grid;
+      full-list configured and selective calls require valid supplied radii.
 
     See Also
     --------
@@ -2353,9 +2381,7 @@ def cell_list(
                     "cell workspace has insufficient capacity for the current atoms"
                 )
         if use_pair_grid:
-            # Full builds overwrite dimensions, shifts, mappings, the scan output,
-            # and every active atom-list slot. The build leaf resets cell counts.
-            # Keep the existing zeroed tails for oversized per-atom workspaces.
+            # Preserve zeroed spare entries in oversized adaptive workspaces.
             for value in (
                 atom_periodic_shifts,
                 atom_to_cell_mapping,
@@ -2363,14 +2389,8 @@ def cell_list(
             ):
                 if value.shape[0] > total_atoms:
                     value.zero_()
-        else:
-            if _fixed_cell_geometry is None:
-                cells_per_dimension.zero_()
-            atom_periodic_shifts.zero_()
-            atom_to_cell_mapping.zero_()
-            atoms_per_cell_count.zero_()
-            cell_atom_start_indices.zero_()
-            cell_atom_list.zero_()
+        # Dynamic builds rewrite the grid; fixed builds read it. Both build
+        # ops rewrite per-atom outputs and initialize occupancy before launch.
         cell_list_cache = (
             cells_per_dimension,
             neighbor_search_radius,
@@ -2401,6 +2421,11 @@ def cell_list(
             min_cells_per_dimension=cell_list_min_cells,
             grid_is_prepared=selected_grid is not None,
             select_pair_grid=use_pair_grid and selected_grid is None,
+            refresh_search_radius=(
+                not allocated_cell_list
+                and target_indices is not None
+                and rebuild_flags is None
+            ),
         )
 
     if return_vectors or return_distances or pair_fn is not None:

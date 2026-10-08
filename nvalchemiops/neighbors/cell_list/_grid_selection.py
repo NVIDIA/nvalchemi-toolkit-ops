@@ -84,6 +84,66 @@ def _validate_grid_policy(grid_policy: str) -> None:
 
 
 @lru_cache(maxsize=None)
+def _get_grid_radius_kernel(dtype: type) -> wp.Kernel:
+    """Create a kernel that derives search radii from constructed batch grids.
+
+    Parameters
+    ----------
+    dtype : type
+        Warp floating-point type used for cell geometry and the cutoff.
+
+    Returns
+    -------
+    wp.Kernel
+        Kernel that updates radii on the device for the supplied grid dimensions.
+    """
+    mat = wp.mat33 if dtype == wp.float32 else wp.mat33d
+
+    @wp.kernel(enable_backward=False)
+    def kernel(
+        cell: wp.array(dtype=mat),
+        pbc: wp.array2d(dtype=wp.bool),
+        grids: wp.array(dtype=wp.vec3i),
+        cutoff: dtype,
+        radii: wp.array(dtype=wp.vec3i),
+    ):
+        """Update search coverage for each system's current grid.
+
+        Parameters
+        ----------
+        cell : wp.array
+            Current cell matrices, shape (num_systems,).
+        pbc : wp.array2d
+            Periodicity flags, shape (num_systems, 3).
+        grids : wp.array
+            Constructed grid dimensions, shape (num_systems,).
+        cutoff : float
+            Current neighbor cutoff in the same units as the cell.
+        radii : wp.array
+            OUTPUT: Per-axis search radii, shape (num_systems,).
+
+        Notes
+        -----
+        Thread launch: One thread per system.
+        Modifies: Every entry of ``radii``. A nonperiodic single-cell axis
+        needs no neighboring-cell search.
+        """
+        system = wp.tid()
+        inverse_transpose = wp.transpose(wp.inverse(cell[system]))
+        grid = grids[system]
+        radius = wp.vec3i(0)
+        for axis in range(3):
+            if pbc[system, axis] or grid[axis] > 1:
+                face_distance = dtype(1.0) / wp.length(inverse_transpose[axis])
+                radius[axis] = wp.int32(
+                    wp.ceil(cutoff * dtype(grid[axis]) / face_distance)
+                )
+        radii[system] = radius
+
+    return kernel
+
+
+@lru_cache(maxsize=None)
 def _get_pair_grid_kernel(
     dtype: type,
     block_dim: int,
@@ -151,7 +211,7 @@ def _get_pair_grid_kernel(
         ----------
         cell : wp.array
             Cell matrices, shape (num_systems,), in the factory's precision.
-        pbc : wp.array2d
+        pbc : wp.array or wp.array2d
             Periodic flags, shape (num_systems, 3), or (3,) for flat outputs.
         boundaries : wp.array
             Cumulative atom offsets, shape (num_systems + 1,).
@@ -169,7 +229,8 @@ def _get_pair_grid_kernel(
         radii : wp.array
             OUTPUT: Selected per-axis stencil radii, matching grids.
         counts : wp.array
-            OUTPUT: Total cell counts, shape (num_systems,).
+            OUTPUT: Total cell counts, shape (num_systems,), written when
+            the factory's ``write_counts`` option is True.
 
         Returns
         -------
@@ -179,7 +240,8 @@ def _get_pair_grid_kernel(
         Notes
         -----
         - Thread launch: One thread per system.
-        - Modifies: grids, radii, and counts for each system.
+        - Modifies: grids and radii for each system; counts when ``write_counts``
+          is True.
         The score assumes approximately uniform occupancy. Single-system alternatives
         preserve or reduce candidate pairs, neighbor-loop depth, cell storage, and
         logical blocks relative to the configured grid. Equal scores retain that grid.

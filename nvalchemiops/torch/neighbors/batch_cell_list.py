@@ -58,6 +58,7 @@ from nvalchemiops.neighbors.cell_list import (
     select_batch_cell_list_strategy,
 )
 from nvalchemiops.neighbors.cell_list._grid_selection import (
+    _get_grid_radius_kernel,
     _get_pair_grid_kernel,
     _validate_grid_policy,
 )
@@ -278,6 +279,7 @@ def _batch_build_cell_list_op(
     min_cells_per_dimension: int = 4,
     grid_is_prepared: bool = False,
     pair_grid_boundaries: torch.Tensor | None = None,
+    refresh_search_radius: bool = False,
 ) -> None:
     """Internal custom op for building batch spatial cell lists.
 
@@ -407,6 +409,26 @@ def _batch_build_cell_list_op(
         grid_is_prepared=grid_is_prepared,
         cells_per_system_is_prepared=pair_grid_boundaries is not None,
     )
+    if refresh_search_radius:
+        # A reused adaptive workspace can contain radii for a coarser grid.
+        # Derive coverage from the dimensions that this build actually wrote.
+        wp.launch(
+            _get_grid_radius_kernel(wp_dtype),
+            dim=num_systems,
+            device=wp_device,
+            inputs=[
+                wp_cell,
+                wp_pbc,
+                wp_cells_per_dimension,
+                wp_dtype(cutoff),
+                wp.from_torch(
+                    neighbor_search_radius,
+                    dtype=wp.vec3i,
+                    requires_grad=False,
+                    return_ctype=True,
+                ),
+            ],
+        )
 
 
 @_batch_build_cell_list_op.register_fake
@@ -426,6 +448,7 @@ def _(
     min_cells_per_dimension: int = 4,
     grid_is_prepared: bool = False,
     pair_grid_boundaries: torch.Tensor | None = None,
+    refresh_search_radius: bool = False,
 ) -> None:
     return None
 
@@ -2045,9 +2068,11 @@ def batch_cell_list(
     per-system share of the available cell capacity.
 
     The default ``grid_policy="configured"`` uses configured grid sizing.
-    Configured and targeted calls require supplied search radii and storage
-    capacity valid for the current cell and cutoff. Refresh this metadata
-    when reusing a workspace across sizing policies or full and targeted calls.
+    Ordinary targeted calls with reused workspaces refresh search radii from
+    the constructed grid, including when switching from a full adaptive call.
+    Supplied storage capacity must cover the current grid. Configured full-list
+    and selective calls require supplied radii valid for the current cell and
+    cutoff.
 
     Parameters
     ----------
@@ -2383,9 +2408,8 @@ def batch_cell_list(
     else:
         # Other strategies and compiled/selective calls retain their sizing rule.
         cell_list_min_cells = 4
-        # atoms_per_cell_count is atomic_add'd; the rest are fully overwritten.
-        if pair_grid_boundaries is None:
-            atoms_per_cell_count.zero_()
+        # The build op initializes occupancy, and the build stages rewrite the
+        # per-atom outputs and scanned cell starts.
         cell_list_cache = (
             cells_per_dimension,
             neighbor_search_radius,
@@ -2432,6 +2456,11 @@ def batch_cell_list(
             min_cells_per_dimension=cell_list_min_cells,
             grid_is_prepared=selected_grid is not None,
             pair_grid_boundaries=pair_grid_boundaries,
+            refresh_search_radius=(
+                not allocated_cell_list
+                and target_indices is not None
+                and rebuild_flags is None
+            ),
         )
 
     if return_vectors or return_distances or pair_fn is not None:

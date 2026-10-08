@@ -19,7 +19,10 @@ import pytest
 import torch
 
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
-from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
+from nvalchemiops.torch.neighbors.batch_cell_list import (
+    batch_cell_list,
+    estimate_batch_cell_list_sizes,
+)
 from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list,
     cell_list,
@@ -32,6 +35,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
 
 from ...test_utils import (
     assert_neighbor_lists_equal,
+    assert_neighbor_matrix_equal,
     brute_force_neighbors,
     create_nonorthorhombic_system,
     create_random_system,
@@ -47,6 +51,138 @@ def _search_radius_envelope(neighbor_search_radius: torch.Tensor) -> int:
 
 class TestCellListCorrectness:
     """Tests verifying cell list correctness against reference implementations."""
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_cached_cell_list_rebuilds_after_atom_moves_and_grid_shrinks(
+        self, batched: bool, compiled: bool
+    ) -> None:
+        """Cached public cell-list calls rebuild moved atoms in a smaller grid."""
+        positions = torch.tensor(
+            [[0.1, 0.1, 0.1], [0.5, 0.1, 0.1], [2.1, 0.1, 0.1], [2.5, 0.1, 0.1]],
+            dtype=torch.float32,
+            device="cuda",
+        )
+        cutoff = 0.8
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+        pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+        batch_idx = None
+        if batched:
+            positions = torch.cat((positions, positions + 3.0))
+            cell = cell.repeat(2, 1, 1)
+            pbc = pbc.repeat(2, 1)
+            batch_idx = torch.tensor(
+                [0] * 4 + [1] * 4, dtype=torch.int32, device="cuda"
+            )
+
+        if batched:
+            max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+                cell, pbc, cutoff
+            )
+        else:
+            max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+                cell, pbc, cutoff
+            )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, positions.device
+        )
+        neighbor_matrix = torch.empty(
+            (positions.shape[0], 16), dtype=torch.int32, device="cuda"
+        )
+        neighbor_matrix_shifts = torch.empty(
+            (positions.shape[0], 16, 3), dtype=torch.int32, device="cuda"
+        )
+        num_neighbors = torch.empty(
+            (positions.shape[0],), dtype=torch.int32, device="cuda"
+        )
+
+        def run(
+            atom_positions: torch.Tensor,
+            unit_cell: torch.Tensor,
+            periodic: torch.Tensor,
+            cell_dimensions: torch.Tensor,
+            search_radius: torch.Tensor,
+            periodic_shifts: torch.Tensor,
+            atom_cells: torch.Tensor,
+            cell_counts: torch.Tensor,
+            cell_starts: torch.Tensor,
+            cell_atoms: torch.Tensor,
+            neighbors: torch.Tensor,
+            neighbor_shifts: torch.Tensor,
+            counts: torch.Tensor,
+            batch_indices: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, ...]:
+            common = dict(
+                fill_value=-1,
+                return_neighbor_list=False,
+                strategy="atom_centric",
+                neighbor_matrix=neighbors,
+                neighbor_matrix_shifts=neighbor_shifts,
+                num_neighbors=counts,
+                cells_per_dimension=cell_dimensions,
+                neighbor_search_radius=search_radius,
+                atom_periodic_shifts=periodic_shifts,
+                atom_to_cell_mapping=atom_cells,
+                atoms_per_cell_count=cell_counts,
+                cell_atom_start_indices=cell_starts,
+                cell_atom_list=cell_atoms,
+            )
+            if batch_indices is None:
+                return cell_list(atom_positions, cutoff, unit_cell, periodic, **common)
+            return batch_cell_list(
+                atom_positions,
+                cutoff,
+                unit_cell,
+                periodic,
+                batch_indices,
+                **common,
+            )
+
+        build_and_query = torch.compile(run, fullgraph=True) if compiled else run
+        call_args = (
+            pbc,
+            *cell_list_cache,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            batch_idx,
+        )
+        first = tuple(
+            value.clone() for value in build_and_query(positions, cell, *call_args)
+        )
+
+        moved = positions.clone()
+        moved[1::4, 0] += 1.5
+        moved[3::4, 0] += 1.5
+        smaller_cell = cell * 0.75
+        rebuilt = build_and_query(moved, smaller_cell, *call_args)
+
+        if batched:
+            expected = batch_cell_list(
+                moved,
+                cutoff,
+                smaller_cell,
+                pbc,
+                batch_idx,
+                max_neighbors=16,
+                strategy="atom_centric",
+                fill_value=-1,
+            )
+        else:
+            expected = cell_list(
+                moved,
+                cutoff,
+                smaller_cell,
+                pbc,
+                max_neighbors=16,
+                strategy="atom_centric",
+                fill_value=-1,
+            )
+
+        assert not torch.equal(first[1], rebuilt[1])
+        assert_neighbor_matrix_equal(rebuilt[:3], expected[:3])
 
     @requires_vesin
     def test_single_atom_no_neighbors(self, device, dtype):

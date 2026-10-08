@@ -27,8 +27,6 @@ Python 3.13.9, Torch 2.12.0+cu126, JAX/JAXlib 0.9.0.1, Warp 1.13.0, CUDA 12.6,
 and ALCHEMI Toolkit-Ops 0.4.0. Collection used NVIDIA H100 80 GB HBM3 GPUs
 (compute capability 9.0) with driver 535.216.03. A kernel, public API,
 timing-boundary, or grid change requires replacement of every affected case.
-Complete NL and EL module/backend/method collections can be refreshed
-independently while retaining validated results for unchanged methods.
 
 The current 18-file matrix contains all 3,512 planned rows: 3,499 successful
 measurements and 13 Ewald OOM rows. The six EL files contain 592 rows: all 296
@@ -57,10 +55,8 @@ run ID `da2e3992-31bf-4906-ae02-d3747f02a55a`, source fingerprint
 It used the Torch collection's software versions on NVIDIA H100 GPUs reporting
 102,132,088,832 memory bytes (95.12 GiB usable), compute capability 9.0, and
 unavailable driver metadata. Comparisons therefore combine separate recorded
-GPU allocations and software contexts. All six D3 files and 2,409 NL rows
-retain their original hardware and software contexts. The other 219 NL rows are
-refreshed Torch pair-centric coverage-only measurements from run ID
-`16aa7bb4-5071-4eec-9c21-092c237599de`.
+GPU allocations and software contexts. The 12 NL/D3 files retain their original
+hardware, software, and all 2,920 rows unchanged by this refresh.
 
 See the per-module doc pages for how to read the plots and how to
 reproduce:

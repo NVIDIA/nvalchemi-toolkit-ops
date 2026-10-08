@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Torch and JAX single and batched naive neighbor APIs now reject zero and
+  negative cutoffs before allocating or modifying output buffers. Eager calls
+  raise `ValueError`; this replaces the earlier empty-result behavior for zero
+  cutoffs.
 - Recalibrated neighbor-list strategy selection. Free-boundary systems no longer
   double-count the periodic-image saving, cluster-tile is selected where it wins
   rather than across its whole eligibility region, and float64 work is scaled by
@@ -63,6 +67,22 @@
 
 ### Added
 
+- JAX and Torch naive neighbor APIs support CUDA-only tiled topology-only
+  `target_indices` rows. Matrix and COO central rows are compact: row `r`
+  corresponds to `target_indices[r]`. For direct single-system CUDA naive
+  calls with concrete placement, `auto` selects tile at float64 `N >= 256` and
+  float32 `N >= 1024`. Torch and the Warp launchers also use the `N >= 1024`
+  threshold for float16; JAX supports float32 and float64. Under `jax.jit`,
+  tracer placement may be unavailable during
+  Python tracing, so `auto` may conservatively remain scalar above those
+  thresholds. Pass `strategy="tile"` for deterministic tiled execution.
+  CPU auto and batched partial auto remain scalar. Explicit tile supports single
+  and batched partial topology-only calls, but rejects CPU and geometry,
+  distance, vector, and pair-function outputs. Scalar and tiled stored
+  `(neighbor, shift)` multisets agree when neither overflows capacity, although
+  their ordering can differ.
+  Eager calls reject out-of-bounds targets; compiled JAX and Torch calls require
+  prevalidated indices and safely leave invalid rows empty.
 - Torch and JAX neighbor lists now share a prepared execution workflow.
   ``prepare_neighbor_list(...)`` resolves an existing route, validates fixed
   metadata, and owns reusable storage. Torch reuses a mutable
@@ -85,6 +105,11 @@
   and cell gradients.
 - Added `generate_k_squared_pme` to the Torch and JAX electrostatics namespaces
   for reciprocal paths that use squared magnitudes.
+- Prepared JAX naive neighbor lists now support CUDA tiled execution for compact
+  `target_indices`, including batched wrapped and prewrapped periodic inputs.
+  Partial tiling retains compact row order, prepared cell geometry, and sticky
+  state failure reporting under `jax.jit`. Torch automatic preparation now
+  includes target rows in method selection.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
@@ -262,15 +287,18 @@
 
 ### Changed
 
-- Torch and eager JAX full-list CUDA cell-list calls support
-  `grid_policy="adaptive"` for pair-centric sizing; `"configured"` remains
-  the default.
+- Opt-in `grid_policy="adaptive"` selects pair-centric cell grids from geometry
+  and atom populations to reduce estimated search work in Torch and eager JAX
+  full-list CUDA calls. The model assumes approximately uniform occupancy;
+  performance depends on the workload. `"configured"` remains the default.
 - Eager JAX naive tile and cell-list queries reuse compiled inner calls.
 
 ### Fixed
 
 - Pair-centric grid sizing accounts for estimated neighbor-loop work in dense
   systems.
+- Targeted Torch cell-list calls refresh search radii when reusing workspaces,
+  preventing missed neighbors after a full-list adaptive call.
 
 ## 0.4.1 - 2026-08-03
 
