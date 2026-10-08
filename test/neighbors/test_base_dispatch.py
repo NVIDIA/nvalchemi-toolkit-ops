@@ -16,8 +16,13 @@
 """Unit tests for shared neighbor-list dispatch helpers."""
 
 import pytest
+import warp as wp
 
-from nvalchemiops.neighbors.base_dispatch import finalize_neighbor_list_method
+from nvalchemiops.neighbors.base_dispatch import (
+    FEATURE_CUDA,
+    estimate_neighbor_list_costs,
+    finalize_neighbor_list_method,
+)
 
 
 def _names(report) -> list[str]:
@@ -112,3 +117,36 @@ def test_pair_centric_coarsening_restores_launch_feasibility():
         _pair_centric_coarsened_launch_size(3840, n_outer, 64)
         <= PAIR_CENTRIC_MAX_LINEAR_LAUNCH
     )
+
+
+def test_target_indices_keep_naive_tile_feasible_without_geometry_outputs():
+    """Topology-only partial rows remain eligible for naive tile scoring."""
+    batch_ptr = wp.array([0, 1024], dtype=wp.int32, device="cpu")
+    cell = wp.array(
+        [[[20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]]],
+        dtype=wp.mat33f,
+        device="cpu",
+    )
+    pbc = wp.array([False, False, False], dtype=wp.bool, device="cpu")
+
+    topology = estimate_neighbor_list_costs(
+        batch_ptr,
+        cell,
+        pbc,
+        2.0,
+        optional_outputs=["target_indices"],
+        target_count=8,
+        feature_mask=FEATURE_CUDA,
+    )
+    geometry = estimate_neighbor_list_costs(
+        batch_ptr,
+        cell,
+        pbc,
+        2.0,
+        optional_outputs=["target_indices", "return_vectors"],
+        target_count=8,
+        feature_mask=FEATURE_CUDA,
+    )
+
+    assert "naive_tile" in _names(topology)
+    assert "naive_tile" not in _names(geometry)

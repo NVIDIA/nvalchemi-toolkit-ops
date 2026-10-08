@@ -2231,8 +2231,8 @@ def batch_cell_list(
         # Caller-provided caches are assumed to have been sized with the
         # default public estimate policy.
         cell_list_min_cells = 4
-        # atoms_per_cell_count is atomic_add'd; the rest are fully overwritten.
-        atoms_per_cell_count.zero_()
+        # The build op initializes occupancy, and the build stages rewrite the
+        # per-atom outputs and scanned cell starts.
         cell_list_cache = (
             cells_per_dimension,
             neighbor_search_radius,

@@ -1431,6 +1431,21 @@ def _resolve_prepared_route(
             f"unsupported prepared JAX neighbor-list method {method!r}"
         )
     if (
+        not automatic_method
+        and method
+        in {
+            "naive",
+            "batch_naive",
+            "naive_dual_cutoff",
+            "batch_naive_dual_cutoff",
+        }
+        and kwargs.get("strategy", "auto") == "auto"
+    ):
+        # Explicit-family preparation pins strategy=auto to scalar so reuse
+        # cannot re-run route selection. method=None keeps its calibrated
+        # strategy choice resolved above.
+        kwargs = {**kwargs, "strategy": "scalar"}
+    if (
         automatic_method
         and selective
         and method
@@ -1462,19 +1477,6 @@ def _resolve_prepared_route(
         "batch_naive_dual_cutoff",
     } and kwargs.get("strategy", "auto") not in {"auto", "scalar", "tile"}:
         raise ValueError("unsupported naive strategy")
-    if (
-        method
-        in {
-            "naive",
-            "batch_naive",
-            "naive_dual_cutoff",
-            "batch_naive_dual_cutoff",
-        }
-        and kwargs.get("strategy", "auto") == "auto"
-    ):
-        # JAX's direct naive ``auto`` policy is scalar. Store the resolved
-        # choice so prepared execution does not repeat strategy selection.
-        kwargs = {**kwargs, "strategy": "scalar"}
     if method in {"cell_list", "batch_cell_list"}:
         from nvalchemiops.jax.neighbors._resolution import resolve_cell_strategy
 
@@ -1589,15 +1591,16 @@ def _resolve_prepared_route(
             raise NotImplementedError(
                 "strategy='tile' has no pair-output (return_distances / return_vectors / pair_fn) variant; use strategy='scalar'."
             )
-        if target_indices is not None:
-            raise NotImplementedError(
-                "strategy='tile' has no target_indices (partial neighbor-list) variant; use strategy='scalar'."
-            )
         if selective:
             raise NotImplementedError(
                 "strategy='tile' has no selective (rebuild_flags) variant; use strategy='scalar'."
             )
-        if method == "batch_naive" and pbc is not None and not wrap_positions:
+        if (
+            method == "batch_naive"
+            and pbc is not None
+            and not wrap_positions
+            and target_indices is None
+        ):
             raise NotImplementedError(
                 "strategy='tile' has no batched prewrapped-PBC tiled kernel (wrap_positions=False with PBC). Use strategy='scalar', or wrap_positions=True for the tile path."
             )
@@ -1815,9 +1818,10 @@ def prepare_neighbor_list(
     Unsupported prepared combinations include selective pair outputs or
     partial rows on every route, selective cell-list COO, pair-centric cell
     lists with partial rows, and dual-cutoff pair outputs or partial rows.
-    Explicit tiled-naive execution does not support selective execution, pair
-    outputs, partial rows, or batched prewrapped PBC. Cluster-tile preparation
-    follows the direct route's CUDA, float32, fully periodic, and
+    Explicit tiled-naive execution does not support selective execution or
+    pair outputs. Full-row batched prewrapped PBC remains unsupported; partial
+    topology-only naive tile supports wrapped and prewrapped PBC. Cluster-tile
+    preparation follows the direct route's CUDA, float32, fully periodic, and
     ``half_fill=False`` prerequisites; it does not support partial rows,
     selective tile or pair output, or pair output with tile format.
 

@@ -33,6 +33,7 @@ from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     batch_cluster_tile_neighbor_list,
 )
 from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
+from nvalchemiops.torch.neighbors.naive import naive_neighbor_list
 
 from ...test_utils import assert_neighbor_matrix_equal
 from .prepared_test_helpers import inputs as _inputs
@@ -1746,6 +1747,48 @@ def test_prepared_naive_guard_rejects_insufficient_periodic_coverage() -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_naive_target_bounds_are_checked_on_first_eager_use() -> None:
+    """Prepared naive targets defer value bounds checks until eager execution."""
+    positions = torch.zeros((3, 3), dtype=torch.float32, device="cuda")
+    target_indices = torch.tensor([3], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        method="naive",
+        target_indices=target_indices,
+        max_neighbors=2,
+    )
+
+    with pytest.raises(ValueError, match="in-bounds atom indices"):
+        neighbor_list(positions, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_naive_target_clone_survives_input_mutation() -> None:
+    """Prepared naive routes retain their protected copy of target indices."""
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [5.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    target_indices = torch.tensor([1], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        method="naive",
+        target_indices=target_indices,
+        max_neighbors=2,
+    )
+    target_indices.fill_(3)
+
+    neighbor_matrix, num_neighbors = neighbor_list(positions, state=state)
+    assert num_neighbors.tolist() == [1]
+    assert neighbor_matrix[0, 0].item() == 0
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_naive_selective_guard_checks_selected_systems_only() -> None:
     """Selective prepared naive validates only systems requested for rebuild."""
     positions = torch.tensor(
@@ -1966,6 +2009,58 @@ def test_prepared_generic_naive_tile_strategy_reaches_cpu_launcher() -> None:
 
     with pytest.raises(ValueError, match="strategy='tile' requires CUDA"):
         neighbor_list(positions, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize(("num_atoms", "strategy"), [(4, "tile"), (1024, "scalar")])
+def test_single_pbc_partial_strategy_reaches_shared_resolver(
+    prepared: bool,
+    num_atoms: int,
+    strategy: str,
+    monkeypatch,
+) -> None:
+    """Direct and prepared partial PBC calls preserve the selected strategy."""
+    import nvalchemiops.neighbors.naive.launchers as shared_launchers
+
+    positions = torch.zeros((num_atoms, 3), dtype=torch.float32, device="cuda")
+    positions[:, 0] = torch.arange(num_atoms, device="cuda", dtype=torch.float32) * 2
+    cell = torch.eye(3, dtype=torch.float32, device="cuda").unsqueeze(0) * (
+        4.0 * num_atoms
+    )
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    targets = torch.tensor([0], dtype=torch.int32, device="cuda")
+    observed = []
+    resolver = shared_launchers._resolve_naive_strategy
+
+    def observe(requested, workload):
+        resolved = resolver(requested, workload)
+        observed.append((requested, resolved, workload.num_atoms, workload.partial))
+        return resolved
+
+    monkeypatch.setattr(shared_launchers, "_resolve_naive_strategy", observe)
+    call_kwargs = dict(
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=4,
+        target_indices=targets,
+        strategy=strategy,
+    )
+    if prepared:
+        state = prepare_neighbor_list(
+            positions,
+            0.5,
+            method="naive",
+            **call_kwargs,
+        )
+        observed.clear()
+        neighbor_list(positions, cell=cell, state=state)
+    else:
+        naive_neighbor_list(positions, 0.5, **call_kwargs)
+
+    assert observed
+    assert observed[-1] == (strategy, strategy, num_atoms, True)
 
 
 @pytest.mark.gpu
@@ -2351,6 +2446,172 @@ def test_prepared_batched_cluster_tile_shared_cell_matches_state_free() -> None:
     assert state.neighbor_matrix is prepared[0]
     assert state.num_neighbors is prepared[1]
     assert state.neighbor_matrix_shifts is prepared[2]
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("format", ["matrix", "coo", "tile"])
+def test_prepared_batch_cluster_cell_shapes_match_with_live_positions(
+    format: str,
+) -> None:
+    """Shared and per-system cells produce matching prepared batch-cluster outputs."""
+    positions = torch.tensor(
+        [
+            [0.1, 1.0, 1.0],
+            [11.9, 1.0, 1.0],
+            [3.0, 3.0, 3.0],
+            [3.2, 3.0, 3.0],
+            [0.2, 1.0, 1.0],
+            [11.8, 1.0, 1.0],
+            [7.0, 3.0, 3.0],
+            [7.2, 3.0, 3.0],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    moved = positions.clone()
+    moved[1] = torch.tensor([5.0, 5.0, 5.0], device="cuda")
+    moved[5] = torch.tensor([10.0, 5.0, 5.0], device="cuda")
+    batch_ptr = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
+    shared_cell = torch.eye(3, dtype=torch.float32, device="cuda") * 12.0
+    per_system_cell = shared_cell.repeat(2, 1, 1)
+    shared_pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    per_system_pbc = shared_pbc.repeat(2, 1)
+    common = {
+        "method": "batch_cluster_tile",
+        "format": format,
+        "return_neighbor_list": format == "coo",
+        "max_neighbors": 8,
+        "max_pairs": 64,
+        "max_tiles_per_group": 1,
+        "fixed_cell": True,
+    }
+    shared_state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=shared_cell,
+        pbc=shared_pbc,
+        batch_ptr=batch_ptr,
+        **common,
+    )
+    per_system_state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=per_system_cell,
+        pbc=per_system_pbc,
+        batch_ptr=batch_ptr,
+        **common,
+    )
+
+    def coo_signature(
+        result: tuple[torch.Tensor, ...],
+    ) -> tuple[tuple[tuple[int, ...], ...], ...]:
+        """Return active pair/shift records per system, preserving duplicates."""
+        indices, offsets, counts, shifts = result
+        system_records = []
+        for start, count in zip(offsets[:-1].tolist(), counts.tolist(), strict=True):
+            stop = start + count
+            pairs = indices[:, start:stop].T.cpu().tolist()
+            shifts_for_system = shifts[start:stop].cpu().tolist()
+            system_records.append(
+                tuple(
+                    sorted(
+                        (
+                            int(pair[0]),
+                            int(pair[1]),
+                            *map(int, shift),
+                        )
+                        for pair, shift in zip(pairs, shifts_for_system, strict=True)
+                    )
+                )
+            )
+        return tuple(system_records)
+
+    def assert_outputs_equal(
+        actual: tuple[torch.Tensor, ...], expected: tuple[torch.Tensor, ...]
+    ) -> None:
+        """Compare active cluster results while retaining tensor metadata checks."""
+        if format == "coo":
+            torch.testing.assert_close(actual[1], expected[1])
+            torch.testing.assert_close(actual[2], expected[2])
+            for index in (0, 3):
+                assert actual[index].shape == expected[index].shape
+                assert actual[index].dtype == expected[index].dtype
+                assert actual[index].device == expected[index].device
+            assert coo_signature(actual) == coo_signature(expected)
+            return
+        if format == "matrix":
+            _assert_cluster_route_equal(actual, expected, format)
+            return
+        torch.testing.assert_close(actual[0], expected[0])
+        tile_count = int(actual[0][0])
+        actual_mapping = sorted(
+            zip(
+                *(field[:tile_count].cpu().tolist() for field in actual[1:4]),
+                strict=True,
+            )
+        )
+        expected_mapping = sorted(
+            zip(
+                *(field[:tile_count].cpu().tolist() for field in expected[1:4]),
+                strict=True,
+            )
+        )
+        assert actual_mapping == expected_mapping
+        for actual_field, expected_field in zip(actual[4:], expected[4:], strict=True):
+            torch.testing.assert_close(actual_field, expected_field)
+
+    first_shared = neighbor_list(positions, state=shared_state)
+    first_per_system = neighbor_list(positions, state=per_system_state)
+    assert_outputs_equal(first_shared, first_per_system)
+    if format == "matrix":
+        for system_start in (0, 4):
+            assert any(
+                bool(torch.any(first_shared[2][row, : int(first_shared[1][row])] != 0))
+                for row in range(system_start, system_start + 4)
+            )
+    elif format == "coo":
+        for system in range(2):
+            start = int(first_shared[1][system])
+            count = int(first_shared[2][system])
+            assert bool(torch.any(first_shared[3][start : start + count] != 0))
+    first_counts = None
+    if format == "matrix":
+        first_counts = first_shared[1].clone()
+    elif format == "coo":
+        first_counts = first_shared[2].clone()
+    second_shared = neighbor_list(moved, state=shared_state)
+    second_per_system = neighbor_list(moved, state=per_system_state)
+    assert_outputs_equal(second_shared, second_per_system)
+    if format == "matrix":
+        second_counts = second_shared[1]
+    elif format == "coo":
+        second_counts = second_shared[2]
+    else:
+        second_counts = None
+    if first_counts is not None:
+        assert not torch.equal(first_counts, second_counts)
+    direct_kwargs: dict[str, object] = {
+        "format": format,
+        "max_neighbors": 8,
+        "max_pairs": 64,
+        "max_tiles_per_group": 1,
+    }
+    if format == "coo":
+        direct_kwargs.update(
+            neighbor_list=torch.empty_like(second_per_system[0]),
+            neighbor_list_shifts=torch.empty_like(second_per_system[3]),
+            pair_offsets=per_system_state.pair_offsets,
+            pair_counts=torch.zeros_like(per_system_state.pair_counts),
+        )
+    direct = batch_cluster_tile_neighbor_list(
+        moved,
+        0.5,
+        per_system_cell,
+        batch_ptr,
+        **direct_kwargs,
+    )
+    assert_outputs_equal(second_per_system, direct)
 
 
 @pytest.mark.gpu
@@ -2745,6 +3006,377 @@ def test_fixed_cell_naive_scalar_tile_partial_and_wrap(
     assert_neighbor_matrix_equal(got, expected)
     if not partial:
         assert torch.count_nonzero(got[2]) > 0
+
+
+def _partial_image_rows_torch(
+    positions: np.ndarray,
+    cell: np.ndarray,
+    pbc: np.ndarray,
+    targets: np.ndarray,
+    cutoff: float,
+) -> list[set[tuple[int, int, int, int]]]:
+    """Enumerate compact-row periodic neighbors independently in NumPy."""
+    rows = []
+    ranges = [range(-2, 3) if periodic else (0,) for periodic in pbc]
+    for source in targets:
+        expected: set[tuple[int, int, int, int]] = set()
+        for neighbor in range(len(positions)):
+            for shift in product(*ranges):
+                if neighbor == int(source) and shift == (0, 0, 0):
+                    continue
+                displacement = (
+                    positions[neighbor]
+                    - positions[int(source)]
+                    + (np.asarray(shift) @ cell)
+                )
+                if float(np.dot(displacement, displacement)) < cutoff * cutoff:
+                    expected.add((neighbor, *shift))
+        rows.append(expected)
+    return rows
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("return_neighbor_list", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_prepared_partial_tile_matrix_and_coo_match_image_oracle(
+    return_neighbor_list: bool, dtype: torch.dtype
+) -> None:
+    """Prepared partial tile preserves repeated compact rows in matrix and COO."""
+    device = "cuda:0"
+    numpy_dtype = np.float64 if dtype == torch.float64 else np.float32
+    cell_np = np.array(
+        [[8.0, 0.0, 0.0], [1.0, 7.0, 0.0], [0.5, 0.75, 6.0]],
+        dtype=numpy_dtype,
+    )
+    fractions = np.array(
+        [[0.03, 0.2, 0.05], [0.97, 0.2, 0.05], [0.4, 0.4, 0.98], [0.4, 0.4, 0.02]],
+        dtype=numpy_dtype,
+    )
+    positions_np = fractions @ cell_np
+    targets_np = np.array([3, 0, 3], dtype=np.int32)
+    positions = torch.tensor(positions_np, dtype=dtype, device=device)
+    cell = torch.tensor(cell_np, dtype=dtype, device=device)
+    pbc = torch.tensor([True, False, True], device=device)
+    targets = torch.tensor(targets_np, dtype=torch.int32, device=device)
+    fixed_cell = not return_neighbor_list
+    state = prepare_neighbor_list(
+        positions,
+        0.7,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        strategy="tile",
+        target_indices=targets,
+        max_neighbors=8,
+        return_neighbor_list=return_neighbor_list,
+        wrap_positions=fixed_cell,
+        fixed_cell=fixed_cell,
+    )
+    assert state.strategy == "naive_tile"
+
+    current_positions = positions
+    for scale in (1.0, 1.01):
+        runtime_cell = cell if fixed_cell else cell * scale
+        if scale != 1.0:
+            moved_np = positions_np.copy()
+            moved_np[3] = np.array([0.4, 0.4, 0.5], dtype=numpy_dtype) @ cell_np
+            current_positions = torch.tensor(moved_np, dtype=dtype, device=device)
+        result = neighbor_list(current_positions, cell=runtime_cell, state=state)
+        expected_rows = _partial_image_rows_torch(
+            current_positions.cpu().numpy(),
+            runtime_cell.cpu().numpy(),
+            pbc.cpu().numpy(),
+            targets_np,
+            0.7,
+        )
+        if return_neighbor_list:
+            neighbors, pointer, shifts = result
+            assert pointer.shape == (len(targets_np) + 1,)
+            assert int(pointer[-1]) == sum(map(len, expected_rows))
+            for row, expected in enumerate(expected_rows):
+                start, stop = int(pointer[row]), int(pointer[row + 1])
+                actual = {
+                    (int(neighbors[1, index]), *map(int, shifts[index]))
+                    for index in range(start, stop)
+                }
+                torch.testing.assert_close(
+                    neighbors[0, start:stop],
+                    torch.full((stop - start,), row, dtype=torch.int32, device=device),
+                )
+                assert actual == expected
+        else:
+            matrix, counts, shifts = result
+            assert matrix.shape == (len(targets_np), 8)
+            for row, expected in enumerate(expected_rows):
+                assert int(counts[row]) == len(expected)
+                actual = {
+                    (int(matrix[row, slot]), *map(int, shifts[row, slot]))
+                    for slot in range(int(counts[row]))
+                }
+                assert actual == expected
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_prepared_batched_partial_tile_prewrapped_pbc(dtype: torch.dtype) -> None:
+    """Prepared batch tile accepts prewrapped PBC only for compact target rows."""
+    device = "cuda:0"
+    cell = torch.tensor(
+        [
+            [[8.0, 0.0, 0.0], [1.0, 7.0, 0.0], [0.5, 0.75, 6.0]],
+            [[8.0, 0.0, 0.0], [1.0, 7.0, 0.0], [0.5, 0.75, 6.0]],
+        ],
+        dtype=dtype,
+        device=device,
+    )
+    fractions = torch.tensor(
+        [[0.03, 0.2, 0.05], [0.97, 0.2, 0.05], [0.4, 0.4, 0.5], [0.4, 0.4, 0.52]],
+        dtype=dtype,
+        device=device,
+    )
+    positions = fractions @ cell[0]
+    pbc = torch.tensor([[True, False, True], [False, False, False]], device=device)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+    targets = torch.tensor([2, 0, 2], dtype=torch.int32, device=device)
+    state = prepare_neighbor_list(
+        positions,
+        0.7,
+        cell=cell,
+        pbc=pbc,
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        strategy="tile",
+        target_indices=targets,
+        max_neighbors=8,
+        return_neighbor_list=True,
+        wrap_positions=False,
+    )
+    cell_np = cell.cpu().numpy()
+    pbc_np = pbc.cpu().numpy()
+    targets_np = targets.cpu().numpy()
+    current_positions_np = positions.cpu().numpy()
+    for step in range(2):
+        if step == 1:
+            current_positions_np[2, 0] = 0.8
+        current_positions = torch.tensor(
+            current_positions_np, dtype=dtype, device=device
+        )
+        neighbors, pointer, shifts = neighbor_list(
+            current_positions, cell=cell, state=state
+        )
+        expected_rows: list[set[tuple[int, int, int, int]]] = []
+        for source in targets_np:
+            system = 0 if source < 2 else 1
+            start, stop = (0, 2) if system == 0 else (2, 4)
+            local_rows = _partial_image_rows_torch(
+                current_positions_np[start:stop],
+                cell_np[system],
+                pbc_np[system],
+                np.array([int(source) - start], dtype=np.int32),
+                0.7,
+            )
+            expected_rows.append(
+                {
+                    (neighbor + start, sx, sy, sz)
+                    for neighbor, sx, sy, sz in local_rows[0]
+                }
+            )
+        expected_counts = list(map(len, expected_rows))
+        assert pointer.shape == (len(targets_np) + 1,)
+        assert pointer.tolist() == [0, *np.cumsum(expected_counts).tolist()]
+        assert shifts.shape == (neighbors.shape[1], 3)
+        for row, expected in enumerate(expected_rows):
+            start, stop = int(pointer[row]), int(pointer[row + 1])
+            assert neighbors[0, start:stop].tolist() == [row] * (stop - start)
+            actual = {
+                (int(neighbors[1, index]), *map(int, shifts[index]))
+                for index in range(start, stop)
+            }
+            assert actual == expected
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("return_neighbor_list", [False, True])
+def test_prepared_partial_tile_accepts_empty_targets(
+    return_neighbor_list: bool,
+) -> None:
+    """Empty compact rows retain valid matrix and COO pointer shapes."""
+    positions = torch.tensor([[0.0, 0.0, 0.0], [0.4, 0.0, 0.0]], device="cuda")
+    targets = torch.empty((0,), dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        method="naive",
+        strategy="tile",
+        target_indices=targets,
+        max_neighbors=4,
+        return_neighbor_list=return_neighbor_list,
+    )
+    result = neighbor_list(positions, state=state)
+    if return_neighbor_list:
+        assert len(result) == 2
+        assert result[0].shape == (2, 0)
+        assert result[1].tolist() == [0]
+    else:
+        assert result[0].shape == (0, 4)
+        assert result[1].shape == (0,)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_partial_tile_overflow_invalidates_torch_state() -> None:
+    """An eager partial-row overflow permanently invalidates prepared state."""
+    positions = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [5.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [20.0, 0.0, 0.0],
+            [20.2, 0.0, 0.0],
+            [20.4, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
+    batch_idx = torch.tensor([0, 0, 0, 1, 1, 1], dtype=torch.int32, device="cuda")
+    targets = torch.tensor([5, 0, 5], dtype=torch.int32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        strategy="tile",
+        target_indices=targets,
+        max_neighbors=1,
+        return_neighbor_list=True,
+    )
+    with pytest.raises(NeighborOverflowError) as error:
+        neighbor_list(positions, state=state)
+    assert error.value.max_neighbors == 1
+    assert error.value.num_neighbors == 2
+    assert not bool(state.initialized.any())
+    assert state.neighbor_matrix is None
+
+    far = positions.clone()
+    far[4:, 0] = torch.tensor([30.0, 40.0], dtype=torch.float32, device="cuda")
+    with pytest.raises(
+        RuntimeError,
+        match="prepared Torch neighbor-list state is invalid; call prepare_neighbor_list again",
+    ):
+        neighbor_list(far, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_prepared_batched_partial_tile_wrapped_fixed_cell_cache(
+    dtype: torch.dtype,
+) -> None:
+    """Fixed inverse caches feed wrapped batched partial tile execution."""
+    device = "cuda:0"
+    positions = torch.tensor(
+        [[8.1, 1.0, 1.0], [7.9, 1.0, 1.0], [16.1, 1.0, 1.0], [15.9, 1.0, 1.0]],
+        dtype=dtype,
+        device=device,
+    )
+    cell = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+    pbc = torch.tensor([[True, False, False], [True, False, False]], device=device)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+    targets = torch.tensor([3, 0, 3], dtype=torch.int32, device=device)
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        strategy="tile",
+        target_indices=targets,
+        max_neighbors=8,
+        wrap_positions=True,
+        fixed_cell=True,
+    )
+    cell_np = cell.cpu().numpy()
+    pbc_np = pbc.cpu().numpy()
+    targets_np = targets.cpu().numpy()
+    current_positions_np = positions.cpu().numpy()
+    for step in range(2):
+        if step == 1:
+            current_positions_np[2, 0] = 18.0
+            current_positions_np[3, 0] = 22.0
+        current_positions = torch.tensor(
+            current_positions_np, dtype=dtype, device=device
+        )
+        actual = neighbor_list(current_positions, cell=cell, state=state)
+        expected_rows: list[set[tuple[int, int, int, int]]] = []
+        for source in targets_np:
+            system = 0 if source < 2 else 1
+            start, stop = (0, 2) if system == 0 else (2, 4)
+            local_rows = _partial_image_rows_torch(
+                current_positions_np[start:stop],
+                cell_np[system],
+                pbc_np[system],
+                np.array([int(source) - start], dtype=np.int32),
+                0.5,
+            )
+            expected_rows.append(
+                {
+                    (neighbor + start, sx, sy, sz)
+                    for neighbor, sx, sy, sz in local_rows[0]
+                }
+            )
+        matrix, counts, shifts = actual
+        for row, expected in enumerate(expected_rows):
+            assert int(counts[row]) == len(expected)
+            actual_row = {
+                (int(matrix[row, slot]), *map(int, shifts[row, slot]))
+                for slot in range(int(counts[row]))
+            }
+            assert actual_row == expected
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_method_none_selects_target_aware_naive_tile() -> None:
+    """Automatic preparation accounts for compact work and pins its route."""
+    device = "cuda:0"
+    num_atoms = 8192
+    torch.manual_seed(19)
+    positions = torch.rand((num_atoms, 3), device=device) * 100.0
+    cell = torch.eye(3, dtype=torch.float32, device=device) * 100.0
+    pbc = torch.ones(3, dtype=torch.bool, device=device)
+    targets = torch.tensor([num_atoms - 1, 0], dtype=torch.int32, device=device)
+    full = prepare_neighbor_list(positions, 2.0, cell=cell, pbc=pbc, max_neighbors=8)
+    partial = prepare_neighbor_list(
+        positions,
+        2.0,
+        cell=cell,
+        pbc=pbc,
+        target_indices=targets,
+        max_neighbors=8,
+    )
+    pinned_auto = prepare_neighbor_list(
+        positions,
+        2.0,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        strategy="auto",
+        target_indices=targets,
+        max_neighbors=8,
+    )
+    assert full.method == "cell_list"
+    assert partial.method == "naive" and partial.strategy == "naive_tile"
+    assert pinned_auto.method == "naive" and pinned_auto.strategy == "naive_scalar"
 
 
 @pytest.mark.gpu

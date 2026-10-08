@@ -777,6 +777,63 @@ class TestNeighborListFineGrainedMethodEquivalence:
         )
         assert _canonical_pairs(suggested_res) == _canonical_pairs(base_res)
 
+    def test_auto_partial_uses_an_executable_method(self):
+        """Automatic partial dispatch matches an explicit scalar reference."""
+        positions, cell, pbc = create_random_system_jax(1024, 20.0)
+        targets = jnp.arange(255, -1, -1, dtype=jnp.int32)
+        kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors": 256,
+            "target_indices": targets,
+        }
+
+        automatic = neighbor_list(positions, 5.0, **kwargs)
+        scalar = neighbor_list(
+            positions,
+            5.0,
+            method="naive_scalar",
+            **kwargs,
+        )
+
+        assert_neighbor_matrix_equal_jax(automatic, scalar)
+
+    @pytest.mark.gpu
+    def test_naive_tile_partial_smoke(self):
+        """Fine-grained naive_tile reaches compact unbatched and batched routes."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        targets = jnp.array([2, 0], dtype=jnp.int32)
+        matrix, counts = neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            target_indices=targets,
+            method="naive_tile",
+        )
+        assert matrix.shape == (2, 4)
+        assert counts.shape == (2,)
+        np.testing.assert_array_equal(np.asarray(counts), [1, 1])
+        np.testing.assert_array_equal(np.asarray(matrix[:, 0]), [3, 1])
+
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        batch_matrix, batch_counts = neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            target_indices=targets,
+            method="naive_tile",
+        )
+        assert batch_matrix.shape == (2, 4)
+        assert batch_counts.shape == (2,)
+        np.testing.assert_array_equal(np.asarray(batch_counts), [1, 1])
+        np.testing.assert_array_equal(np.asarray(batch_matrix[:, 0]), [3, 1])
+
 
 class TestNeighborListCellListHalfFillFillValue:
     """JAX cell_list now honors ``half_fill`` and ``fill_value`` (parity)."""

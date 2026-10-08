@@ -241,6 +241,56 @@ def test_prepared_naive_and_cell_list_geometry_fullgraph_reuse(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_prepared_batched_partial_tile_fullgraph_fixed_cell_reuse(
+    dtype: torch.dtype,
+) -> None:
+    """Fullgraph reuses wrapped compact rows and follows changing positions."""
+    device = "cuda:0"
+    positions = torch.tensor(
+        [[8.1, 1.0, 1.0], [7.9, 1.0, 1.0], [16.1, 1.0, 1.0], [15.9, 1.0, 1.0]],
+        dtype=dtype,
+        device=device,
+    )
+    cell = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+    pbc = torch.tensor([[True, False, False], [True, False, False]], device=device)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+    targets = torch.tensor([3, 0, 3], dtype=torch.int32, device=device)
+    state = prepare_neighbor_list(
+        positions,
+        0.5,
+        cell=cell,
+        pbc=pbc,
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        strategy="tile",
+        target_indices=targets,
+        max_neighbors=4,
+        fixed_cell=True,
+        wrap_positions=True,
+    )
+    assert state.supports_compilation
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return neighbor_list(values, cell=box, state=state)
+
+    first = run(positions, cell)
+    assert first[1].tolist() == [1, 1, 1]
+    assert state.num_neighbors is first[1]
+
+    moved = positions.clone()
+    moved[2, 0] = 18.0
+    moved[3, 0] = 22.0
+    second = run(moved, cell)
+    assert second[1].tolist() == [0, 1, 0]
+    assert state.num_neighbors is second[1]
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_fullgraph_mirrors_6_to_2_to_0_and_preserves_old_results() -> None:
     """One compiled callable handles changing COO sizes and state references."""
     close, middle, far, cell = _inputs()
@@ -355,6 +405,9 @@ state = prepare_neighbor_list(
 def run(values, box):
     return neighbor_list(values, cell=box, state=state)
 
+control = run(positions, prepared_cell)
+torch.cuda.synchronize()
+assert control[1].shape == (2,)
 run(positions, runtime_cell)
 torch.cuda.synchronize()
 """,
@@ -362,9 +415,80 @@ torch.cuda.synchronize()
         capture_output=True,
         text=True,
         check=False,
+        timeout=180,
     )
     assert result.returncode != 0
     assert "periodic-image coverage" in result.stderr
+    assert "device-side assert triggered" in result.stderr
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_compiled_prepared_naive_does_not_validate_target_for_later_eager_call() -> (
+    None
+):
+    """A compiled safe invalid row does not bypass the first eager bounds check."""
+    positions = torch.zeros((3, 3), dtype=torch.float32, device="cuda")
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        method="naive",
+        strategy="scalar",
+        target_indices=torch.tensor([3], dtype=torch.int32, device="cuda"),
+        max_neighbors=2,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values):
+        return neighbor_list(values, state=state)
+
+    matrix, counts = run(positions)
+    torch.cuda.synchronize()
+    assert torch.equal(counts, torch.zeros_like(counts))
+    assert torch.equal(matrix, torch.full_like(matrix, positions.shape[0]))
+
+    with pytest.raises(ValueError, match="in-bounds atom indices"):
+        neighbor_list(positions, state=state)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_prepared_naive_compiled_overflow_failure_isolated_process() -> None:
+    """Compiled row overflow asserts in a fresh process after a valid control."""
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            """
+import torch
+from nvalchemiops.torch.neighbors import neighbor_list, prepare_neighbor_list
+
+safe = torch.tensor([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]], device='cuda')
+overflow = torch.tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.2, 0.0, 0.0]], device='cuda')
+state = prepare_neighbor_list(
+    safe, 0.5, method='naive', max_neighbors=1, return_neighbor_list=True,
+)
+assert state.supports_compilation
+
+@torch.compile(fullgraph=True)
+def run(values):
+    return neighbor_list(values, state=state)
+
+control = run(safe)
+torch.cuda.synchronize()
+assert control[0].shape[1] == 0
+run(overflow)
+torch.cuda.synchronize()
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert result.returncode != 0
+    assert "neighbor matrix capacity is insufficient" in result.stderr
+    assert "device-side assert triggered" in result.stderr
 
 
 @pytest.mark.gpu
@@ -494,7 +618,10 @@ def test_prepared_batch_cell_list_fullgraph_guards_selected_systems(
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batched", [False, True])
-def test_prepared_pair_centric_cell_list_fullgraph(batched: bool) -> None:
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_prepared_pair_centric_cell_list_fullgraph(
+    batched: bool, fixed_cell: bool
+) -> None:
     """Pair-centric cell-list preparation supports compiled public execution."""
     positions = torch.tensor(
         [
@@ -526,6 +653,7 @@ def test_prepared_pair_centric_cell_list_fullgraph(batched: bool) -> None:
         method=method,
         strategy="pair_centric",
         max_neighbors=8,
+        fixed_cell=fixed_cell,
     )
     assert state.supports_compilation and state.compilation_blocker is None
 
@@ -533,9 +661,14 @@ def test_prepared_pair_centric_cell_list_fullgraph(batched: bool) -> None:
     def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
         return neighbor_list(values, cell=box, state=state)
 
-    result = run(positions, cell)
+    moved = positions.clone()
+    moved[1] = torch.tensor([2.0, 1.0, 1.0], device="cuda")
+    moved[3] = torch.tensor([6.0, 4.1, 4.1], device="cuda")
+    first = run(positions, cell)
+    first_counts = first[1].clone()
+    second = run(moved, cell)
     direct = neighbor_list(
-        positions,
+        moved,
         1.0,
         cell=cell,
         pbc=pbc,
@@ -543,7 +676,8 @@ def test_prepared_pair_centric_cell_list_fullgraph(batched: bool) -> None:
         method=reference_method,
         max_neighbors=8,
     )
-    assert_neighbor_matrix_equal(result[:3], direct[:3])
+    assert_neighbor_matrix_equal(second[:3], direct[:3])
+    assert not torch.equal(first_counts, second[1])
 
 
 @pytest.mark.gpu

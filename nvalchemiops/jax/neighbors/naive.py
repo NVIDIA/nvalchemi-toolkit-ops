@@ -22,6 +22,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
@@ -30,8 +31,13 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
-from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
-from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
+from nvalchemiops.jax.neighbors._dispatch import (
+    _jax_array_device_kind,
+)
+from nvalchemiops.jax.neighbors._registration import (
+    _lazy_cell_inverse_kernel,
+    _lazy_naive_kernel,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
@@ -41,6 +47,11 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     coo_pack_pair_geometry,
     get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
+)
+from nvalchemiops.neighbors.naive.dispatch import (
+    _NaiveWorkload,
+    _require_cuda_tile_device,
+    _resolve_naive_strategy,
 )
 from nvalchemiops.neighbors.naive.launchers import (
     _launch_naive_neighbor_matrix_no_pbc,
@@ -56,6 +67,121 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
+_CELL_INVERSE_REGISTRATION = _lazy_cell_inverse_kernel()
+
+
+def _prepare_wrapped_tile_operands(
+    positions: jax.Array,
+    cell: jax.Array,
+    *,
+    inv_cell_buffer: jax.Array | None,
+    positions_wrapped_buffer: jax.Array | None,
+    per_atom_cell_offsets_buffer: jax.Array | None,
+    fixed_cell_geometry: tuple[jax.Array | None, ...] | None,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Validate and prepare wrapped-PBC tile operands for one system.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Positions whose wrapped coordinates and cell offsets are needed.
+    cell : jax.Array, shape (1, 3, 3)
+        Runtime cell used to compute an inverse when no fixed inverse is cached.
+    inv_cell_buffer : jax.Array, shape matching ``cell``, optional
+        Caller-supplied inverse scratch with dtype matching ``positions`` for
+        the default-cell path.
+    positions_wrapped_buffer : jax.Array, shape (N, 3), optional
+        Caller-supplied wrapped-position output operand with dtype matching
+        ``positions``.
+    per_atom_cell_offsets_buffer : jax.Array, shape (N, 3), dtype=int32, optional
+        Caller-supplied integer offset output operand.
+    fixed_cell_geometry : tuple or None
+        Prepared fixed-cell metadata. Its first element is the cached inverse
+        when that cache is present.
+
+    Returns
+    -------
+    inverse_cell : jax.Array, shape matching ``cell``
+        Warp-precision inverse for the tile callback. A prepared cached inverse
+        is returned read-only; otherwise this is the supplied or allocated
+        inverse scratch.
+    wrapped_positions : jax.Array, shape (N, 3)
+        Supplied or allocated position scratch, with dtype matching ``positions``.
+    cell_offsets : jax.Array, shape (N, 3), dtype=int32
+        Supplied or allocated per-atom wrapping-offset scratch.
+
+    Raises
+    ------
+    ValueError
+        If a supplied scratch buffer has an incompatible shape or dtype.
+
+    Notes
+    -----
+    A cached fixed-cell inverse is reused directly. Otherwise, the registered
+    Warp inverse kernel computes the inverse of the current cell into the
+    supplied buffer or newly allocated scratch. Wrapped positions and offsets
+    are returned as callback operands so each execution uses current positions.
+    """
+    if inv_cell_buffer is not None:
+        if tuple(inv_cell_buffer.shape) != tuple(cell.shape):
+            raise ValueError(
+                f"inv_cell_buffer must have shape {tuple(cell.shape)}; "
+                f"got {tuple(inv_cell_buffer.shape)}."
+            )
+        if inv_cell_buffer.dtype != positions.dtype:
+            raise ValueError(
+                f"inv_cell_buffer dtype must match positions dtype "
+                f"({positions.dtype}); got {inv_cell_buffer.dtype}."
+            )
+    if positions_wrapped_buffer is not None:
+        expected_shape = (positions.shape[0], 3)
+        if tuple(positions_wrapped_buffer.shape) != expected_shape:
+            raise ValueError(
+                f"positions_wrapped_buffer must have shape {expected_shape}; "
+                f"got {tuple(positions_wrapped_buffer.shape)}."
+            )
+        if positions_wrapped_buffer.dtype != positions.dtype:
+            raise ValueError(
+                f"positions_wrapped_buffer dtype must match positions dtype "
+                f"({positions.dtype}); got {positions_wrapped_buffer.dtype}."
+            )
+    if per_atom_cell_offsets_buffer is not None:
+        expected_shape = (positions.shape[0], 3)
+        if tuple(per_atom_cell_offsets_buffer.shape) != expected_shape:
+            raise ValueError(
+                f"per_atom_cell_offsets_buffer must have shape {expected_shape}; "
+                f"got {tuple(per_atom_cell_offsets_buffer.shape)}."
+            )
+        if per_atom_cell_offsets_buffer.dtype != jnp.int32:
+            raise ValueError(
+                "per_atom_cell_offsets_buffer dtype must be int32; "
+                f"got {per_atom_cell_offsets_buffer.dtype}."
+            )
+    fixed_inverse = None if fixed_cell_geometry is None else fixed_cell_geometry[0]
+    if fixed_inverse is not None:
+        inverse = fixed_inverse
+    else:
+        inverse = (
+            inv_cell_buffer if inv_cell_buffer is not None else jnp.empty_like(cell)
+        )
+        (inverse,) = _CELL_INVERSE_REGISTRATION[positions.dtype](
+            cell,
+            inverse,
+            launch_dims=(1,),
+        )
+    positions_wrapped = (
+        positions_wrapped_buffer
+        if positions_wrapped_buffer is not None
+        else jnp.empty_like(positions)
+    )
+    per_atom_cell_offsets = (
+        per_atom_cell_offsets_buffer
+        if per_atom_cell_offsets_buffer is not None
+        else jnp.empty((positions.shape[0], 3), dtype=jnp.int32)
+    )
+    return inverse, positions_wrapped, per_atom_cell_offsets
+
+
 (
     _fill_naive_neighbor_matrix_kernels,
     _fill_naive_neighbor_matrix_selective_kernels,
@@ -928,35 +1054,19 @@ _GRAPH_NAIVE_WARP_CALLABLES = _register_graph_naive_callables()
 # Tiled-kernel callables (``strategy="tile"``, CUDA-only)
 # ==============================================================================
 #
-# These wrap the *inner* warp launchers ``_launch_naive_neighbor_matrix_no_pbc``
-# / ``_launch_naive_neighbor_matrix_pbc`` inside a ``jax_callable`` body and
-# pass ``strategy="tile"`` explicitly, so the tile-cooperative
-# ``wp.launch_tiled`` kernel is honored unconditionally (unlike the high-level
-# ``naive_neighbor_matrix`` launchers, which drop ``strategy`` on the
-# non-pair branch and would only reach tile via the "auto" heuristic).
-#
-# The inner launchers own the 2D tile ``dim`` math (``[1, N]`` no-PBC,
-# ``[num_shifts, N]`` PBC), the BLOCK_DIM, the scalar sentinels, and the
-# internal wrap launch for the wrapped-PBC case, so the JAX bodies stay thin.
-#
-# These run only on the eager (``graph_mode="none"``) path, where
-# ``naive_neighbor_list`` already pre-fills ``neighbor_matrix=fill_value`` and
-# zeroes ``num_neighbors`` / shifts before dispatch, so the bodies perform no
-# reset and take no ``fill_value`` argument.  ``graph_mode="warp"`` + tile is
-# rejected up-front (those pre-fills are skipped under warp).
-#
-# Tile supports no-PBC and PBC (wrapped + prewrapped) and ``half_fill``; it has
-# no pair-output / ``target_indices`` / selective specialization.  The static
-# scalars (``cutoff``, ``half_fill``, and ``num_shifts`` for PBC) are already
-# host-static in the existing naive graph path — no new host sync.
+# These force ``strategy="tile"`` in the inner Warp launchers. Eager calls
+# pre-fill topology outputs.
+# Cutoff, ``half_fill``, ``partial``, and PBC shift count are static.
 
 
 def _graph_naive_tile_no_pbc_f32(
     positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
     cutoff: wp.float32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
@@ -967,16 +1077,19 @@ def _graph_naive_tile_no_pbc_f32(
         str(positions.device),
         batched=False,
         half_fill=bool(half_fill),
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_no_pbc_f64(
     positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
     cutoff: wp.float64,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
@@ -987,6 +1100,7 @@ def _graph_naive_tile_no_pbc_f64(
         str(positions.device),
         batched=False,
         half_fill=bool(half_fill),
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
@@ -995,6 +1109,7 @@ def _graph_naive_tile_no_pbc_f64(
 # position wrapping, so these callables intentionally omit it.
 def _graph_naive_tile_pbc_prewrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33f),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
@@ -1003,6 +1118,7 @@ def _graph_naive_tile_pbc_prewrapped_f32(
     cutoff: wp.float32,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1019,12 +1135,14 @@ def _graph_naive_tile_pbc_prewrapped_f32(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=False,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_pbc_prewrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33d),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
@@ -1033,6 +1151,7 @@ def _graph_naive_tile_pbc_prewrapped_f64(
     cutoff: wp.float64,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1049,12 +1168,14 @@ def _graph_naive_tile_pbc_prewrapped_f64(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=False,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_pbc_wrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33f),
     pbc: wp.array2d(dtype=wp.bool),
     inv_cell: wp.array(dtype=wp.mat33f),
@@ -1062,10 +1183,12 @@ def _graph_naive_tile_pbc_wrapped_f32(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
+    positions_wrapped: wp.array(dtype=wp.vec3f),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
     cutoff: wp.float32,
     num_shifts: wp.int32,
     half_fill: wp.bool,
-    reuse_inv_cell: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1082,14 +1205,18 @@ def _graph_naive_tile_pbc_wrapped_f32(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=True,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
-        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
-        reuse_inv_cell=bool(reuse_inv_cell),
+        positions_wrapped_buffer=positions_wrapped,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+        inv_cell_buffer=inv_cell,
+        reuse_inv_cell=True,
     )
 
 
 def _graph_naive_tile_pbc_wrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33d),
     pbc: wp.array2d(dtype=wp.bool),
     inv_cell: wp.array(dtype=wp.mat33d),
@@ -1097,10 +1224,12 @@ def _graph_naive_tile_pbc_wrapped_f64(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
+    positions_wrapped: wp.array(dtype=wp.vec3d),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
     cutoff: wp.float64,
     num_shifts: wp.int32,
     half_fill: wp.bool,
-    reuse_inv_cell: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1117,9 +1246,12 @@ def _graph_naive_tile_pbc_wrapped_f64(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=True,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
-        inv_cell_buffer=inv_cell if bool(reuse_inv_cell) else None,
-        reuse_inv_cell=bool(reuse_inv_cell),
+        positions_wrapped_buffer=positions_wrapped,
+        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+        inv_cell_buffer=inv_cell,
+        reuse_inv_cell=True,
     )
 
 
@@ -1131,6 +1263,11 @@ _GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS = (
     "neighbor_matrix",
     "neighbor_matrix_shifts",
     "num_neighbors",
+)
+_GRAPH_NAIVE_TILE_PBC_WRAPPED_IN_OUT_ARGS = (
+    *_GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+    "positions_wrapped",
+    "per_atom_cell_offsets",
 )
 _GRAPH_NAIVE_TILE_SPECS = {
     (False, False): {
@@ -1146,8 +1283,8 @@ _GRAPH_NAIVE_TILE_SPECS = {
         jnp.dtype(jnp.float64): _graph_naive_tile_pbc_prewrapped_f64,
     },
     (True, True): {
-        "num_outputs": 3,
-        "in_out_argnames": _GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+        "num_outputs": 5,
+        "in_out_argnames": _GRAPH_NAIVE_TILE_PBC_WRAPPED_IN_OUT_ARGS,
         jnp.dtype(jnp.float32): _graph_naive_tile_pbc_wrapped_f32,
         jnp.dtype(jnp.float64): _graph_naive_tile_pbc_wrapped_f64,
     },
@@ -1198,7 +1335,12 @@ def _naive_pair_outputs_forward(
     pair_params: jax.Array | None = None,
     target_indices: jax.Array | None = None,
     half_fill: bool = False,
+    strategy: str = "scalar",
     wrap_positions: bool = True,
+    graph_mode: str = "none",
+    inv_cell: jax.Array | None = None,
+    positions_wrapped: jax.Array | None = None,
+    per_atom_cell_offsets: jax.Array | None = None,
     _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure for the naive autograd path.
@@ -1213,6 +1355,58 @@ def _naive_pair_outputs_forward(
     along *outside* the ``custom_vjp`` primitive: ``positions`` is detached above, so
     they are autograd-constants (forward-only / zero cotangent), while
     ``distances`` / ``vectors`` are re-attached on the original positions.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Current atomic positions.
+    cell, pbc : jax.Array or None
+        Cell geometry and per-axis periodicity. ``cell`` is required when
+        ``pbc`` is supplied.
+    cutoff : float
+        Neighbor cutoff.
+    max_neighbors, fill_value : int
+        Fixed row capacity and padding value for the neighbor matrix.
+    neighbor_matrix, neighbor_matrix_shifts, num_neighbors : jax.Array, optional
+        Caller-provided topology operands. Compact rows follow
+        ``target_indices`` order.
+    neighbor_vectors, neighbor_distances : jax.Array, optional
+        Geometry output operands used by differentiable reconstruction.
+    shift_range_per_dimension, num_shifts_per_system : jax.Array, optional
+        Prepared periodic-image metadata.
+    max_shifts_per_system : int, optional
+        Fixed periodic-image capacity.
+    pair_fn : Warp function or None
+        Optional forward-only pair callback.
+    pair_params : jax.Array, optional
+        Per-atom parameters passed to ``pair_fn``.
+    target_indices : jax.Array, optional
+        Compact source rows; repeated indices produce repeated output rows.
+    half_fill : bool
+        Select the canonical half-list convention.
+    strategy : {"scalar", "tile"}
+        Naive kernel strategy. Tile is used for topology-only compact rows.
+    wrap_positions : bool
+        Whether the callback wraps live positions before its tile search.
+    graph_mode : {"none", "warp"}
+        Warp callback mode for supported full-row routes.
+    inv_cell, positions_wrapped, per_atom_cell_offsets : jax.Array, optional
+        Resolved inverse and wrapping scratch operands for wrapped execution.
+    _fixed_cell_geometry : tuple or None
+        Prepared fixed-cell cache metadata used to select a readonly inverse.
+
+    Returns
+    -------
+    _NeighborForwardOutput
+        Geometry, active-pair reconstruction data, and topology/callback arrays
+        consumed by the public wrapper and autograd primitive.
+
+    Notes
+    -----
+    Compact topology-only tile execution skips residual pair-index construction.
+    Wrapped tile execution receives validated scratch operands; it reuses the
+    prepared inverse for fixed-cell geometry and computes from the current cell
+    in the default mode. Pair energies and forces remain forward-only outputs.
     """
     positions = jax.lax.stop_gradient(positions)
     if cell is not None:
@@ -1249,32 +1443,32 @@ def _naive_pair_outputs_forward(
     ) = _jax_scalar_sentinels(positions.dtype)
 
     ti_arg = target_indices if is_partial else empty_target_indices
+    has_pair_fn = pair_fn is not None
+    use_tile = strategy == "tile" and is_partial and not has_pair_fn
     if neighbor_matrix is None:
         nm = jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
+    elif graph_mode == "warp":
+        nm = neighbor_matrix
     else:
         nm = neighbor_matrix.at[:].set(jnp.int32(fill_value))
     if num_neighbors is None:
         nn = jnp.zeros(num_rows, dtype=jnp.int32)
+    elif graph_mode == "warp":
+        nn = num_neighbors
     else:
         nn = num_neighbors.at[:].set(jnp.int32(0))
-    if neighbor_matrix_shifts is None:
+    if pbc is None and use_tile:
+        nms = empty_shifts
+    elif neighbor_matrix_shifts is None:
         nms = jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
+    elif graph_mode == "warp":
+        nms = neighbor_matrix_shifts
     else:
         nms = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
-    if neighbor_vectors is None:
-        nv = jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
-    else:
-        nv = neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
-    if neighbor_distances is None:
-        nd = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
-    else:
-        nd = neighbor_distances.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
-
     # ``pair_fn`` path: real per-atom params + auto-allocated energy/force buffers.
     # (JAX is functional, so user-supplied energy/force buffers cannot be written
     # in-place; we always allocate fresh and return them — the return contract
     # matches torch, the in-place-buffer aspect does not.)
-    has_pair_fn = pair_fn is not None
     if has_pair_fn:
         pp_arg = jnp.asarray(pair_params, dtype=positions.dtype)
         pe = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
@@ -1284,7 +1478,35 @@ def _naive_pair_outputs_forward(
         pe = None
         pf = None
 
-    if pbc is None:
+    if use_tile:
+        # Tile kernels write topology only and do not consume geometry buffers.
+        # Keep the zero-sized sentinels instead of materializing discarded
+        # ``(num_rows, max_neighbors, 3)`` and ``(num_rows, max_neighbors)``
+        # arrays for topology-only partial calls.
+        nv = empty_vectors
+        nd = empty_distances
+    else:
+        if neighbor_vectors is None:
+            nv = jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
+        else:
+            nv = neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+        if neighbor_distances is None:
+            nd = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+        else:
+            nd = neighbor_distances.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+
+    if use_tile and pbc is None:
+        tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[(False, False, positions.dtype)]
+        nm, nn = tile_callable(
+            positions,
+            ti_arg,
+            nm,
+            nn,
+            float(cutoff),
+            half_fill,
+            True,
+        )
+    elif pbc is None:
         if has_pair_fn:
             kernel = _get_jax_naive_pair_fn_kernel(
                 pair_fn, wp_dtype, "none", half_fill, is_partial
@@ -1324,6 +1546,57 @@ def _naive_pair_outputs_forward(
             nm, nn, nv, nd, pe, pf = outs
         else:
             nm, nn, nv, nd = outs
+    elif use_tile:
+        if cell.ndim == 2:
+            cell = cell[jnp.newaxis, :, :]
+        if pbc.ndim == 1:
+            pbc = pbc[jnp.newaxis, :]
+        if (
+            shift_range_per_dimension is None
+            or num_shifts_per_system is None
+            or max_shifts_per_system is None
+        ):
+            (
+                shift_range_per_dimension,
+                num_shifts_per_system,
+                max_shifts_per_system,
+            ) = compute_naive_num_shifts(cell, cutoff, pbc)
+        tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
+            (True, bool(wrap_positions), positions.dtype)
+        ]
+        pbc_arg: tuple[jax.Array, ...] = ()
+        if wrap_positions:
+            inverse, positions_wrapped_work, offsets_work = (
+                _prepare_wrapped_tile_operands(
+                    positions,
+                    cell,
+                    inv_cell_buffer=inv_cell,
+                    positions_wrapped_buffer=positions_wrapped,
+                    per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+                    fixed_cell_geometry=_fixed_cell_geometry,
+                )
+            )
+            pbc_arg = (
+                pbc,
+                inverse,
+            )
+        tile_args = (
+            positions,
+            ti_arg,
+            cell,
+            *pbc_arg,
+            shift_range_per_dimension,
+            nm,
+            nms,
+            nn,
+            *((positions_wrapped_work, offsets_work) if wrap_positions else ()),
+            float(cutoff),
+            int(max_shifts_per_system),
+            half_fill,
+            True,
+        )
+        tile_outs = tile_callable(*tile_args)
+        nm, nms, nn = tile_outs[:3]
     else:
         fixed_mode = _fixed_cell_geometry is not None
         fixed_inverse = (
@@ -1371,6 +1644,16 @@ def _naive_pair_outputs_forward(
         positions_kernel = positions
         if fixed_mode and wrap_positions and fixed_inverse is not None:
             positions_kernel = jnp.zeros_like(positions)
+        if wrap_positions:
+            inv_cell = fixed_inverse if fixed_inverse is not None else inv_cell
+            if inv_cell is None:
+                inv_cell = jnp.linalg.inv(cell)
+            if positions_wrapped is not None:
+                positions_kernel = positions_wrapped
+            elif positions_kernel is positions:
+                positions_kernel = jnp.zeros_like(positions)
+            if per_atom_cell_offsets is not None:
+                offs = per_atom_cell_offsets
             wrap_kernel = (
                 _jax_wrap_positions_single_f64
                 if f64
@@ -1379,7 +1662,7 @@ def _naive_pair_outputs_forward(
             positions_kernel, offs = wrap_kernel(
                 positions,
                 cell,
-                fixed_inverse,
+                inv_cell,
                 pbc,
                 empty_batch_idx,
                 positions_kernel,
@@ -1419,12 +1702,21 @@ def _naive_pair_outputs_forward(
         else:
             nm, nms, nn, nv, nd = outs
 
-    i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(
-        nm,
-        nn,
-        nms,
-        target_indices=target_indices if is_partial else None,
-    )
+    if use_tile:
+        # The topology-only caller consumes only ``extra_outputs``. Avoid
+        # constructing the residual index matrices needed solely for the
+        # differentiable geometry reconstruction.
+        i_idx = j_idx = empty_matrix
+        shifts_ret = empty_shifts
+        mask_ = jnp.empty((0, 0), dtype=jnp.bool_)
+        batch_idx_ret = None
+    else:
+        i_idx, j_idx, shifts_ret, batch_idx_ret, mask_ = _build_index_residuals(
+            nm,
+            nn,
+            nms,
+            target_indices=target_indices if is_partial else None,
+        )
     K, M = nm.shape
     extra_outputs = (nm, nn, nms, pe, pf) if has_pair_fn else (nm, nn, nms)
     return _NeighborForwardOutput(
@@ -1434,7 +1726,7 @@ def _naive_pair_outputs_forward(
         i_idx=i_idx,
         j_idx=j_idx,
         shifts=shifts_ret,
-        batch_idx=None,
+        batch_idx=batch_idx_ret,
         active_mask=mask_,
         matrix_shape=(K, M),
     )
@@ -1517,6 +1809,7 @@ def naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        Eager calls with zero or negative cutoffs raise ``ValueError``.
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags for each dimension.
         True enables periodicity in that direction. Default is None (no PBC).
@@ -1547,76 +1840,49 @@ def naive_neighbor_list(
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     shift_range_per_dimension : jax.Array, shape (1, 3), dtype=int32, optional
-        Shift range in each dimension for the system. For every PBC call under
-        ``jax.jit``, precompute it via :func:`compute_naive_num_shifts` outside
-        the jit boundary. It must correspond to the call's ``cell``, ``pbc``,
-        and static cutoff. Eager PBC calls may omit it.
+        Shift range in each dimension for each system.
+        Pass in a pre-computed value to avoid recomputation for PBC systems.
     num_shifts_per_system : jax.Array, shape (1,), dtype=int32, optional
-        Number of periodic shifts for the system.  Same ``jax.jit``
-        precomputation requirement as ``shift_range_per_dimension``.
+        Number of periodic shifts for the system.
+        Pass in a pre-computed value to avoid recomputation for PBC systems.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count.  Same ``jax.jit`` precomputation
-        requirement as ``shift_range_per_dimension``.
+        Maximum per-system shift count.
+        Pass in a pre-computed value to avoid recomputation for PBC systems.
     rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
-        Device-side selective-rebuild flag. When provided, the neighbor list is
-        recomputed only if ``rebuild_flags[0]`` is True; otherwise existing
-        ``neighbor_matrix`` / ``num_neighbors`` / ``neighbor_matrix_shifts``
-        contents are preserved and the fill kernel is skipped. Preservation
-        requires passing the complete previous matrix/count bundle back in
-        (including shifts under PBC); omitted buffers are freshly allocated.
-        Not supported together with pair-output kwargs
-        (``return_distances`` / ``return_vectors`` / ``pair_fn``) or
-        ``strategy="tile"``.
-    inv_cell_buffer : jax.Array, shape (1, 3, 3), dtype matches positions, optional
-        Inverse cell matrix consumed by the wrap kernel when ``pbc`` is set and
-        ``wrap_positions=True``. Pass a precomputed value to avoid per-call
-        ``jnp.linalg.inv`` and to keep the buffer pointer stable for
-        ``graph_mode="warp"`` graph replay. If None, computed from ``cell`` each
-        call. Shape must be exactly ``(1, 3, 3)`` (matching the internally
-        normalized ``cell``).
-    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
-        Scratch buffer the wrap kernel writes into. Donate or capture in a
-        ``jax.jit`` closure to keep the pointer stable across
-        ``graph_mode="warp"`` calls. If None, allocated fresh each call.
-    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
-        Scratch buffer recording per-atom cell-image offsets from the wrap
-        kernel. Same graph-replay stability contract as
-        ``positions_wrapped_buffer``.
-    return_distances : bool, default False
-        If True, append per-pair scalar distances to the matrix-format return
-        tuple (after the topology arrays). Enables the autograd pair-geometry
-        path; not supported with ``rebuild_flags`` or ``strategy="tile"``.
-    return_vectors : bool, default False
-        If True, append per-pair displacement vectors to the matrix-format
-        return tuple. Same restrictions as ``return_distances``.
-    pair_fn : wp.Function, optional
-        Module-scope Warp pair potential evaluated inline during the neighbor
-        search. Requires ``pair_params`` and auto-allocates ``pair_energies`` /
-        ``pair_forces`` when those buffers are omitted. Not supported with
-        ``rebuild_flags`` or ``strategy="tile"``.
-    pair_params : jax.Array, shape (total_atoms, K), dtype matches positions, optional
-        Per-atom parameters forwarded to ``pair_fn``. Required when ``pair_fn``
-        is set.
-    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
-        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
-    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
-        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
+        Device-side selective-rebuild flag. When false, supplied topology
+        buffers are preserved. Not supported with compact partial rows,
+        pair outputs, or ``strategy="tile"``.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
     coo_capacity : int, optional
         Static COO capacity. With ``return_neighbor_list=True``, returns padded
         fixed-size COO arrays plus raw required row counts and a scalar
-        metadata-validity flag, and is compatible with ``jax.jit``. If omitted,
-        returns compact data-dependent COO arrays.
+        metadata-validity flag. If omitted, returns compact data-dependent COO.
+    return_distances : bool, default=False
+        Append differentiable per-pair distances. Uses the scalar path.
+    return_vectors : bool, default=False
+        Append differentiable per-pair displacement vectors. Uses the scalar
+        path.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped vector output for ``return_vectors=True`` or ``pair_fn``.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids. User buffers must be compact-row shaped, not full
+        atom-row shaped. Values must be in bounds; repeated rows are allowed.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated during the scalar neighbor
+        search. Requires ``pair_params`` and returns forward-only energy and
+        force outputs.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped energy output buffer for ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped force output buffer for ``pair_fn``.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -1626,23 +1892,39 @@ def naive_neighbor_list(
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
-        CPU device raises ``ValueError``. The tile path has no pair-output /
-        ``target_indices`` / selective (``rebuild_flags``) variant and is not
-        supported with ``graph_mode="warp"`` in this binding; requesting any
-        of those with ``strategy="tile"`` raises. ``"auto"`` preserves
-        the current JAX behavior (scalar dispatch) and never selects tile —
-        tile is opt-in in the JAX binding (unlike the torch single-system
-        binding, whose ``"auto"`` tiles by default). The tile and scalar
-        paths produce identical pair *sets* (per-row ordering may differ).
+        CPU device raises ``ValueError``. Tile supports topology-only compact
+        ``target_indices`` rows; geometry and pair outputs use the scalar path.
+        For concrete-placement single-system CUDA arrays, topology-only partial
+        ``"auto"`` selects tile at float64 ``N >= 256`` and float32
+        ``N >= 1024``. Under ``jax.jit``, ``positions`` may be a tracer whose
+        device placement is unavailable during Python tracing, so ``"auto"``
+        may conservatively remain scalar even above these thresholds; pass
+        ``strategy="tile"`` for deterministic tiled execution. Batched partial
+        auto remains scalar. Explicit tile rejects geometry and pair outputs.
+        ``target_indices`` with
+        ``graph_mode="warp"`` is rejected. Partial neighbor lists do not
+        support ``rebuild_flags``. For compact partial rows, when neither result
+        overflows capacity, scalar and tile stored ``(neighbor, shift)``
+        multisets agree, although ordering may differ.
+    inv_cell_buffer : jax.Array, shape (1, 3, 3), dtype matching positions, optional
+        Inverse-cell buffer for wrapped PBC calls. Default wrapped tile calls
+        treat this as inverse scratch and recompute from the current cell;
+        prepared fixed-cell tile calls reuse their cached inverse. Full-row
+        scalar topology calls and supported topology-only Warp replay calls use
+        the supplied precomputed inverse.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matching positions, optional
+        Scratch buffer written by the position-wrapping kernel.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom wrapping offsets.
     inv_cell, positions_wrapped, per_atom_cell_offsets : jax.Array, optional
-        Deprecated aliases for ``inv_cell_buffer``, ``positions_wrapped_buffer``,
-        and ``per_atom_cell_offsets_buffer``. Prefer the ``*_buffer`` names.
+        Deprecated aliases for the corresponding ``*_buffer`` arguments.
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"none"``
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
         ``"warp"`` uses fused ``jax_callable(..., graph_mode=JaxCallableGraphMode.WARP)``
         callbacks and is intended for ``jax.jit`` call sites that donate
-        reusable output buffers.
+        reusable output buffers. ``target_indices`` calls are rejected in this
+        mode; supported full-row graph behavior is unchanged.
 
     Returns
     -------
@@ -1654,15 +1936,13 @@ def naive_neighbor_list(
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
-        When ``coo_capacity`` is supplied, ``num_neighbors`` and scalar
-        ``metadata_valid`` follow the topology tuple. ``neighbor_ptr`` describes
-        stored entries. When metadata is valid, a row is complete exactly when
+        With ``coo_capacity``, raw ``num_neighbors`` and scalar
+        ``metadata_valid`` follow the topology tuple. When metadata is valid,
+        a row is complete exactly when
         ``neighbor_ptr[r + 1] - neighbor_ptr[r] == num_neighbors[r]``. When
         ``metadata_valid`` is false, every returned count is ``-1``. Requested
-        pair outputs then follow in this order: ``neighbor_distances`` when
-        ``return_distances=True``, then
-        ``neighbor_vectors`` when ``return_vectors=True``, then
-        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
+        distances, vectors, energies, and forces follow in that order when
+        enabled.
 
         **Components returned:**
 
@@ -1673,8 +1953,8 @@ def naive_neighbor_list(
               neighbors for atom ``r`` or ``target_indices[r]`` when partial rows
               are requested.
             * If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
@@ -1725,14 +2005,14 @@ def naive_neighbor_list(
 
     >>> import functools
     >>> import jax
-    >>> # Pre-allocate the wrap kernel's scratch buffers and inv_cell once.
+    >>> # Pre-allocate the wrap kernel's scratch buffers and inverse cell once.
     >>> # Capturing them in the closure (rather than donating) keeps their
     >>> # buffer pointers stable across calls, which is what Warp's graph
     >>> # cache keys on. Only the buffers naive_neighbor_list returns are
     >>> # donated, so the in/out arity of the jit'ed step matches.
-    >>> inv_cell = jnp.linalg.inv(cell)
-    >>> positions_wrapped = jnp.zeros_like(positions)
-    >>> per_atom_cell_offsets = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
+    >>> inv_cell_buffer = jnp.linalg.inv(cell)
+    >>> positions_wrapped_buffer = jnp.zeros_like(positions)
+    >>> per_atom_cell_offsets_buffer = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
     >>> shift_range, num_shifts_per_system, max_shifts_per_system = (
     ...     compute_naive_num_shifts(cell, cutoff, pbc)
     ... )
@@ -1746,9 +2026,9 @@ def naive_neighbor_list(
     ...         neighbor_matrix=neighbor_matrix,
     ...         num_neighbors=num_neighbors,
     ...         neighbor_matrix_shifts=shifts,
-    ...         inv_cell=inv_cell,
-    ...         positions_wrapped=positions_wrapped,
-    ...         per_atom_cell_offsets=per_atom_cell_offsets,
+    ...         inv_cell_buffer=inv_cell_buffer,
+    ...         positions_wrapped_buffer=positions_wrapped_buffer,
+    ...         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
     ...         shift_range_per_dimension=shift_range,
     ...         num_shifts_per_system=num_shifts_per_system,
     ...         max_shifts_per_system=max_shifts_per_system,
@@ -1766,28 +2046,30 @@ def naive_neighbor_list(
     For lower host-side launch overhead on supported GPUs, setting
     ``XLA_FLAGS=--xla_gpu_enable_command_buffer=CUSTOM_CALL`` before
     importing JAX can improve the steady-state ``graph_mode="none"`` and
-    ``graph_mode="warp"`` paths. Advanced users can bound each callable's graph
-    cache with the ``graph_cache_max`` argument to ``warp.jax_callable(...)``.
+    ``graph_mode="warp"`` paths. Advanced users can bound each callable's
+    graph cache with the ``graph_cache_max`` argument to
+    ``warp.jax_callable(...)``.
 
-    For ``graph_mode="warp"`` to actually replay (rather than re-capture
-    every call), every in/out buffer pointer the fused callable sees must
-    be stable across calls. The output buffers (``neighbor_matrix``,
-    ``num_neighbors``, ``neighbor_matrix_shifts`` when applicable) must be
-    user-provided **and** included in ``donate_argnums`` of the enclosing
-    ``jax.jit`` so they round-trip across calls. On the wrapped path
-    (``pbc`` provided + ``wrap_positions=True``), ``inv_cell``,
-    ``positions_wrapped`` and ``per_atom_cell_offsets`` must also be passed
-    in with stable buffer pointers; the simplest way is to pre-allocate them
-    once and capture them in the jit'ed closure (see the example above).
-    For every ``jax.jit`` PBC call, also precompute
+    For ``graph_mode="warp"`` to replay rather than recapture every call,
+    every input and output buffer pointer seen by the fused callable must stay
+    stable. User-provided output buffers (``neighbor_matrix``,
+    ``num_neighbors``, and ``neighbor_matrix_shifts`` when applicable) must be
+    included in ``donate_argnums`` of the enclosing ``jax.jit`` so they
+    round-trip between calls. Wrapped PBC also requires stable
+    ``inv_cell_buffer``, ``positions_wrapped_buffer``, and
+    ``per_atom_cell_offsets_buffer`` arrays; preallocate them once and capture
+    them in the jit closure. For every ``jax.jit`` PBC call, precompute
     ``shift_range_per_dimension``, ``num_shifts_per_system``, and
-    ``max_shifts_per_system`` via :func:`compute_naive_num_shifts` outside
-    the jit boundary. Eager PBC calls may omit those kwargs.
-    Letting any of these allocate fresh inside ``naive_neighbor_list``
-    prevents stable graph replay and adds repeated capture overhead.
+    ``max_shifts_per_system`` via
+    :func:`compute_naive_num_shifts` outside the compiled boundary. Eager PBC
+    calls may omit these values. Cutoff, ``half_fill``, and PBC shift metadata
+    are statically specialized. Scratch buffers allocated inside this function
+    prevent stable graph replay and add repeated capture overhead.
     """
-    graph_mode = _validate_graph_mode(graph_mode)
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
 
+    graph_mode = _validate_graph_mode(graph_mode)
     coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
 
     if strategy not in {"auto", "scalar", "tile"}:
@@ -1816,25 +2098,68 @@ def naive_neighbor_list(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
+    if target_indices is not None and (
+        target_indices.ndim != 1 or target_indices.dtype != jnp.int32
+    ):
+        raise ValueError("target_indices must be a rank-one int32 array.")
+    if target_indices is not None and not isinstance(target_indices, jax.core.Tracer):
+        concrete_target_indices = np.asarray(target_indices)
+        if np.any(concrete_target_indices < 0) or np.any(
+            concrete_target_indices >= positions.shape[0]
+        ):
+            raise ValueError("target_indices must contain in-bounds atom indices.")
+    if target_indices is not None and graph_mode == "warp":
+        raise ValueError("graph_mode='warp' does not support target_indices.")
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError(
+            "Partial neighbor lists do not support rebuild_flags",
+        )
+
+    real_geometry_or_pair_outputs = (
+        bool(return_distances)
+        or bool(return_vectors)
+        or neighbor_vectors is not None
+        or neighbor_distances is not None
+        or pair_fn is not None
+    )
+    compact_topology_partial = (
+        target_indices is not None and not real_geometry_or_pair_outputs
+    )
+    partial_tile_selected = False
+    if compact_topology_partial:
+        strategy = _resolve_naive_strategy(
+            strategy,
+            _NaiveWorkload(
+                device_kind=_jax_array_device_kind(positions),
+                wp_dtype=(wp.float64 if positions.dtype == jnp.float64 else wp.float32),
+                num_atoms=int(positions.shape[0]),
+                num_systems=1,
+                partial=True,
+                batched=False,
+                pbc=pbc is not None,
+                wrap_positions=wrap_positions,
+                geometry_outputs=False,
+            ),
+        )
+        partial_tile_selected = strategy == "tile"
+
     if strategy == "tile":
-        # The tile-cooperative kernel is CUDA-only and has no pair-output,
-        # selective (rebuild_flags), or CUDA-graph (graph_mode="warp") variant.
-        # Gate here, before any launch, mirroring the warp launcher CPU guard.
-        if _is_jax_cpu_array(positions):
-            raise ValueError(
-                "strategy='tile' requires CUDA; the tile-cooperative "
-                "naive kernel cannot run on a CPU device (Warp forces "
-                "block_dim=1). Use strategy='scalar' or 'auto' on CPU.",
-            )
-        if bool(return_distances) or bool(return_vectors) or pair_fn is not None:
+        # The tile-cooperative kernel is CUDA-only and has no geometry/pair_fn,
+        # selective (rebuild_flags), or full-row CUDA-graph variant. Compact
+        # topology-only rows launch the tiled kernel directly.
+        device_kind = _jax_array_device_kind(positions)
+        if device_kind == "cpu":
+            _require_cuda_tile_device("cpu")
+        if (
+            bool(return_distances)
+            or bool(return_vectors)
+            or neighbor_vectors is not None
+            or neighbor_distances is not None
+            or pair_fn is not None
+        ):
             raise NotImplementedError(
                 "strategy='tile' has no pair-output (return_distances / "
                 "return_vectors / pair_fn) variant; use strategy='scalar'.",
-            )
-        if target_indices is not None:
-            raise NotImplementedError(
-                "strategy='tile' has no target_indices (partial "
-                "neighbor-list) variant; use strategy='scalar'.",
             )
         if rebuild_flags is not None:
             raise NotImplementedError(
@@ -1843,18 +2168,13 @@ def naive_neighbor_list(
             )
         if graph_mode != "none":
             raise NotImplementedError(
-                "strategy='tile' is only supported with "
-                "graph_mode='none'; CUDA-graph capture of the tile kernel is a "
-                "follow-up.",
+                "strategy='tile' does not support graph_mode='warp'.",
             )
 
-    has_pair_outputs = (
-        bool(return_distances)
-        or bool(return_vectors)
-        or pair_fn is not None
-        or target_indices is not None
+    uses_compact_pair_kernel = (
+        real_geometry_or_pair_outputs or target_indices is not None
     )
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         if graph_mode != "none" or rebuild_flags is not None:
             raise NotImplementedError(
                 "Pair outputs require graph_mode='none' and no rebuild_flags.",
@@ -1901,6 +2221,89 @@ def naive_neighbor_list(
             (num_rows, int(max_neighbors), 3),
             positions.dtype,
         )
+        if target_indices is not None and num_rows == 0:
+            matrix_out = (
+                jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
+                if neighbor_matrix is None
+                else neighbor_matrix.at[:].set(jnp.int32(fill_value))
+            )
+            counts_out = (
+                jnp.zeros(num_rows, dtype=jnp.int32)
+                if num_neighbors is None
+                else num_neighbors.at[:].set(jnp.int32(0))
+            )
+            distances_out = (
+                jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+                if neighbor_distances is None
+                else neighbor_distances.at[:].set(
+                    jnp.asarray(0.0, dtype=positions.dtype)
+                )
+            )
+            vectors_out = (
+                jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
+                if neighbor_vectors is None
+                else neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+            )
+            if pair_fn is not None:
+                energies_out = jnp.zeros(
+                    (num_rows, max_neighbors),
+                    dtype=positions.dtype,
+                )
+                forces_out = jnp.zeros(
+                    (num_rows, max_neighbors, 3),
+                    dtype=positions.dtype,
+                )
+            shifts_out = None
+            if pbc is not None:
+                shifts_out = (
+                    jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
+                    if neighbor_matrix_shifts is None
+                    else neighbor_matrix_shifts.at[:].set(jnp.int32(0))
+                )
+
+            if return_neighbor_list:
+                if coo_capacity is None:
+                    base = (
+                        jnp.zeros((2, 0), dtype=jnp.int32),
+                        jnp.zeros((num_rows + 1,), dtype=jnp.int32),
+                    )
+                    if shifts_out is not None:
+                        base = (*base, jnp.zeros((0, 3), dtype=jnp.int32))
+                    output_pairs = 0
+                else:
+                    base, _ = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        matrix_out,
+                        counts_out,
+                        capacity=coo_capacity,
+                        neighbor_shift_matrix=shifts_out,
+                        fill_value=int(fill_value),
+                        metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                    )
+                    output_pairs = int(coo_capacity)
+                tail: list[jax.Array] = []
+                if return_distances:
+                    tail.append(jnp.zeros((output_pairs,), dtype=positions.dtype))
+                if return_vectors:
+                    tail.append(jnp.zeros((output_pairs, 3), dtype=positions.dtype))
+                if pair_fn is not None:
+                    tail.extend(
+                        (
+                            jnp.zeros((output_pairs,), dtype=positions.dtype),
+                            jnp.zeros((output_pairs, 3), dtype=positions.dtype),
+                        ),
+                    )
+                return (*base, *tail)
+
+            tail = []
+            if return_distances:
+                tail.append(distances_out)
+            if return_vectors:
+                tail.append(vectors_out)
+            if pair_fn is not None:
+                tail.extend((energies_out, forces_out))
+            if shifts_out is not None:
+                return matrix_out, counts_out, shifts_out, *tail
+            return matrix_out, counts_out, *tail
         if cell is not None and cell.ndim == 2:
             cell_norm = cell[jnp.newaxis, :, :]
         else:
@@ -1953,51 +2356,80 @@ def naive_neighbor_list(
             "pair_params": pair_params,
             "target_indices": target_indices,
             "half_fill": bool(half_fill),
+            "strategy": "tile" if partial_tile_selected else "scalar",
             "wrap_positions": bool(wrap_positions),
+            "graph_mode": graph_mode,
             "_fixed_cell_geometry": _fixed_cell_geometry,
         }
-        route_out = _route_pair_outputs(
-            positions,
-            cell_norm,
-            _naive_pair_outputs_forward,
-            forward_kwargs,
-        )
-        # ``extra_outputs`` carries the per-pair energy/force tail only when
-        # ``pair_fn`` is set, so the route return is 5 elements (geometry only) or 7.
-        if pair_fn is not None:
-            (
-                distances_out,
-                vectors_out,
-                nm_out,
-                nn_out,
-                shifts_out,
-                pe_out,
-                pf_out,
-            ) = route_out
+        if compact_topology_partial:
+            # Do not reconstruct the full compact ``(rows, max_neighbors)``
+            # geometry only to discard it. This keeps topology-only partial
+            # timing focused on the Warp search/callback and avoids unnecessary
+            # gathers, norms, and materialized vector/distance arrays.
+            compact_forward_kwargs = forward_kwargs
+            if partial_tile_selected and pbc_norm is not None and wrap_positions:
+                tile_inv_cell = resolve_buffer_alias(
+                    "inv_cell_buffer",
+                    inv_cell_buffer,
+                    "inv_cell",
+                    inv_cell,
+                )
+                if (
+                    _fixed_cell_geometry is not None
+                    and _fixed_cell_geometry[0] is not None
+                ):
+                    tile_inv_cell = _fixed_cell_geometry[0]
+                tile_positions_wrapped = resolve_buffer_alias(
+                    "positions_wrapped_buffer",
+                    positions_wrapped_buffer,
+                    "positions_wrapped",
+                    positions_wrapped,
+                )
+                tile_per_atom_cell_offsets = resolve_buffer_alias(
+                    "per_atom_cell_offsets_buffer",
+                    per_atom_cell_offsets_buffer,
+                    "per_atom_cell_offsets",
+                    per_atom_cell_offsets,
+                )
+                compact_forward_kwargs = {
+                    **forward_kwargs,
+                    "inv_cell": tile_inv_cell,
+                    "positions_wrapped": tile_positions_wrapped,
+                    "per_atom_cell_offsets": tile_per_atom_cell_offsets,
+                }
+            forward_out = _naive_pair_outputs_forward(
+                positions,
+                cell_norm,
+                **compact_forward_kwargs,
+            )
+            nm_out, nn_out, shifts_out = forward_out.extra_outputs
+            distances_out = vectors_out = pe_out = pf_out = None
         else:
-            distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
-            pe_out = pf_out = None
+            route_out = _route_pair_outputs(
+                positions,
+                cell_norm,
+                _naive_pair_outputs_forward,
+                forward_kwargs,
+            )
+            # ``extra_outputs`` carries the per-pair energy/force tail only when
+            # ``pair_fn`` is set, so the route return is 5 elements (geometry
+            # only) or 7.
+            if pair_fn is not None:
+                (
+                    distances_out,
+                    vectors_out,
+                    nm_out,
+                    nn_out,
+                    shifts_out,
+                    pe_out,
+                    pf_out,
+                ) = route_out
+            else:
+                distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+                pe_out = pf_out = None
         if return_neighbor_list:
             active = nm_out != int(fill_value)
-            if coo_capacity is not None and pbc is not None:
-                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                    nm_out,
-                    nn_out,
-                    capacity=coo_capacity,
-                    neighbor_shift_matrix=shifts_out,
-                    fill_value=int(fill_value),
-                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
-                )
-            elif coo_capacity is not None:
-                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                    nm_out,
-                    nn_out,
-                    capacity=coo_capacity,
-                    fill_value=int(fill_value),
-                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
-                )
-            elif pbc is not None:
-                plan = None
+            if coo_capacity is None and pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -2005,19 +2437,34 @@ def naive_neighbor_list(
                     fill_value=int(fill_value),
                 )
                 base = (nl, nptr, nl_shifts)
-            else:
                 plan = None
+            elif coo_capacity is None:
                 nl, nptr = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
                     fill_value=int(fill_value),
                 )
                 base = (nl, nptr)
+                plan = None
+            else:
+                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    neighbor_shift_matrix=shifts_out if pbc is not None else None,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                )
             # Repack per-pair geometry (and pair_fn outputs) into COO order aligned
             # with ``nl``.  Eager-only, like the index conversion.
-            distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out, capacity=coo_capacity, plan=plan
-            )
+            if distances_out is not None or vectors_out is not None:
+                distances_out, vectors_out = coo_pack_pair_geometry(
+                    active,
+                    distances_out,
+                    vectors_out,
+                    capacity=coo_capacity,
+                    plan=plan,
+                )
             if pair_fn is not None:
                 pe_out, pf_out = coo_pack_pair_geometry(
                     active, pe_out, pf_out, capacity=coo_capacity, plan=plan
@@ -2074,37 +2521,37 @@ def naive_neighbor_list(
     if inv_cell is not None:
         if inv_cell.shape != (1, 3, 3):
             raise ValueError(
-                f"inv_cell must have shape (1, 3, 3) to match the internal "
+                f"inv_cell_buffer must have shape (1, 3, 3) to match the internal "
                 f"cell layout; got {inv_cell.shape}. A mismatched shape "
                 f"silently breaks graph_mode='warp' cache replay."
             )
         if inv_cell.dtype != positions.dtype:
             raise ValueError(
-                f"inv_cell dtype must match positions dtype "
+                f"inv_cell_buffer dtype must match positions dtype "
                 f"({positions.dtype}); got {inv_cell.dtype}."
             )
     if positions_wrapped is not None:
         expected_pw_shape = (positions.shape[0], 3)
         if positions_wrapped.shape != expected_pw_shape:
             raise ValueError(
-                f"positions_wrapped must have shape {expected_pw_shape}; "
+                f"positions_wrapped_buffer must have shape {expected_pw_shape}; "
                 f"got {positions_wrapped.shape}."
             )
         if positions_wrapped.dtype != positions.dtype:
             raise ValueError(
-                f"positions_wrapped dtype must match positions dtype "
+                f"positions_wrapped_buffer dtype must match positions dtype "
                 f"({positions.dtype}); got {positions_wrapped.dtype}."
             )
     if per_atom_cell_offsets is not None:
         expected_off_shape = (positions.shape[0], 3)
         if per_atom_cell_offsets.shape != expected_off_shape:
             raise ValueError(
-                f"per_atom_cell_offsets must have shape {expected_off_shape}; "
+                f"per_atom_cell_offsets_buffer must have shape {expected_off_shape}; "
                 f"got {per_atom_cell_offsets.shape}."
             )
         if per_atom_cell_offsets.dtype != jnp.int32:
             raise ValueError(
-                f"per_atom_cell_offsets dtype must be int32; "
+                f"per_atom_cell_offsets_buffer dtype must be int32; "
                 f"got {per_atom_cell_offsets.dtype}."
             )
 
@@ -2149,44 +2596,6 @@ def naive_neighbor_list(
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
 
-    if cutoff <= 0:
-        if rebuild_flags is None and graph_mode == "warp":
-            neighbor_matrix = neighbor_matrix.at[:].set(fill_value)
-            num_neighbors = num_neighbors.at[:].set(jnp.int32(0))
-            if pbc is not None:
-                neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
-        if return_neighbor_list:
-            output_pairs = 0 if coo_capacity is None else int(coo_capacity)
-            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
-            metadata_valid = jnp.ones((), dtype=jnp.bool_)
-            if pbc is not None:
-                base = (
-                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
-                    jnp.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=jnp.int32,
-                    ),
-                    jnp.zeros((output_pairs, 3), dtype=jnp.int32),
-                )
-            else:
-                base = (
-                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
-                    jnp.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=jnp.int32,
-                    ),
-                )
-            return (
-                (*base, recovery_counts, metadata_valid)
-                if coo_capacity is not None
-                else base
-            )
-        else:
-            if pbc is not None:
-                return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
-            else:
-                return neighbor_matrix, num_neighbors
-
     # Select wrap kernel by dtype; direct naive registrations resolve at launch.
     if positions.dtype == jnp.float64:
         _jax_wrap_single = _jax_wrap_positions_single_f64
@@ -2228,19 +2637,18 @@ def naive_neighbor_list(
     ) = _jax_scalar_sentinels(positions.dtype)
 
     if strategy == "tile":
-        # CUDA-only tile-cooperative path (eager / graph_mode="none" only).
-        # Output buffers were already pre-filled above; the callable bodies
-        # call the inner warp launchers with strategy="tile" and rely on
-        # the host-static cutoff / half_fill / num_shifts scalars (no new sync).
+        # Eager tile calls use pre-filled topology outputs and static launch scalars.
         cutoff_static = float(cutoff)
         if pbc is None:
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[(False, False, positions.dtype)]
             neighbor_matrix, num_neighbors = tile_callable(
                 positions,
+                empty_target_indices,
                 neighbor_matrix,
                 num_neighbors,
                 cutoff_static,
                 half_fill,
+                False,
             )
         else:
             if cell.dtype != positions.dtype:
@@ -2249,33 +2657,36 @@ def naive_neighbor_list(
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
                 (True, bool(wrap_positions), positions.dtype)
             ]
-            reuse_inv_cell = (
-                wrap_positions
-                and _fixed_cell_geometry is not None
-                and _fixed_cell_geometry[0] is not None
-            )
-            pbc_arg = (
-                (pbc, _fixed_cell_geometry[0] if reuse_inv_cell else empty_cell)
-                if wrap_positions
-                else ()
-            )
+            pbc_arg: tuple[jax.Array, ...] = ()
+            if wrap_positions:
+                inverse, positions_wrapped_work, offsets_work = (
+                    _prepare_wrapped_tile_operands(
+                        positions,
+                        cell,
+                        inv_cell_buffer=inv_cell,
+                        positions_wrapped_buffer=positions_wrapped,
+                        per_atom_cell_offsets_buffer=per_atom_cell_offsets,
+                        fixed_cell_geometry=_fixed_cell_geometry,
+                    )
+                )
+                pbc_arg = (pbc, inverse)
             tile_args = (
                 positions,
+                empty_target_indices,
                 cell,
                 *pbc_arg,
                 shift_range_per_dimension,
                 neighbor_matrix,
                 neighbor_matrix_shifts,
                 num_neighbors,
+                *((positions_wrapped_work, offsets_work) if wrap_positions else ()),
                 cutoff_static,
                 num_shifts,
                 half_fill,
+                False,
             )
-            if wrap_positions:
-                tile_args += (reuse_inv_cell,)
-            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
-                *tile_args,
-            )
+            tile_outs = tile_callable(*tile_args)
+            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_outs[:3]
     elif graph_mode == "warp":
         has_pbc = pbc is not None
         is_selective = rebuild_flags is not None

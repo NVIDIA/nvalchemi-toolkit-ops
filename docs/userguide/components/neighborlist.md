@@ -8,6 +8,12 @@ Neighbor lists enumerate atom pairs within a cutoff distance. ALCHEMI Toolkit-Op
 provides GPU-accelerated neighbor list algorithms via
 [NVIDIA Warp](https://nvidia.github.io/warp/) with bindings for both PyTorch and JAX.
 
+The `naive` and `batch_naive` methods require a positive cutoff. Eager calls
+with zero or negative cutoffs raise `ValueError` before output buffers are
+allocated or modified. Under `torch.compile(fullgraph=True)`, an invalid
+constant cutoff is rejected during tracing; Dynamo may wrap the `ValueError`
+in a compilation exception.
+
 ```{tip}
 Start with the unified `neighbor_list` function
 ({func}`~nvalchemiops.torch.neighbors.neighbor_list` for PyTorch,
@@ -422,19 +428,18 @@ non-periodic or non-float32 input) is omitted from the result entirely rather
 than returned with a large cost.
 
 ```{note}
-The estimate is a hardware-independent model of *algorithmic* work; it does not
-measure your GPU.  The true crossover between strategies shifts with the device
-(memory bandwidth, occupancy, launch overhead), so on a given machine the
-predicted best strategy may be marginally slower than a close runner-up.  The
-ranking is reliable for the large gaps that matter (avoiding an $O(N^2)$ blow-up
-on a big system); for cases where the top costs are within a small factor,
-benchmark the top few candidates on your target hardware and pass the winner as
-`method=` explicitly.  Two calibration constants are env-overridable:
-`NVALCHEMI_NEIGHLIST_CELL_SHELL` (default `27.0`, the cell-list neighbor-shell work
-multiplier — roughly the `3x3x3` stencil of cells scanned per atom) and
-`NVALCHEMI_NEIGHLIST_CELL_SETUP` (default `4096.0`, the cell-list build/setup cost
-floor).  Raising `CELL_SETUP` biases the model toward `naive` for smaller systems;
-lowering it favors `cell_list`.
+The estimate models algorithmic work with calibrated setup and launch costs; it
+does not measure execution time. Float64 naive estimates also account for the
+device's FP64 throughput, with an override through
+`NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`. Actual strategy crossovers depend on the
+device and workload. For close predicted costs, benchmark the candidates on
+your target hardware and pass the winner as `method=` explicitly.
+
+The cell-list calibration constants are also env-overridable:
+`NVALCHEMI_NEIGHLIST_CELL_SHELL` (default `27.0`, the neighbor-shell work
+multiplier) and `NVALCHEMI_NEIGHLIST_CELL_SETUP` (default `1192450.0`, the
+build/setup cost floor). Raising `CELL_SETUP` favors naive execution for smaller
+systems; lowering it favors cell-list execution.
 ```
 
 ### Available Methods
@@ -1291,6 +1296,25 @@ automatic choices. Explicit JAX `method` and `strategy` values pin the route
 and an unsupported combination raises. Inspect `state.method` and
 `state.strategy` after preparation; results follow that resolved route's tuple.
 
+##### Partial naive execution
+
+Both backends support CUDA topology-only partial naive execution with fixed
+`target_indices`, including batched inputs. Prepare with `method="naive"` and
+`strategy="tile"` to pin the tiled route. Matrix rows and COO source IDs retain
+the compact target-row order, including repeated targets.
+
+Partial tile supports nonperiodic inputs and wrapped or prewrapped PBC. Prepared
+JAX execution supports standard `jax.jit` and threads successor state; partial
+Warp graph replay remains unsupported. Geometry and pair callbacks require the
+scalar partial route. Explicit partial tile with those outputs or selective
+rebuild raises; dual-cutoff and cluster-tile routes do not support partial rows.
+
+For prepared naive execution, explicitly choosing the naive family with
+`strategy="auto"` resolves to scalar. With `method=None`, preparation uses the
+calibrated cost selector, including the compact targets, and may choose tile.
+The resolved method and strategy remain fixed during reuse. Direct naive calls
+retain their separate automatic threshold policy.
+
 Prepared execution wraps existing routes rather than adding missing algorithms.
 A configuration therefore has one of three outcomes:
 
@@ -1702,8 +1726,9 @@ neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
 ```{note}
 In JAX, `half_fill` and `fill_value` are supported by `naive`, `batch_naive`,
 `cell_list`, and `batch_cell_list` (the cell-list paths use `graph_mode="none"`
-for `half_fill`).  The `naive` tiled kernel (`strategy="tile"`) is
-CUDA-only and opt-in; JAX `naive` auto-selection still uses the scalar kernel.
+for `half_fill`). The topology-only `naive` tiled kernel
+(`strategy="tile"`) is CUDA-only. Explicit tile supports batched compact rows;
+batched partial `auto` remains scalar, and geometry/pair outputs use scalar.
 ```
 
 :::
@@ -2155,8 +2180,9 @@ cutoff1, cutoff2 = 3.0, 6.0
 
 Pass `target_indices` (an `int32` array of atom indices) to build neighbors only for a
 subset of *central* atoms. Output rows are **compact**: there are `num_targets` rows
-and row `r` corresponds to atom `target_indices[r]`. In COO output the source index
-`nl[0]` is the compact row in `[0, num_targets)` (map it back through `target_indices`):
+and row `r` corresponds to atom `target_indices[r]`. In COO output the central-row
+index `nl[0]` is the compact row in `[0, num_targets)` (map it back through
+`target_indices`):
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -2173,6 +2199,42 @@ PyTorch, and JAX, including low-level JAX cell-list query wrappers; `cluster_til
 does not support `target_indices`. On JAX, `cell_list` `target_indices` runs through
 the `atom_centric` strategy (`pair_centric` plus `target_indices` is rejected;
 identical results are available via `atom_centric`).
+
+For the state-free `neighbor_list(...)` API, use `method="naive_tile"` to
+request tiled partial rows or `method="naive"` to use the direct naive family’s
+automatic strategy. `method=None` uses calibrated method selection. The
+`strategy` policy below applies to direct naive calls; prepared route resolution
+is described in {ref}`prepared_neighbor_lists`.
+
+For topology-only partial lists through the direct naive APIs, `strategy="tile"`
+is CUDA-only and is available in both PyTorch and JAX for no-PBC, wrapped PBC,
+and prewrapped PBC.
+For single-system CUDA calls with concrete placement, `strategy="auto"` selects
+tile at float64 `N >= 256` and float32 `N >= 1024`. Torch and the Warp
+launchers also use the `N >= 1024` threshold for float16; JAX supports float32
+and float64. Under `jax.jit`, `positions` may be a tracer whose device
+placement is unavailable during Python tracing, so `strategy="auto"` may
+conservatively remain scalar even above these thresholds; pass
+`strategy="tile"` for deterministic tiled execution. CPU auto is scalar and
+explicit tile rejects CPU.
+Batched partial auto is always scalar, while explicit tile supports batched
+compact rows. Geometry buffers, distances, vectors, and pair-function outputs
+remain scalar-only, and explicit tile rejects those requests. `target_indices`
+with `graph_mode="warp"` is rejected; supported full-row and cell-list graph
+modes are unchanged.
+
+Scalar and tiled rows can differ in order. When neither result overflows its
+output capacity, their stored `(neighbor, periodic_shift)` multisets agree for
+each compact row. Repeated and empty valid targets are supported. Eager JAX and
+Torch calls reject negative and out-of-bounds target indices. Under `jax.jit`
+and `torch.compile`, callers must prevalidate target indices; invalid rows are
+memory-safe and produce zero counts without stored neighbors. Naive partial
+lists do not support `rebuild_flags`; this restriction does not apply to
+cell-list APIs.
+
+For batched PBC naive lists, `max_atoms_per_system` is used only for full-row
+launch sizing. Every compact partial path, including geometry and pair-output
+paths, ignores it and does not require the caller to provide it.
 
 ### Per-Pair Distances and Vectors
 
@@ -2284,7 +2346,7 @@ the differentiable-geometry path — a traced (jit'd) cutoff is not yet supporte
 On JAX, `naive` / `batch_naive` and `cell_list` / `batch_cell_list` support
 `target_indices` (partial neighbor lists) combined with pair outputs: the
 compact output has `num_targets` rows (row `r` → atom `target_indices[r]`), and
-in COO mode the source index `nl[0]` is the compact row in `[0, num_targets)`
+in COO mode the central-row index `nl[0]` is the compact row in `[0, num_targets)`
 (mapped back via `target_indices`), matching the Torch contract.
 
 For PyTorch `torch.compile(fullgraph=True)`, pass a pre-specialized wrapper from

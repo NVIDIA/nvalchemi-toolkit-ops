@@ -156,6 +156,18 @@ class TestReportNeighborListCosts:
                 optional_outputs=["target_indices"],
             )
 
+    def test_target_indices_exclude_unsupported_pair_centric_method(self):
+        """Every reported JAX partial strategy is executable by the binding."""
+        targets = jnp.arange(256, dtype=jnp.int32)
+        report = _report(
+            [1024],
+            [8000.0],
+            cutoff=5.0,
+            target_indices=targets,
+        )
+
+        assert "cell_list_pair_centric" not in _names(report)
+
     def test_cpu_fallback_returns_sorted_finite_costs(self):
         """JAX report on host arrays returns a sorted finite cost list."""
         rep = _report([20], [8000.0], cutoff=5.0)
