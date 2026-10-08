@@ -4,9 +4,9 @@
 
 # User Guide
 
-Welcome to the ALCHEMI Toolkit-Ops user guide: this side of the documentation
-is to provide a high-level and conceptual understanding of the philosophy
-and supported features in `nvalchemiops`.
+Welcome to the ALCHEMI Toolkit-Ops user guide. Start with installation below,
+then choose a component to learn its features, make your first call, and find
+guidance for your workload.
 
 ## Quick Start
 
@@ -46,105 +46,32 @@ PyTorch. See the [CUDA 13 installation notes](about/install.md#cuda-13-installat
 before proceeding.
 ```
 
-Make sure it is importable:
-
-```bash
-$ python -c "import nvalchemiops; print(nvalchemiops.__version__)"
-```
-
-Try out some of the API; a good place to start is to compute
-the neighbor matrix (or equivalently, list):
-
-::::{tab-set}
-
-:::{tab-item} PyTorch
-:sync: torch
-
-```python
-import torch
-from nvalchemiops.torch.neighbors import cell_list
-
-# Create atomic system data
-positions = torch.randn(1000, 3, device='cuda') * 25.0  # 1000 atoms
-cell = torch.eye(3, device='cuda').unsqueeze(0) * 25.0  # 25x25x25 unit cell
-pbc = torch.tensor([True, True, True], device='cuda')  # PBC
-cutoff = 2.5  # Cutoff radius in Angstroms
-
-# Compute neighbor matrix (default format)
-neighbor_matrix, num_neighbors, shifts = cell_list(
-    positions, cutoff, cell, pbc
-)
-
-# Or get neighbor list (COO format) for graph neural networks
-neighbor_list, neighbor_ptr, shifts = cell_list(
-    positions, cutoff, cell, pbc, return_neighbor_list=True
-)
-source_indices = neighbor_list[0]
-target_indices = neighbor_list[1]
-
-print(f"Found {neighbor_list.shape[1]} neighbor pairs")
-# neighbor_ptr is a CSR-style pointer; compute num_neighbors from it
-num_neighbors = neighbor_ptr[1:] - neighbor_ptr[:-1]
-print(f"Average neighbors per atom: {num_neighbors.float().mean():.1f}")
-```
-
-:::
-
-:::{tab-item} JAX
-:sync: jax
-
-```python
-import jax
-import jax.numpy as jnp
-from nvalchemiops.jax.neighbors import cell_list
-
-# Create atomic system data
-positions = jnp.array(jax.random.normal(jax.random.key(0), (1000, 3))) * 25.0
-cell = jnp.eye(3).reshape(1, 3, 3) * 25.0  # 25x25x25 unit cell
-pbc = jnp.array([True, True, True])  # PBC
-cutoff = 2.5  # Cutoff radius in Angstroms
-
-# Compute neighbor matrix (default format)
-neighbor_matrix, num_neighbors, shifts = cell_list(
-    positions, cutoff, cell, pbc
-)
-
-# Or get neighbor list (COO format) for graph neural networks
-neighbor_list, neighbor_ptr, shifts = cell_list(
-    positions, cutoff, cell, pbc, return_neighbor_list=True
-)
-source_indices = neighbor_list[0]
-target_indices = neighbor_list[1]
-
-print(f"Found {neighbor_list.shape[1]} neighbor pairs")
-# neighbor_ptr is a CSR-style pointer; compute num_neighbors from it
-num_neighbors = neighbor_ptr[1:] - neighbor_ptr[:-1]
-print(f"Average neighbors per atom: {jnp.mean(num_neighbors.astype(jnp.float32)):.1f}")
-```
-
-:::
-
-::::
-
-See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
-[JAX API Reference](../modules/jax/neighbors.rst) for the full API documentation.
-
 ## About
 
 - [Install](about/install)
 - [Introduction](about/intro)
 - [Conventions](about/conventions)
 - [Performance Guide](about/performance)
+- [Migration Guide](about/migration)
+- [FAQ](about/faq)
 
 ## Core Components
 
-- [NeighborLists](components/neighborlist)
-- [Electrostatics](components/electrostatics)
-- [Dispersion Corrections](components/dispersion)
-- [Dynamics](components/dynamics)
-- [Segment Operations](components/segment_ops)
+- [Neighbor Lists](components/neighborlist) — find nearby atom pairs and use
+  their distances, vectors, or pair-function outputs.
+- [Electrostatics](components/electrostatics) — calculate Coulomb interactions
+  with direct, Ewald, PME, or DSF methods.
+- [Dispersion Corrections](components/dispersion) — add two-body DFT-D3(BJ)
+  dispersion with environment-dependent coefficients.
+- [Dynamics](components/dynamics) — integrate molecular dynamics trajectories
+  and relax structures with [geometry optimization](components/dynamics.md#geometry-optimization).
+- [Segment Operations](components/segment_ops) — reduce and transform data
+  grouped by system or segment.
 
-## Advanced Usage
+## Developer Resources
+
+- [Contributing](about/contributing)
+- [Kernel Style Guide](about/kernel-style-guide)
 
 ```{toctree}
 :caption: About
@@ -162,7 +89,7 @@ about/faq
 
 ```{toctree}
 :caption: Core Components
-:maxdepth: 1
+:maxdepth: 2
 :hidden:
 
 components/neighborlist
@@ -173,7 +100,7 @@ components/segment_ops
 ```
 
 ```{toctree}
-:caption: Advanced Usage
+:caption: Developer Resources
 :maxdepth: 1
 :hidden:
 
