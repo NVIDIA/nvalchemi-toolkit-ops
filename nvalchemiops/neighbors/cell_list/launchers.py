@@ -51,6 +51,9 @@ from nvalchemiops.neighbors.output_args import (
     _prepare_pair_output_args,
 )
 
+# Existing batched query width, shared with the grid work estimate.
+_PAIR_CENTRIC_BLOCK_DIM = 64
+
 __all__ = [
     "PAIR_CENTRIC_MAX_LINEAR_LAUNCH",
     "batch_build_cell_list",
@@ -154,6 +157,7 @@ def build_cell_list(
     wp_dtype: type,
     device: str,
     min_cells_per_dimension: int = 4,
+    grid_is_prepared: bool = False,
     *,
     fixed_cell: bool = False,
     inv_cell: wp.array | None = None,
@@ -193,6 +197,8 @@ def build_cell_list(
         Warp device string (e.g., 'cuda:0', 'cpu').
     min_cells_per_dimension : int, default 4
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
+    grid_is_prepared : bool, default False
+        Use the dimensions already stored in ``cells_per_dimension``.
     fixed_cell : bool, default False
         Reuse caller-prepared grid geometry and the read-only inverse cell.
     inv_cell : wp.array, shape (1,), dtype=wp.mat33*, optional
@@ -219,7 +225,7 @@ def build_cell_list(
         inv_cell if inv_cell is not None else _empty_sentinel(1, mat_dtype, device)
     )
 
-    if not fixed_cell:
+    if not fixed_cell and not grid_is_prepared:
         wp.launch(
             get_build_cell_list_kernel(
                 "construct_bin_size",
@@ -1026,6 +1032,8 @@ def batch_build_cell_list(
     wp_dtype: type,
     device: str,
     min_cells_per_dimension: int = 4,
+    grid_is_prepared: bool = False,
+    cells_per_system_is_prepared: bool = False,
     *,
     fixed_cell: bool = False,
     inv_cell: wp.array | None = None,
@@ -1073,6 +1081,11 @@ def batch_build_cell_list(
         Warp device string (e.g., 'cuda:0', 'cpu').
     min_cells_per_dimension : int, default 4
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
+    grid_is_prepared : bool, default False
+        Use the supplied grid dimensions. Framework sizing must provide matching
+        allocation sizes and search radii for the current cell and cutoff.
+    cells_per_system_is_prepared : bool, default False
+        Reuse cell counts already written for the supplied grid dimensions.
     fixed_cell : bool, default False
         Reuse caller-prepared grids and the read-only inverse cells.
     inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
@@ -1100,7 +1113,7 @@ def batch_build_cell_list(
         inv_cell if inv_cell is not None else _empty_sentinel(1, mat_dtype, device)
     )
 
-    if not fixed_cell:
+    if not fixed_cell and not grid_is_prepared:
         wp.launch(
             get_build_cell_list_kernel(
                 "construct_bin_size",
@@ -1122,12 +1135,13 @@ def batch_build_cell_list(
         )
 
     if not fixed_cell:
-        wp.launch(
-            _compute_cells_per_system,
-            dim=num_systems,
-            device=device,
-            inputs=(cells_per_dimension, cells_per_system),
-        )
+        if not cells_per_system_is_prepared:
+            wp.launch(
+                _compute_cells_per_system,
+                dim=num_systems,
+                device=device,
+                inputs=(cells_per_dimension, cells_per_system),
+            )
         wp.utils.array_scan(cells_per_system, cell_offsets, inclusive=False)
 
     wp.launch(
@@ -1204,7 +1218,7 @@ def batch_query_cell_list_pair_centric_sorted(
     n_outer: int,
     R_max: tuple[int, int, int],
     half_fill: bool = True,
-    block_dim: int = 64,
+    block_dim: int = _PAIR_CENTRIC_BLOCK_DIM,
     *,
     target_indices: wp.array | None = None,
     return_vectors: bool = False,

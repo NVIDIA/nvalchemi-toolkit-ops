@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 
 import jax
 import jax.numpy as jnp
@@ -597,20 +598,39 @@ _BATCH_NAIVE_TILE_SPECS = {
 def _register_batch_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register JaxCallableGraphMode.NONE tile callables for the batched naive eager path.
+    """Register and cache eager batched tile callables.
 
-    ``JaxCallableGraphMode.NONE`` (not WARP): the tile bodies assume the caller has
-    already pre-filled the output buffers, which the eager
-    ``batch_naive_neighbor_list`` path does before dispatch.
+    Returns
+    -------
+    dict[tuple[bool, bool, jnp.dtype], object]
+        JIT wrappers keyed by periodicity, position-wrapping mode, and dtype.
+
+    Notes
+    -----
+    The public wrapper pre-fills output buffers for ``JaxCallableGraphMode.NONE``.
+    JIT reuses the inner FFI call with current arrays and static launch scalars.
     """
     registered: dict[tuple[bool, bool, jnp.dtype], object] = {}
     for (has_pbc, wrap_positions), spec in _BATCH_NAIVE_TILE_SPECS.items():
         for dtype in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)):
-            registered[(has_pbc, wrap_positions, dtype)] = jax_callable(
+            tile_callable = jax_callable(
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
                 graph_mode=JaxCallableGraphMode.NONE,
+            )
+            # Keep Warp scalar arguments static while array arguments remain
+            # runtime inputs; derive positions from the callback ABI.
+            static_argnums = tuple(
+                index
+                for index, parameter in enumerate(
+                    inspect.signature(spec[dtype], eval_str=True).parameters.values()
+                )
+                if not isinstance(parameter.annotation, wp.array)
+            )
+            registered[(has_pbc, wrap_positions, dtype)] = jax.jit(
+                tile_callable,
+                static_argnums=static_argnums,
             )
     return registered
 

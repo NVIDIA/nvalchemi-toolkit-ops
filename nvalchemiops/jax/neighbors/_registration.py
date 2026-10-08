@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import jax
 import jax.numpy as jnp
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable, jax_kernel
@@ -81,6 +82,39 @@ _DUAL_PBC_OUTPUTS = (
     "neighbor_matrix_shifts2",
     "num_neighbors2",
 )
+
+
+@functools.cache
+def _cached_jax_kernel_call(kernel_call: Any) -> Any:
+    """Return a cached JIT wrapper for a registered Warp cell kernel.
+
+    Parameters
+    ----------
+    kernel_call : Any
+        Registered JAX wrapper for a Warp kernel.
+
+    Returns
+    -------
+    Any
+        A JIT-compiled callable that reuses its executable for matching input
+        shapes and dtypes.
+
+    Notes
+    -----
+    Warp scalar parameters and launch dimensions are static. Array values stay
+    runtime inputs; JAX specializes its executable on their shapes and dtypes.
+    The registration's kernel signature supplies the scalar argument positions.
+    """
+    static_arguments = tuple(
+        index
+        for index, argument in enumerate(kernel_call.kernel.adj.args)
+        if not isinstance(argument.type, wp.array)
+    )
+    return jax.jit(
+        kernel_call,
+        static_argnums=static_arguments,
+        static_argnames=("launch_dims",),
+    )
 
 
 def _register_jax_kernel(

@@ -28,7 +28,10 @@ import pytest
 import warp as wp
 
 from nvalchemiops.jax.neighbors import neighbor_list
-from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
+from nvalchemiops.jax.neighbors.batch_cell_list import (
+    batch_cell_list,
+    estimate_batch_cell_list_sizes,
+)
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     batch_cluster_tile_neighbor_list,
 )
@@ -36,7 +39,7 @@ from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
 from nvalchemiops.jax.neighbors.batch_naive_dual_cutoff import (
     batch_naive_neighbor_list_dual_cutoff,
 )
-from nvalchemiops.jax.neighbors.cell_list import cell_list
+from nvalchemiops.jax.neighbors.cell_list import cell_list, estimate_cell_list_sizes
 from nvalchemiops.jax.neighbors.cluster_tile import cluster_tile_neighbor_list
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 from nvalchemiops.jax.neighbors.naive_dual_cutoff import (
@@ -165,6 +168,164 @@ def test_prepared_state_is_immutable_single_leaf_pytree() -> None:
     assert state.selective is True
     with pytest.raises(AttributeError, match="read-only"):
         state.cutoff = 3.0
+
+
+@pytest.mark.parametrize("fixed_cell", [False, True])
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batch"])
+@pytest.mark.parametrize("strategy", ["atom_centric", "pair_centric"])
+def test_prepared_cell_list_grid_policy_dispatch(
+    fixed_cell: bool, batched: bool, strategy: str
+) -> None:
+    """Prepared cell-list states use configured sizing for both geometry modes."""
+    positions = jnp.array(
+        [[0.1, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.zeros((3,), dtype=jnp.bool_)
+    method = "cell_list"
+    prepare_options: dict[str, Any] = {}
+    if batched:
+        positions = jnp.concatenate((positions, positions), axis=0)
+        prepare_options["batch_ptr"] = jnp.array([0, 3, 6], dtype=jnp.int32)
+        cell = jnp.broadcast_to(cell, (2, 3, 3))
+        pbc = jnp.broadcast_to(pbc, (2, 3))
+        method = "batch_cell_list"
+        max_total_cells = estimate_batch_cell_list_sizes(
+            positions,
+            batch_ptr=prepare_options["batch_ptr"],
+            cell=cell,
+            pbc=pbc,
+            cutoff=0.75,
+        )[0]
+    else:
+        max_total_cells = estimate_cell_list_sizes(positions, cell, 0.75, pbc)[0]
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        strategy=strategy,
+        max_neighbors=4,
+        max_total_cells=max_total_cells,
+        fixed_cell=fixed_cell,
+        **prepare_options,
+    )
+
+    default_result, default_successor = neighbor_list(positions, state=state)
+    configured_result, configured_successor = neighbor_list(
+        positions, state=state, grid_policy="configured"
+    )
+    for expected, actual in zip(default_result, configured_result, strict=True):
+        np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+    assert default_successor.fixed_cell is fixed_cell
+    assert configured_successor.fixed_cell is fixed_cell
+    assert bool(jnp.all(default_successor.valid))
+    assert bool(jnp.all(configured_successor.valid))
+    check_neighbor_list_state(default_successor)
+    check_neighbor_list_state(configured_successor)
+
+    with pytest.raises(
+        ValueError,
+        match="grid_policy='adaptive' is not supported with NeighborListState",
+    ):
+        neighbor_list(positions, state=state, grid_policy="adaptive")
+    with pytest.raises(ValueError, match="grid_policy"):
+        neighbor_list(positions, state=state, grid_policy="unknown")
+
+
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batch"])
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    "dtype", [jnp.float32, jnp.float64], ids=["float32", "float64"]
+)
+def test_prepared_fixed_cell_list_coo_matches_direct(
+    batched: bool, compiled: bool, dtype: Any
+) -> None:
+    """Fixed cell-list states preserve fixed-capacity COO outputs."""
+    positions = jnp.array(
+        [
+            [0.1, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.4, 0.0, 0.0],
+        ],
+        dtype=dtype,
+    )
+    one_cell = jnp.eye(3, dtype=dtype) * 8.0
+    one_pbc = jnp.array([True, False, False], dtype=jnp.bool_)
+    batch_ptr = jnp.array([0, 2, 2, 5], dtype=jnp.int32)
+    options: dict[str, Any] = {
+        "cell": (
+            jnp.stack((one_cell, one_cell * 1.5, one_cell * 2.0))
+            if batched
+            else one_cell
+        ),
+        "pbc": (
+            jnp.array(
+                [[True, False, False], [False, False, False], [True, True, False]],
+                dtype=jnp.bool_,
+            )
+            if batched
+            else one_pbc
+        ),
+        "method": "batch_cell_list" if batched else "cell_list",
+        "strategy": "atom_centric",
+        "max_neighbors": 4,
+        "max_total_cells": 256 if batched else 64,
+        "return_neighbor_list": True,
+        "coo_capacity": 16,
+    }
+    if batched:
+        options["batch_ptr"] = batch_ptr
+    state = prepare_neighbor_list(positions, 0.75, fixed_cell=True, **options)
+    direct_options = {key: value for key, value in options.items() if key != "method"}
+    direct_builder = batch_cell_list if batched else cell_list
+    direct = direct_builder(positions, 0.75, **direct_options)
+
+    def execute(values: jax.Array, prepared: NeighborListState):
+        return neighbor_list(values, state=prepared)
+
+    compiled_execute = jax.jit(execute) if compiled else execute
+    actual, successor = compiled_execute(positions, state)
+
+    assert len(actual) == len(direct) == 5
+    np.testing.assert_array_equal(np.asarray(actual[1]), np.asarray(direct[1]))
+    np.testing.assert_array_equal(np.asarray(actual[3]), np.asarray(direct[3]))
+    np.testing.assert_array_equal(np.asarray(actual[4]), np.asarray(direct[4]))
+
+    def coo_records(result: tuple[jax.Array, ...]) -> list[tuple[int, ...]]:
+        pairs, shifts = np.asarray(result[0]), np.asarray(result[2])
+        return sorted(
+            (int(pairs[0, slot]), int(pairs[1, slot]), *map(int, shifts[slot]))
+            for slot in range(pairs.shape[1])
+            if int(pairs[0, slot]) != positions.shape[0]
+        )
+
+    assert coo_records(actual) == coo_records(direct)
+    assert successor.fixed_cell
+    assert bool(jnp.all(successor.valid))
+    check_neighbor_list_state(successor)
+
+    moved_positions = positions.at[1, 0].set(7.8).at[4, 0].set(5.0)
+    moved_actual, moved_successor = compiled_execute(moved_positions, successor)
+    moved_direct = direct_builder(moved_positions, 0.75, **direct_options)
+    np.testing.assert_array_equal(
+        np.asarray(moved_actual[1]), np.asarray(moved_direct[1])
+    )
+    np.testing.assert_array_equal(
+        np.asarray(moved_actual[3]), np.asarray(moved_direct[3])
+    )
+    np.testing.assert_array_equal(
+        np.asarray(moved_actual[4]), np.asarray(moved_direct[4])
+    )
+    assert coo_records(moved_actual) == coo_records(moved_direct)
+    assert coo_records(moved_actual) != coo_records(actual)
+    assert moved_successor.fixed_cell
+    assert bool(jnp.all(moved_successor.valid))
+    check_neighbor_list_state(moved_successor)
 
 
 def test_preparation_rejects_stored_runtime_inputs() -> None:

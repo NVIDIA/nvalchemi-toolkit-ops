@@ -322,6 +322,59 @@ def test_public_contract_rejects_non_state_and_caller_storage() -> None:
     assert neighbor_list(close, cell=cell, state=state)
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("batched", "fixed_cell"), list(product([False, True], repeat=2))
+)
+@pytest.mark.parametrize("strategy", ["atom_centric", "pair_centric"])
+def test_prepared_state_grid_policy_validation_and_sizing(
+    batched: bool, fixed_cell: bool, strategy: str
+) -> None:
+    """Prepared states validate policy and retain their configured sizing."""
+    device = "cuda"
+    positions = torch.tensor(
+        [[0.1, 0.1, 0.1], [0.7, 0.1, 0.1], [2.0, 2.0, 2.0], [2.4, 2.0, 2.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+    pbc = torch.ones(3, dtype=torch.bool, device=device)
+    cell = torch.eye(3, dtype=torch.float32, device=device) * 8.0
+    batch_ptr = None
+    if batched:
+        positions = torch.cat((positions, positions + 1.0))
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+        batch_ptr = torch.tensor([0, 4, 8], dtype=torch.int32, device=device)
+    method = "batch_cell_list" if batched else "cell_list"
+    state = prepare_neighbor_list(
+        positions,
+        1.0,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method=method,
+        strategy=strategy,
+        fixed_cell=fixed_cell,
+        max_neighbors=8,
+    )
+
+    expected = tuple(
+        output.clone() for output in neighbor_list(positions, cell=cell, state=state)
+    )
+    configured = neighbor_list(
+        positions, cell=cell, state=state, grid_policy="configured"
+    )
+    assert_neighbor_matrix_equal(configured[:3], expected[:3])
+    with pytest.raises(
+        ValueError,
+        match="grid_policy='adaptive' is not supported with state; prepared states use configured sizing",
+    ):
+        neighbor_list(positions, cell=cell, state=state, grid_policy="adaptive")
+    with pytest.raises(ValueError, match="grid_policy must be"):
+        neighbor_list(positions, cell=cell, state=state, grid_policy="unknown")
+
+
 @pytest.mark.parametrize(
     ("option", "value", "message"),
     [

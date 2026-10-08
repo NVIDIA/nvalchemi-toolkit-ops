@@ -50,6 +50,21 @@
 - Prevented host synchronization during cell matrix inversion inside CUDA graph capture.
 - Corrected cluster-tile neighbor periodic image selection for skewed triclinic cells.
 
+### Changed
+
+- Opt-in `grid_policy="adaptive"` selects pair-centric cell grids from geometry
+  and atom populations to reduce estimated search work in Torch and eager JAX
+  full-list CUDA calls. The model assumes approximately uniform occupancy;
+  performance depends on the workload. `"configured"` remains the default.
+- Eager JAX naive tile and cell-list queries reuse compiled inner calls.
+
+### Fixed
+
+- Pair-centric grid sizing accounts for estimated neighbor-loop work in dense
+  systems.
+- Targeted Torch cell-list calls refresh search radii when reusing workspaces,
+  preventing missed neighbors after a full-list adaptive call.
+
 ## v0.4.1 - 2026-08-03
 
 ### Added

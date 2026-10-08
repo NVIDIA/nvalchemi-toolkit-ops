@@ -252,6 +252,8 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_wp_from_torch",
     "nvalchemiops/torch/interactions/electrostatics/slab.py::_prepare_slab_geometry",
     "nvalchemiops/torch/interactions/electrostatics/slab.py::_run_slab_correction_op",
+    # Eager sizing returns a host allocation count on the scoped Torch stream.
+    "nvalchemiops/torch/neighbors/_cell_grid.py::_select_pair_grid",
     "nvalchemiops/torch/neighbors/_dispatch.py::estimate_neighbor_list_costs",
     "nvalchemiops/torch/neighbors/batch_cell_list.py::_batch_query_cell_list_optional",
     "nvalchemiops/torch/neighbors/batch_cell_list.py::estimate_batch_cell_list_sizes",

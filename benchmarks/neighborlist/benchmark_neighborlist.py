@@ -645,6 +645,10 @@ def benchmark_nl(
             "max_shifts_per_system": int(max_shifts),
         }
 
+    if method in _NL_PAIR_CENTRIC_METHODS:
+        nl_kwargs["grid_policy"] = "adaptive"
+        benchmark_meta["grid_policy"] = "adaptive"
+
     def run_nl():
         kwargs = {
             "positions": positions,

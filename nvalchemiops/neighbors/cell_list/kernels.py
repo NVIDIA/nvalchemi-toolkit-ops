@@ -34,6 +34,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 _SUPPORTED_DTYPES = (wp.float32, wp.float64)
+_DEFAULT_MIN_CELLS_PER_DIMENSION = 4
 _DTYPE_INFO: dict[type, tuple[type, type]] = {
     dtype: DTYPE_INFO_ALL[dtype] for dtype in _SUPPORTED_DTYPES
 }
@@ -2062,7 +2063,7 @@ def get_build_cell_list_kernel(
     wp_dtype: type,
     *,
     batched: bool = False,
-    min_cells_per_dimension: int = 4,
+    min_cells_per_dimension: int = _DEFAULT_MIN_CELLS_PER_DIMENSION,
     fixed_cell: bool = False,
 ) -> wp.Kernel:
     """Return a cached cell-list CSR build kernel.

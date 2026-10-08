@@ -20,6 +20,7 @@ import torch
 import warp as wp
 
 from nvalchemiops.neighbors.cell_list import build_cell_list
+from nvalchemiops.neighbors.cell_list.launchers import batch_build_cell_list
 from nvalchemiops.neighbors.cluster_tile import (
     build_cluster_tile_list,
     query_cluster_tile,
@@ -142,6 +143,113 @@ def test_cell_list_fixed_geometry_reuses_grid_and_matches_dynamic_build(device):
         dynamic_outputs[-1].sort().values,
     )
     torch.testing.assert_close(cached_grid, dynamic_grid)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_batch_cell_list_fixed_and_dynamic_build_abi(device, dtype):
+    """Batched dynamic and fixed launches preserve their grid and inverse inputs."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.2, 0.3],
+            [7.8, 0.2, 0.3],
+            [0.1, 0.2, 0.3],
+            [4.8, 0.2, 0.3],
+            [9.7, 0.2, 0.3],
+        ],
+        dtype=dtype,
+        device=device,
+    )
+    sides = torch.tensor([8.0, 6.0, 10.0], dtype=dtype, device=device)
+    cell = torch.eye(3, dtype=dtype, device=device).unsqueeze(0) * sides[:, None, None]
+    inverse = torch.linalg.inv(cell)
+    pbc = torch.ones((3, 3), dtype=torch.bool, device=device)
+    batch_idx = torch.tensor([0, 0, 2, 2, 2], dtype=torch.int32, device=device)
+    cutoff = 1.0
+    max_cells_per_system = 512
+
+    def build(
+        *,
+        fixed: bool,
+        grid: torch.Tensor | None = None,
+        offsets: torch.Tensor | None = None,
+    ):
+        """Run one real batched Warp build and return its observable arrays."""
+        if grid is None:
+            grid = torch.zeros((3, 3), dtype=torch.int32, device=device)
+        cells_per_system = grid.prod(dim=1).to(torch.int32)
+        if offsets is None:
+            offsets = torch.cat(
+                (
+                    torch.zeros((1,), dtype=torch.int32, device=device),
+                    cells_per_system.cumsum(0, dtype=torch.int32)[:-1],
+                )
+            )
+        cell_offsets = offsets.clone()
+        atom_shifts = torch.zeros((5, 3), dtype=torch.int32, device=device)
+        atom_to_cell = torch.zeros_like(atom_shifts)
+        occupancy = torch.zeros(
+            (3 * max_cells_per_system,), dtype=torch.int32, device=device
+        )
+        starts = torch.zeros_like(occupancy)
+        cell_occupancy = torch.zeros_like(occupancy)
+        atom_list = torch.zeros((5,), dtype=torch.int32, device=device)
+        batch_build_cell_list(
+            _wp_view(positions, wp.vec3f if dtype == torch.float32 else wp.vec3d),
+            _wp_view(cell, wp.mat33f if dtype == torch.float32 else wp.mat33d),
+            _wp_view(pbc, wp.bool),
+            cutoff,
+            _wp_view(batch_idx, wp.int32),
+            _wp_view(grid, wp.vec3i),
+            _wp_view(cell_offsets, wp.int32),
+            _wp_view(cells_per_system, wp.int32),
+            _wp_view(atom_shifts, wp.vec3i),
+            _wp_view(atom_to_cell, wp.vec3i),
+            _wp_view(occupancy, wp.int32),
+            _wp_view(starts, wp.int32),
+            _wp_view(atom_list, wp.int32),
+            wp.float32 if dtype == torch.float32 else wp.float64,
+            device,
+            fixed_cell=fixed,
+            inv_cell=_wp_view(
+                inverse, wp.mat33f if dtype == torch.float32 else wp.mat33d
+            )
+            if fixed
+            else None,
+        )
+        cell_occupancy[:-1] = starts[1:] - starts[:-1]
+        cell_occupancy[-1] = positions.shape[0] - starts[-1]
+        return (
+            grid,
+            cell_offsets,
+            cells_per_system,
+            cell_occupancy,
+            atom_shifts,
+            atom_to_cell,
+            starts,
+            atom_list,
+        )
+
+    dynamic = build(fixed=False)
+    fixed_grid = dynamic[0].clone()
+    fixed_counts = fixed_grid.prod(dim=1).to(torch.int32)
+    fixed_offsets = torch.cat(
+        (
+            torch.zeros((1,), dtype=torch.int32, device=device),
+            fixed_counts.cumsum(0, dtype=torch.int32)[:-1],
+        )
+    )
+    fixed = build(fixed=True, grid=fixed_grid, offsets=fixed_offsets)
+
+    for actual, expected in zip(fixed, dynamic, strict=True):
+        torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(dynamic[2], dynamic[0].prod(dim=1).to(torch.int32))
+    torch.testing.assert_close(dynamic[1], fixed_offsets)
+    assert int(dynamic[2][1]) > 0
+    torch.testing.assert_close(dynamic[1][2], dynamic[1][1] + dynamic[2][1])
+    for system, atom_count in ((0, 2), (1, 0), (2, 3)):
+        start = int(dynamic[1][system])
+        end = start + int(dynamic[2][system])
+        assert int(dynamic[3][start:end].sum()) == atom_count
 
 
 def test_cluster_tile_prepared_geometry_matches_dynamic_matrix_and_coo(device):

@@ -64,6 +64,19 @@ class TestMethodRefreshValidation:
         with pytest.raises(ValueError, match="Run ID mismatch"):
             validate_result_files([path], per_method=True, expected_run_id="run-a")
 
+    @pytest.mark.parametrize("module,method", [("el", "pme"), ("d3", "dftd3")])
+    @pytest.mark.parametrize("field", ["run_id", "software_context", "runtime_context"])
+    def test_module_method_collections_remain_consistent(
+        self, tmp_path, module, method, field
+    ):
+        """A module and method collection has consistent provenance across systems."""
+        first = _write(tmp_path / f"{module}-cscl.csv", [_row(method)])
+        second = _write(
+            tmp_path / f"{module}-nh3.csv", [dict(_row(method), **{field: "changed"})]
+        )
+        with pytest.raises(ValueError, match=field):
+            validate_result_files([first, second], per_method=True)
+
     @pytest.mark.parametrize("field", ["timing_batches", "timing_batch_aggregation"])
     def test_el_timing_groups_are_consistent(self, tmp_path, field):
         """EL timing groups stay identical across systems and scaling modes."""
@@ -76,6 +89,35 @@ class TestMethodRefreshValidation:
         second = _write(tmp_path / "el-nh3.csv", [changed])
         with pytest.raises(ValueError, match=field):
             validate_result_files([first, second], per_method=True)
+
+    def test_module_is_part_of_collection_identity(self, tmp_path):
+        """Different modules may use separate provenance for a same-named method."""
+        el = _row("shared_method", "el-run")
+        d3 = _row("shared_method", "d3-run")
+        d3.update(
+            gpu_context="d3-gpu",
+            software_context="d3-software",
+            input_context="d3-inputs",
+            runtime_context="d3-runtime",
+        )
+        first = _write(tmp_path / "el-cscl.csv", [el])
+        second = _write(tmp_path / "d3-cscl.csv", [d3])
+        assert validate_result_files([first, second], per_method=True)["rows"] == 2
+
+    def test_backend_is_part_of_collection_identity(self, tmp_path):
+        """Different backends may use separate provenance for one method."""
+        torch_row = _row("pme", "torch-run")
+        jax_row = _row("pme", "jax-run")
+        jax_row.update(
+            backend="jax",
+            gpu_context="jax-gpu",
+            software_context="jax-software",
+            input_context="jax-inputs",
+            runtime_context="jax-runtime",
+        )
+        first = _write(tmp_path / "el-cscl.csv", [torch_row])
+        second = _write(tmp_path / "el-nh3.csv", [jax_row])
+        assert validate_result_files([first, second], per_method=True)["rows"] == 2
 
     @pytest.mark.parametrize(
         "field",
