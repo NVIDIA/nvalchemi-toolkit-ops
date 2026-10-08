@@ -19,7 +19,7 @@ consumers, at the cost of packing and a data-dependent pair count.
 | Matrix | First `counts[i]` slots of row `i` | Fixed-shape consumers, per-source reductions |
 | Compact COO | All returned columns; `ptr` delimits source rows | Eager edge/graph consumers |
 | Fixed-capacity JAX COO | Prefix ending at `ptr[-1]`; inspect required counts and validity | Compiled naive/cell-list edge consumers |
-| Segmented COO | Active prefix of each system's reserved segment | Selective rebuilds on supported routes |
+| Segmented COO | Active prefix of each system's reserved segment | Selective cluster-tile rebuilds |
 | Native cluster tiles | Active tile records and their sorted atom groups | Consumers designed to query tiles directly |
 
 (neighbor-list-capacity-estimation)=
@@ -120,6 +120,10 @@ required row counts and `metadata_valid`; optional geometry follows those fields
 The pointer delimits what was actually stored, while required counts tell you
 whether row or total capacity was sufficient.
 
+Prepared JAX naive COO uses this global fixed-capacity layout even with
+`selective=True`. Its outputs use `neighbor_ptr`, required row counts, and
+`metadata_valid`, rather than per-system `pair_offsets` and `pair_counts`.
+
 This continues the main guide's JAX setup:
 
 ```python
@@ -154,8 +158,8 @@ calls, also compare required counts with pointer differences after leaving
 
 ### Segmented COO
 
-Selective COO reserves a fixed segment for each system. `pair_offsets[b]` marks
-its start and `pair_counts[b]` gives its active length. Consume
+Selective cluster COO reserves a fixed segment for each system.
+`pair_offsets[b]` marks its start and `pair_counts[b]` gives its active length. Consume
 `[pair_offsets[b], pair_offsets[b] + pair_counts[b])`; the rest of the segment is
 inactive. A false rebuild flag retains the previous segment.
 
