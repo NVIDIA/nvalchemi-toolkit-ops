@@ -262,38 +262,15 @@
 
 ### Changed
 
-- Torch single-system and batched full-list pair-centric calls with
-  `grid_policy="adaptive"` select grids from
-  current geometry and atom populations, balancing cell visits and cell crowding.
-  Single-system alternatives must preserve or reduce estimated candidate pairs,
-  serial neighbor-loop depth, cell storage, and logical block count. The configured
-  grid wins ties and cost tradeoffs. Batched selection counts setup and
-  neighbor-loop steps across every logical block and preserves source-pass count.
-  `grid_policy="configured"` remains the default. With the adaptive policy,
-  automatic strategy selection uses the same sizing when it selects pair-centric
-  execution. Batched selection reuses supplied boundaries.
-  Selected grids are reused during construction.
-  Caller-provided workspaces apply the same rules during the GPU build, updating
-  dimensions and search radii in place within their per-system capacity.
-  Single-system sizing passes the known population directly, and supplied-workspace
-  builds avoid population/count scratch allocation and redundant workspace clears.
-  Compiled full-list calls also use these rules when all cell buffers are supplied.
-- Eager JAX naive tile and cell-list queries reuse compiled inner calls across
-  repeated inputs. Cell-list arrays remain runtime inputs to cached executables.
-- Eager JAX full-list CUDA calls with `grid_policy="adaptive"` that select
-  `strategy="pair_centric"` reuse
-  the geometry/population grid selector for single systems and batches.
-  Adaptive eager cell-list calls also use it when their existing rule selects
-  pair-centric execution. Grid, search-radius, and cell-count preparation share
-  one kernel; boxes remain runtime inputs. Public signatures and static/JIT
-  launch-metadata paths are preserved.
+- Torch and eager JAX full-list CUDA cell-list calls support
+  `grid_policy="adaptive"` for pair-centric sizing; `"configured"` remains
+  the default.
+- Eager JAX naive tile and cell-list queries reuse compiled inner calls.
 
 ### Fixed
 
-- Pair-centric grid selection accounts for logical blocks and neighbor-loop
-  steps in dense batched systems. Single-system alternatives preserve estimated
-  candidate-pair work and loop depth. Cell-list allocation and construction retain
-  the existing configured-minimum rule.
+- Pair-centric grid sizing accounts for estimated neighbor-loop work in dense
+  systems.
 
 ## 0.4.1 - 2026-08-03
 

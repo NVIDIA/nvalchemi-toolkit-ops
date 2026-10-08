@@ -134,8 +134,9 @@
   current geometry and atom populations, balancing cell visits and cell crowding.
   Single-system alternatives must preserve or reduce estimated candidate pairs,
   serial neighbor-loop depth, cell storage, and logical block count. The configured
-  grid wins ties and cost tradeoffs. Batched selection counts setup and
-  neighbor-loop steps across every logical block and preserves source-pass count.
+  grid wins ties and cost tradeoffs. Batched selection estimates setup and
+  neighbor-loop work using each system's stencil and approximately uniform
+  occupancy. The batch-wide launch radius can add work beyond this estimate.
   `grid_policy="configured"` remains the default. With the adaptive policy,
   automatic strategy selection uses the same sizing when it selects pair-centric
   execution. Batched selection reuses supplied boundaries.

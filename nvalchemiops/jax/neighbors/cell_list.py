@@ -1980,7 +1980,47 @@ def _build_cell_list(
     select_pair_grid: bool = False,
     _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
-    """Build using caller-selected sizing or the eager pair-centric selector."""
+    """Build a cell list using configured sizing or eager pair-grid selection.
+
+    Parameters
+    ----------
+    positions : jax.Array
+        Concatenated Cartesian coordinates for the atoms.
+    cutoff : float
+        Neighbor cutoff in the same length units as ``cell``.
+    cell : jax.Array
+        Single-system cell matrix, shaped ``(3, 3)`` or ``(1, 3, 3)``.
+    pbc : jax.Array
+        Per-axis periodicity flags.
+    cells_per_dimension : jax.Array, optional
+        Caller-provided cell counts for each axis.
+    neighbor_search_radius : jax.Array, optional
+        Caller-provided cell stencil radius for each axis.
+    atom_periodic_shifts : jax.Array, optional
+        Output buffer for atom image shifts.
+    atom_to_cell_mapping : jax.Array, optional
+        Output buffer mapping each atom to a cell.
+    atoms_per_cell_count : jax.Array, optional
+        Output buffer for cell populations.
+    cell_atom_start_indices : jax.Array, optional
+        Output buffer for cell offsets in the packed atom list.
+    cell_atom_list : jax.Array, optional
+        Output buffer for atom indices grouped by cell.
+    max_total_cells : int, optional
+        Maximum number of cells available to the build.
+    graph_mode : {"none", "warp"}, default "none"
+        Execution mode used by registered Warp calls.
+    select_pair_grid : bool, default False
+        Select grids from current geometry and populations for supported eager
+        pair-centric calls.
+    _fixed_cell_geometry : tuple of jax.Array, optional
+        Prepared fixed-cell geometry and sizing metadata.
+
+    Returns
+    -------
+    tuple[jax.Array, ...]
+        Cell-list buffers and geometry metadata consumed by the query.
+    """
     graph_mode = _validate_graph_mode(graph_mode)
 
     if cell.ndim == 2:
@@ -3069,10 +3109,12 @@ def cell_list(
     pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped output buffer for per-pair forces from ``pair_fn``.
     grid_policy : {"configured", "adaptive"}, default "configured"
-        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
-        selects grids from geometry and atom populations on supported full-list
-        pair-centric paths. Its cost model assumes approximately uniform spatial
-        occupancy; performance depends on the input distribution.
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. ``"adaptive"`` selects grids from geometry and atom
+        populations on supported full-list pair-centric paths. Its cost model
+        assumes approximately uniform spatial occupancy; performance depends on
+        the input distribution.
         Adaptive selection applies to eager calls without static pair-centric
         launch metadata; traced calls retain the configured grid.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"

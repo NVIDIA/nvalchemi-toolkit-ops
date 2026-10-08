@@ -29,9 +29,12 @@ The torch wrapper auto-selects between two batch query kernels:
 
 Auto-select uses sync-free quantities (``total_atoms``, ``num_systems``,
 ``cutoff``); the ``total_cells`` Python int is already paid by
-:func:`estimate_batch_cell_list_sizes` at allocation time.  Defaults
-are calibrated empirically; overrides are exposed via environment
-variables - see :func:`select_batch_cell_list_strategy`.
+:func:`estimate_batch_cell_list_sizes` at allocation time. ``grid_policy="adaptive"`
+opts into geometry and population-based sizing on supported full-list
+pair-centric calls. The default ``"configured"`` policy retains the configured
+sizing rule, including when caller-provided cell workspaces are reused.
+Strategy defaults are calibrated empirically; overrides are exposed via
+environment variables - see :func:`select_batch_cell_list_strategy`.
 """
 
 from __future__ import annotations
@@ -2035,11 +2038,16 @@ def batch_cell_list(
     (``atom_periodic_shifts``, ``atom_to_cell_mapping``, ``cell_atom_list``)
     remain ``total_atoms``-shaped.
 
-    Eager CUDA full-list calls with ``strategy="pair_centric"`` choose grids
-    from the current box, cutoff and system populations. With supplied cell
-    workspaces, the GPU build updates dimensions and search radii in place,
-    using an equal per-system share of the available cell capacity. The same
-    buffers can therefore be reused as valid boxes and positions change.
+    ``grid_policy="adaptive"`` opts into choosing grids from the current box,
+    cutoff and system populations for supported full-list CUDA pair-centric
+    calls. Compiled calls require complete cell workspaces. Adaptive builds
+    update workspace grid dimensions and search radii within an equal
+    per-system share of the available cell capacity.
+
+    The default ``grid_policy="configured"`` uses configured grid sizing.
+    Configured and targeted calls require supplied search radii and storage
+    capacity valid for the current cell and cutoff. Refresh this metadata
+    when reusing a workspace across sizing policies or full and targeted calls.
 
     Parameters
     ----------
@@ -2286,6 +2294,7 @@ def batch_cell_list(
             )
         )
         and not half_fill
+        and target_indices is None
         and rebuild_flags is None
         and _fixed_cell_geometry is None
         and device.type == "cuda"

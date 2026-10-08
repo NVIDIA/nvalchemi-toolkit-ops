@@ -1157,8 +1157,15 @@ _GRAPH_NAIVE_TILE_SPECS = {
 def _register_graph_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Cache compiled tile calls inside the public eager path.
+    """Register and cache eager single-system tile callables.
 
+    Returns
+    -------
+    dict[tuple[bool, bool, jnp.dtype], object]
+        JIT wrappers keyed by periodicity, position-wrapping mode, and dtype.
+
+    Notes
+    -----
     The public wrapper pre-fills output buffers for ``JaxCallableGraphMode.NONE``.
     JIT reuses the inner FFI call with current arrays and static launch scalars.
     """

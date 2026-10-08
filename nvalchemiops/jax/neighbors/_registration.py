@@ -86,8 +86,21 @@ _DUAL_PBC_OUTPUTS = (
 
 @functools.cache
 def _cached_jax_kernel_call(kernel_call: Any) -> Any:
-    """Reuse an eager FFI executable for a registered Warp cell kernel.
+    """Return a cached JIT wrapper for a registered Warp cell kernel.
 
+    Parameters
+    ----------
+    kernel_call : Any
+        Registered JAX wrapper for a Warp kernel.
+
+    Returns
+    -------
+    Any
+        A JIT-compiled callable that reuses its executable for matching input
+        shapes and dtypes.
+
+    Notes
+    -----
     Warp scalar parameters and launch dimensions are static. Array values stay
     runtime inputs; JAX specializes its executable on their shapes and dtypes.
     The registration's kernel signature supplies the scalar argument positions.

@@ -57,8 +57,10 @@ run ID `da2e3992-31bf-4906-ae02-d3747f02a55a`, source fingerprint
 It used the Torch collection's software versions on NVIDIA H100 GPUs reporting
 102,132,088,832 memory bytes (95.12 GiB usable), compute capability 9.0, and
 unavailable driver metadata. Comparisons therefore combine separate recorded
-GPU allocations and software contexts. The 12 NL/D3 files retain their original
-hardware, software, and all 2,920 rows unchanged by this refresh.
+GPU allocations and software contexts. All six D3 files and 2,409 NL rows
+retain their original hardware and software contexts. The other 219 NL rows are
+refreshed Torch pair-centric coverage-only measurements from run ID
+`16aa7bb4-5071-4eec-9c21-092c237599de`.
 
 See the per-module doc pages for how to read the plots and how to
 reproduce:

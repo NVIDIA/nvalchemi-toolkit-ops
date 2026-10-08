@@ -36,18 +36,33 @@ def _pair_grid_boundaries(
     batch_idx: torch.Tensor | None,
     batch_ptr: torch.Tensor | None,
 ) -> torch.Tensor:
-    """Return contiguous int32 system boundaries for the current population."""
+    """Return cumulative atom counts for each system.
+
+    Parameters
+    ----------
+    cell : torch.Tensor
+        Batch cell matrices. The leading dimension gives the number of systems.
+    batch_idx : torch.Tensor or None
+        System index for each atom. Required when ``batch_ptr`` is omitted.
+    batch_ptr : torch.Tensor or None
+        Optional cumulative system boundaries. A supplied tensor provides the
+        populations directly.
+
+    Returns
+    -------
+    torch.Tensor
+        Contiguous int32 boundaries with shape ``(num_systems + 1,)``.
+    """
     systems = cell.shape[0]
     if batch_ptr is None:
-        if torch.compiler.is_compiling():
-            counts = torch.zeros(systems, device=cell.device, dtype=torch.int32)
-            counts.scatter_add_(
-                0,
-                batch_idx.to(torch.int64),
-                torch.ones_like(batch_idx, dtype=torch.int32),
-            )
-        else:
-            counts = torch.bincount(batch_idx.to(torch.int64), minlength=systems)
+        if batch_idx is None:
+            raise ValueError("batch_idx is required when batch_ptr is omitted")
+        counts = torch.zeros(systems, device=cell.device, dtype=torch.int32)
+        counts.scatter_add_(
+            0,
+            batch_idx.to(torch.int64),
+            torch.ones_like(batch_idx, dtype=torch.int32),
+        )
         batch_ptr = torch.zeros(systems + 1, device=cell.device, dtype=torch.int32)
         torch.cumsum(counts, dim=0, out=batch_ptr[1:])
     elif batch_ptr.ndim != 1 or batch_ptr.shape[0] != systems + 1:
@@ -60,23 +75,48 @@ def _select_pair_grid(
     cell: torch.Tensor,
     pbc: torch.Tensor,
     cutoff: float,
-    batch_idx: torch.Tensor,
+    batch_idx: torch.Tensor | None,
     batch_ptr: torch.Tensor | None,
     max_nbins: int,
     minimum: int,
     single_system: bool = False,
     num_atoms: int | None = None,
 ) -> tuple[int, torch.Tensor, torch.Tensor]:
-    """Size current batched cells using geometry and per-system populations.
+    """Select cell grids from cell geometry and per-system populations.
 
-    Supplied boundaries provide populations directly. Direct binding callers
-    with only batch indices use their histogram, including empty systems.
-    Returns total allocation size, search radii and the selected grid tensor.
-    Torch owns every buffer and the current stream through the sizing launch.
-    Single-system callers can pass the known ``num_atoms`` directly, avoiding
-    allocation and transfer of a two-element boundary tensor.
+    Parameters
+    ----------
+    cell : torch.Tensor
+        Cell matrices with shape ``(num_systems, 3, 3)``.
+    pbc : torch.Tensor
+        Periodic boundary flags with shape ``(num_systems, 3)``.
+    cutoff : float
+        Neighbor search cutoff distance.
+    batch_idx : torch.Tensor or None
+        System index for each atom. Required when ``batch_ptr`` is omitted,
+        except when ``single_system`` and ``num_atoms`` provide the population.
+    batch_ptr : torch.Tensor or None
+        Optional cumulative system boundaries for atom populations.
+    max_nbins : int
+        Maximum number of cells allowed per system.
+    minimum : int
+        Configured per-axis minimum used for the compatibility candidate grid.
+    single_system : bool, default=False
+        Select the single-system kernel specialization.
+    num_atoms : int or None, default=None
+        Known single-system population, avoiding construction of boundaries.
+
+    Returns
+    -------
+    tuple[int, torch.Tensor, torch.Tensor]
+        Total cell allocation size, search radii, and selected grid dimensions.
+
+    Notes
+    -----
     Counts are validated and summed on the device. Automatic allocation reads
-    one int64 size; zero reports an invalid cell in a nonempty batch.
+    one int64 size; zero reports an invalid cell in a nonempty batch. A single
+    system can use ``num_atoms`` directly, avoiding a two-element boundary
+    tensor.
     """
     if max_nbins <= 0:
         raise ValueError("max_nbins must be positive")

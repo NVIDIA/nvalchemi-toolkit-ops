@@ -52,9 +52,31 @@ def _select_pair_grid(
     capacity: int,
     single_system: bool = False,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Select grids, radii and cell counts within equal per-system budgets.
+    """Select per-system grids, stencil radii, and cell counts.
 
-    Geometry and populations are runtime inputs. Capacity limits the candidate
+    Parameters
+    ----------
+    cell : jax.Array, shape (num_systems, 3, 3)
+        Cell matrices used to derive the candidate grids.
+    pbc : jax.Array, shape (num_systems, 3)
+        Periodicity flags for each system and axis.
+    boundaries : jax.Array, shape (num_systems + 1,)
+        Cumulative atom offsets used to derive each system's population.
+    cutoff : float
+        Neighbor cutoff in the same length units as ``cell``.
+    capacity : int
+        Total cell capacity shared equally among the systems.
+    single_system : bool, default False
+        Apply single-system candidate constraints when selecting the grid.
+
+    Returns
+    -------
+    tuple[jax.Array, jax.Array, jax.Array]
+        Per-system grids, stencil radii, and total cell counts.
+
+    Notes
+    -----
+    Geometry and populations are runtime inputs. Capacity limits candidate
     grids using the existing build minimum and pair-query block width.
     """
     systems = cell.shape[0]

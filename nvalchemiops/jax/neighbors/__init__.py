@@ -218,15 +218,18 @@ def neighbor_list(
     grid_policy : {"configured", "adaptive"}, default "configured"
         Grid-sizing policy for supported pair-centric cell-list paths.
         ``"adaptive"`` opts into geometry/population-based grid selection;
-        ``"configured"`` preserves the existing grid-sizing rule. Other neighbor
-        methods retain their grid behavior. JAX adaptive selection is eager-only.
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. Other neighbor methods retain their grid behavior. JAX
+        adaptive selection is eager-only.
     state : NeighborListState, optional
         State returned by :func:`prepare_neighbor_list`. Its fixed
         configuration takes precedence. Prepared execution accepts positions,
         an applicable current cell, selective ``rebuild_flags``, and current
         ``pair_params`` as runtime inputs and returns ``(results, next_state)``.
-        Prepared states use configured sizing; adaptive ``grid_policy`` is
-        available only for eager calls without ``state``.
+        A ``NeighborListState`` uses configured grid sizing. Adaptive
+        ``grid_policy`` is available only for eager calls without a
+        ``NeighborListState``.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -423,8 +426,8 @@ def neighbor_list(
     if state is not None:
         if grid_policy == "adaptive":
             raise ValueError(
-                "grid_policy='adaptive' is not supported with state; "
-                "prepared states use configured sizing"
+                "grid_policy='adaptive' is not supported with NeighborListState; "
+                "NeighborListState uses configured grid sizing"
             )
         return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
     if cutoff is None:

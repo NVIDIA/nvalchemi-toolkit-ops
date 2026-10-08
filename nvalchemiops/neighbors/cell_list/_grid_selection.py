@@ -38,7 +38,19 @@ def _validated_cell_total(
     counts: wp.array(dtype=wp.int32),
     total: wp.array(dtype=wp.int64),
 ) -> None:
-    """Reduce valid cell counts to one allocation size.
+    """Reduce positive per-system cell counts to one allocation size.
+
+    Parameters
+    ----------
+    counts : wp.array, shape (num_systems,)
+        Cell counts for each system.
+    total : wp.array, shape (1,)
+        Output allocation size.
+
+    Returns
+    -------
+    None
+        The result is written to ``total[0]``.
 
     Notes
     -----
@@ -79,7 +91,34 @@ def _get_pair_grid_kernel(
     scalar_population: bool = False,
     write_counts: bool = True,
 ) -> wp.Kernel:
-    """Return the geometry and occupancy sizing kernel for a query block width."""
+    """Create the pair-grid sizing kernel for a query block width.
+
+    Parameters
+    ----------
+    dtype : type
+        Warp floating-point type used for cell geometry.
+    block_dim : int
+        Thread block width of the pair-centric query.
+    single_system : bool, default False
+        Apply constraints for a single-system query.
+    scalar_population : bool, default False
+        Read the system population from ``num_atoms`` instead of boundaries.
+    write_counts : bool, default True
+        Write per-system cell counts to the output array.
+
+    Returns
+    -------
+    wp.Kernel
+        Kernel that selects grids, stencil radii, and cell counts from the
+        current geometry and atom populations.
+
+    Notes
+    -----
+    Each batch system is scored using its own population and stencil radius.
+    The batch query launch uses the maximum stencil radius across systems, so
+    this per-system estimate does not model the extra work that maximum can
+    impose on systems with shorter stencils.
+    """
     mat = wp.mat33 if dtype == wp.float32 else wp.mat33d
     vec = wp.vec3 if dtype == wp.float32 else wp.vec3d
     block = wp.constant(block_dim)

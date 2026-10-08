@@ -1077,7 +1077,35 @@ def _batch_build_cell_list(
     select_pair_grid: bool = False,
     _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
-    """Build batched cells with optional geometry/population grid selection."""
+    """Build batched cell lists with optional pair-grid selection.
+
+    Parameters
+    ----------
+    positions : jax.Array
+        Concatenated Cartesian coordinates for all systems.
+    batch_idx : jax.Array, optional
+        System index for each atom.
+    batch_ptr : jax.Array, optional
+        Cumulative atom offsets for each system.
+    cell : jax.Array, optional
+        Cell matrices for the systems.
+    pbc : jax.Array, optional
+        Per-axis periodicity flags for each system.
+    cutoff : float, default 5.0
+        Neighbor cutoff in the same length units as ``cell``.
+    max_total_cells : int, optional
+        Total cell capacity shared by the batch.
+    select_pair_grid : bool, default False
+        Select per-system grids from current geometry and populations for
+        supported eager pair-centric calls.
+    _fixed_cell_geometry : tuple of jax.Array, optional
+        Prepared fixed-cell geometry and sizing metadata.
+
+    Returns
+    -------
+    tuple[jax.Array, ...]
+        Batched cell-list buffers and geometry metadata consumed by the query.
+    """
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
         batch_idx, batch_ptr, positions.shape[0]
@@ -2299,10 +2327,13 @@ def batch_cell_list(
         (matrix return path only; the COO path is unaffected). If None, the
         matrix retains the kernel's default padding of ``total_atoms``.
     grid_policy : {"configured", "adaptive"}, default "configured"
-        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
-        selects grids from geometry and atom populations on supported full-list
-        pair-centric paths. Its cost model assumes approximately uniform spatial
-        occupancy; performance depends on the input distribution.
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. ``"adaptive"`` selects grids from geometry and atom
+        populations on supported full-list pair-centric paths. Its cost model
+        assumes approximately uniform spatial occupancy; performance depends on
+        the input distribution. Each system is scored using its own stencil
+        radius; the batch query launch uses the largest radius across systems.
         Adaptive selection applies to eager calls without static pair-centric
         launch metadata; traced calls retain the configured grid.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"

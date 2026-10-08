@@ -226,7 +226,7 @@ def test_prepared_cell_list_grid_policy_dispatch(
 
     with pytest.raises(
         ValueError,
-        match="grid_policy='adaptive' is not supported with state",
+        match="grid_policy='adaptive' is not supported with NeighborListState",
     ):
         neighbor_list(positions, state=state, grid_policy="adaptive")
     with pytest.raises(ValueError, match="grid_policy"):

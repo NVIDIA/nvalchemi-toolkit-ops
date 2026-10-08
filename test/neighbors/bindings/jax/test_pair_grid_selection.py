@@ -16,12 +16,13 @@
 """Exercise eager JAX grid selection through the public neighbor bindings."""
 
 import cProfile
-import sys
+from collections import Counter
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import warp as wp
 
 from nvalchemiops.jax.neighbors import neighbor_list
 from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
@@ -31,6 +32,74 @@ from .conftest import requires_gpu
 from .test_pair_fn import _PAIR_FN, _pair_params
 
 pytestmark = requires_gpu
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("public", [False, True])
+@pytest.mark.parametrize(
+    "return_vectors,return_distances", [(True, False), (False, True), (True, True)]
+)
+def test_pair_output_grid_policy_gpu_execution(
+    batched, public, return_vectors, return_distances
+):
+    """Auto pair outputs retain configured GPU work; explicit pairs opt in."""
+    systems = 2 if batched else 1
+    atoms_per_system = 32
+    atoms = systems * atoms_per_system
+    positions = jnp.asarray(
+        np.random.default_rng(89).random((atoms, 3)) * 12, dtype=jnp.float32
+    )
+    common = dict(
+        cutoff=6.0,
+        cell=jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12, (systems, 1, 1)),
+        pbc=jnp.ones((systems, 3), dtype=jnp.bool_),
+        max_neighbors=64,
+        max_total_cells=64 * systems,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+    )
+    if batched:
+        common.update(
+            batch_idx=jnp.repeat(
+                jnp.arange(systems, dtype=jnp.int32), atoms_per_system
+            ),
+            batch_ptr=jnp.arange(systems + 1, dtype=jnp.int32) * atoms_per_system,
+        )
+    call = neighbor_list if public else (batch_cell_list if batched else cell_list)
+
+    def record(policy, strategy):
+        """Record warmed Warp GPU launches with all returned work completed."""
+        options = dict(common, grid_policy=policy)
+        if public:
+            method = "batch_cell_list" if batched else "cell_list"
+            options["method"] = (
+                f"{method}_pair_centric" if strategy == "pair_centric" else method
+            )
+        elif strategy is not None:
+            options["strategy"] = strategy
+        jax.block_until_ready(call(positions, **options))
+        with wp.ScopedTimer(
+            "pair-output grid policy", cuda_filter=wp.TIMING_KERNEL, print=False
+        ) as timer:
+            jax.block_until_ready(call(positions, **options))
+        launches = Counter(event.name for event in timer.timing_results)
+        assert launches, "The GPU recorder must observe warmed Warp launches"
+        return launches
+
+    # Compare observed operations between policies, without hard-coding kernel
+    # names or inspecting Python frames. The explicit-pair control must expose
+    # adaptive-only GPU work, so a missing selector observation cannot pass.
+    configured_pair = record("configured", "pair_centric")
+    adaptive_pair = record("adaptive", "pair_centric")
+    adaptive_only = adaptive_pair - configured_pair
+    assert adaptive_only, "Explicit pair-centric calls must execute adaptive GPU work"
+    for strategy in (None,) if public else (None, "auto"):
+        configured = record("configured", strategy)
+        adaptive = record("adaptive", strategy)
+        assert adaptive == configured, (
+            "Auto pair-output calls must retain configured GPU work"
+        )
+        assert not (adaptive & adaptive_only)
 
 
 @pytest.mark.parametrize("batched", [False, True])
@@ -110,36 +179,10 @@ def test_pair_output_grid_policy_matches_query(
         options["method"] = method if strategy == "auto" else f"{method}_{strategy}"
     elif strategy is not None:
         options["strategy"] = strategy
-    expected_query = "pair_centric" if strategy == "pair_centric" else "atom_centric"
-
     for policy in (None, "configured", "adaptive"):
-        selections = []
-        queries = []
-
-        def observe(frame, event, arg):
-            """Observe preparation and the forward consumer without replacing them."""
-            if event == "call":
-                name = frame.f_code.co_name
-                if name == "_select_pair_grid":
-                    selections.append(name)
-                elif name in {
-                    "_cell_list_pair_outputs_forward",
-                    "_batch_cell_list_pair_outputs_forward",
-                }:
-                    queries.append(frame.f_locals["strategy"])
-
         policy_options = {} if policy is None else {"grid_policy": policy}
-        previous_profiler = sys.getprofile()
-        try:
-            sys.setprofile(observe)
-            actual = call(**common, **options, **policy_options)
-            jax.block_until_ready(actual)
-        finally:
-            sys.setprofile(previous_profiler)
-        assert queries == [expected_query]
-        assert len(selections) == int(
-            policy == "adaptive" and expected_query == "pair_centric"
-        )
+        actual = call(**common, **options, **policy_options)
+        jax.block_until_ready(actual)
         counts = np.diff(np.asarray(actual[1])) if compact else actual[1]
         np.testing.assert_array_equal(counts, expected[1])
         np.testing.assert_array_equal(_pairs(actual, compact), _pairs(expected, False))

@@ -21,7 +21,10 @@ import torch
 
 from nvalchemiops.neighbors.base_dispatch import DEFAULT_BATCH_MAX_NBINS
 from nvalchemiops.torch.neighbors import neighbor_list
-from nvalchemiops.torch.neighbors._cell_grid import _select_pair_grid
+from nvalchemiops.torch.neighbors._cell_grid import (
+    _pair_grid_boundaries,
+    _select_pair_grid,
+)
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
     estimate_batch_cell_list_sizes,
@@ -50,6 +53,58 @@ def _workspace_kwargs(atoms, cells, radius):
     return dict(
         zip(names, allocate_cell_list(atoms, cells, radius, radius.device), strict=True)
     )
+
+
+@pytest.mark.parametrize("idx_dtype", [torch.int32, torch.int64])
+def test_pair_grid_boundaries_idx_only_counts_empty_systems(idx_dtype):
+    """Index-only sizing counts uneven populations and empty systems eagerly."""
+    cell = torch.eye(3, device="cuda").repeat(5, 1, 1)
+    batch_idx = torch.tensor([0, 0, 0, 2, 2], device="cuda", dtype=idx_dtype)
+
+    boundaries = _pair_grid_boundaries(cell, batch_idx, None)
+
+    assert boundaries.dtype == torch.int32
+    assert boundaries.is_contiguous()
+    assert boundaries.tolist() == [0, 3, 3, 5, 5, 5]
+
+
+def test_pair_grid_boundaries_preserves_supplied_ptr_shortcut():
+    """A supplied pointer provides populations without atom indices."""
+    cell = torch.eye(3, device="cuda").repeat(4, 1, 1)
+    batch_ptr = torch.tensor([0, 3, 3, 8, 8], device="cuda", dtype=torch.int32)
+
+    boundaries = _pair_grid_boundaries(cell, None, batch_ptr)
+
+    assert boundaries.data_ptr() == batch_ptr.data_ptr()
+    assert boundaries.tolist() == [0, 3, 3, 8, 8]
+
+
+def test_pair_grid_boundaries_empty_index_input():
+    """An empty index tensor produces zero populations for every system."""
+    cell = torch.eye(3, device="cuda").repeat(3, 1, 1)
+
+    boundaries = _pair_grid_boundaries(
+        cell, torch.empty(0, device="cuda", dtype=torch.int32), None
+    )
+
+    assert boundaries.tolist() == [0, 0, 0, 0]
+
+
+def test_pair_grid_boundaries_idx_only_is_cuda_graph_safe():
+    """Capture and replay index-only boundary construction without host sync."""
+    cell = torch.eye(3, device="cuda").repeat(3, 1, 1)
+    batch_idx = torch.tensor([0, 0, 2, 2], device="cuda", dtype=torch.int32)
+    expected = torch.tensor([0, 2, 2, 4], device="cuda", dtype=torch.int32)
+    _pair_grid_boundaries(cell, batch_idx, None)
+    torch.cuda.synchronize()
+
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        boundaries = _pair_grid_boundaries(cell, batch_idx, None)
+    graph.replay()
+    torch.cuda.synchronize()
+
+    torch.testing.assert_close(boundaries, expected)
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
@@ -709,3 +764,118 @@ def test_grid_policy_default_and_opt_in(batched, public, reuse_workspace):
             torch.testing.assert_close(grids[1], grids[2])
     with pytest.raises(ValueError, match="grid_policy"):
         call(**common, grid_policy="unknown")
+
+
+@pytest.mark.parametrize("explicit_pair_strategy", [False, True])
+@pytest.mark.parametrize("reuse_workspace", [False, True])
+def test_adaptive_target_calls_use_configured_grid_and_keep_outputs(
+    explicit_pair_strategy, reuse_workspace
+):
+    """Target rows retain configured sizing and match an independent query."""
+    populations = [512, 8192]
+    atoms_per_system = max(populations)
+    total_atoms = sum(populations)
+    systems = len(populations)
+    side = 21.978
+    generator = torch.Generator(device="cuda").manual_seed(79)
+    positions = torch.rand((total_atoms, 3), generator=generator, device="cuda") * side
+    cell = torch.eye(3, device="cuda").repeat(systems, 1, 1) * side
+    pbc = torch.ones((systems, 3), device="cuda", dtype=torch.bool)
+    batch_idx = torch.arange(
+        systems, device="cuda", dtype=torch.int32
+    ).repeat_interleave(torch.tensor(populations, device="cuda", dtype=torch.int32))
+    batch_ptr = torch.tensor([0, 512, total_atoms], device="cuda", dtype=torch.int32)
+    target_indices = torch.tensor(
+        [513, 1, total_atoms - 1, 4], device="cuda", dtype=torch.int32
+    )
+    common = dict(
+        positions=positions,
+        cutoff=6.0,
+        cell=cell,
+        pbc=pbc,
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        max_neighbors=atoms_per_system,
+        target_indices=target_indices,
+        return_distances=True,
+        return_vectors=True,
+    )
+    strategy_kwargs = {"strategy": "pair_centric"} if explicit_pair_strategy else {}
+
+    def workspace():
+        """Return storage large enough to distinguish the selected grids."""
+        _, radius = estimate_batch_cell_list_sizes(
+            cell, pbc, 6.0, min_cells_per_dimension=4
+        )
+        return _workspace_kwargs(
+            total_atoms,
+            512 * systems,
+            radius,
+        )
+
+    adaptive_workspace = workspace() if reuse_workspace else {}
+    if reuse_workspace:
+        batch_cell_list(
+            **common,
+            **strategy_kwargs,
+            grid_policy="adaptive",
+            **adaptive_workspace,
+        )
+        positions.mul_(1.02)
+        cell.mul_(1.02)
+    actual = batch_cell_list(
+        **common,
+        **strategy_kwargs,
+        grid_policy="adaptive",
+        **adaptive_workspace,
+    )
+    reference = batch_naive_neighbor_list(
+        **common,
+        max_atoms_per_system=atoms_per_system,
+        strategy="scalar",
+    )
+
+    assert actual[0].shape[0] == target_indices.shape[0]
+    torch.testing.assert_close(actual[1], reference[1])
+    assert torch.all(actual[1] <= actual[0].shape[1])
+    assert torch.all(reference[1] <= reference[0].shape[1])
+    for row in range(target_indices.shape[0]):
+        count = int(actual[1][row])
+        actual_pairs = torch.cat(
+            (actual[0][row, :count, None], actual[2][row, :count]), dim=1
+        )
+        reference_pairs = torch.cat(
+            (reference[0][row, :count, None], reference[2][row, :count]), dim=1
+        )
+        assert sorted(actual_pairs.tolist()) == sorted(reference_pairs.tolist())
+        actual_geometry = {
+            tuple(pair.tolist()): (actual[3][row, slot], actual[4][row, slot])
+            for slot, pair in enumerate(actual_pairs)
+        }
+        reference_geometry = {
+            tuple(pair.tolist()): (reference[3][row, slot], reference[4][row, slot])
+            for slot, pair in enumerate(reference_pairs)
+        }
+        assert actual_geometry.keys() == reference_geometry.keys()
+        for key in actual_geometry:
+            for value, expected_value in zip(
+                actual_geometry[key], reference_geometry[key], strict=True
+            ):
+                torch.testing.assert_close(value, expected_value)
+
+    if reuse_workspace:
+        configured_workspace = workspace()
+        batch_cell_list(
+            **common,
+            **strategy_kwargs,
+            grid_policy="configured",
+            **configured_workspace,
+        )
+        torch.testing.assert_close(
+            adaptive_workspace["cells_per_dimension"],
+            configured_workspace["cells_per_dimension"],
+        )
+        torch.testing.assert_close(
+            adaptive_workspace["neighbor_search_radius"],
+            configured_workspace["neighbor_search_radius"],
+        )
