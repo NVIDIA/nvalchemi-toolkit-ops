@@ -24,6 +24,10 @@ from nvalchemiops.neighbors.naive import (
     naive_neighbor_matrix,
     naive_neighbor_matrix_pbc,
 )
+from nvalchemiops.neighbors.naive.dispatch import (
+    _NaiveWorkload,
+    _resolve_naive_strategy,
+)
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
     selective_zero_num_neighbors_single,
@@ -41,6 +45,14 @@ from nvalchemiops.torch.neighbors._autograd import (
 from nvalchemiops.torch.neighbors._compiled_pair_fn import (
     CompiledPairFn,
     is_compiled_pair_fn,
+)
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
+from nvalchemiops.torch.neighbors._naive_partial import (
+    _pack_partial_outputs,
+    _prepare_partial_outputs,
+    _PreparedTargetValidationHandle,
+    _validate_partial_output,
+    _validate_partial_request,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _validate_pair_params_present,
@@ -66,6 +78,7 @@ def _naive_neighbor_matrix_no_pbc(
     half_fill: bool = False,
     rebuild_flags: torch.Tensor | None = None,
     strategy: str = "auto",
+    target_indices: torch.Tensor | None = None,
 ) -> None:
     """Fill neighbor matrix for atoms using naive O(N^2) algorithm.
 
@@ -103,6 +116,9 @@ def _naive_neighbor_matrix_no_pbc(
     nvalchemiops.neighbors.naive.naive_neighbor_matrix : Core warp launcher
     naive_neighbor_list : High-level wrapper function
     """
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError("Partial neighbor lists do not support rebuild_flags")
+
     device = positions.device
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
@@ -115,6 +131,13 @@ def _naive_neighbor_matrix_no_pbc(
     )
     wp_num_neighbors = wp.from_torch(
         num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_target_indices = (
+        wp.from_torch(
+            target_indices, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
+        if target_indices is not None
+        else None
     )
     with scoped_warp_stream(device):
         if rebuild_flags is not None:
@@ -137,6 +160,7 @@ def _naive_neighbor_matrix_no_pbc(
             half_fill=half_fill,
             rebuild_flags=wp_rebuild_flags,
             strategy=strategy,
+            target_indices=wp_target_indices,
         )
 
 
@@ -163,6 +187,8 @@ def _naive_neighbor_matrix_pbc(
     per_atom_cell_offsets_buffer: torch.Tensor | None = None,
     inv_cell_buffer: torch.Tensor | None = None,
     strategy: str = "auto",
+    target_indices: torch.Tensor | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """Compute neighbor matrix with periodic boundary conditions using naive O(N^2) algorithm.
 
@@ -208,6 +234,9 @@ def _naive_neighbor_matrix_pbc(
     nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc : Core warp launcher
     naive_neighbor_list : High-level wrapper function
     """
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError("Partial neighbor lists do not support rebuild_flags")
+
     device = positions.device
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
@@ -234,6 +263,13 @@ def _naive_neighbor_matrix_pbc(
     )
     wp_num_neighbors = wp.from_torch(
         num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_target_indices = (
+        wp.from_torch(
+            target_indices, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
+        if target_indices is not None
+        else None
     )
 
     with scoped_warp_stream(device):
@@ -297,6 +333,8 @@ def _naive_neighbor_matrix_pbc(
             per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
             inv_cell_buffer=wp_inv_cell,
             strategy=strategy,
+            target_indices=wp_target_indices,
+            reuse_inv_cell=reuse_inv_cell,
         )
 
 
@@ -382,6 +420,8 @@ def _naive_neighbor_matrix_pbc_pair(
     max_shifts_per_system: int,
     half_fill: bool = False,
     wrap_positions: bool = True,
+    inv_cell_buffer: torch.Tensor | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """PBC naive neighbor matrix kernel with pair outputs.
 
@@ -426,6 +466,16 @@ def _naive_neighbor_matrix_pbc_pair(
     wp_neighbor_distances = wp.from_torch(
         neighbor_distances, dtype=wp_dtype, requires_grad=False
     )
+    wp_inv_cell = (
+        wp.from_torch(
+            inv_cell_buffer,
+            dtype=wp_mat_dtype,
+            requires_grad=False,
+            return_ctype=True,
+        )
+        if inv_cell_buffer is not None
+        else None
+    )
 
     naive_neighbor_matrix_pbc(
         positions=wp_positions,
@@ -446,6 +496,8 @@ def _naive_neighbor_matrix_pbc_pair(
         return_distances=True,
         neighbor_vectors=wp_neighbor_vectors,
         neighbor_distances=wp_neighbor_distances,
+        inv_cell_buffer=wp_inv_cell,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -529,12 +581,24 @@ def _naive_neighbor_matrix_pbc_pair_target(
     max_shifts_per_system: int,
     half_fill: bool = False,
     wrap_positions: bool = True,
+    inv_cell_buffer: torch.Tensor | None = None,
+    reuse_inv_cell: bool = False,
 ) -> None:
     """PBC naive pair-output kernel for compact target rows."""
     device = positions.device
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
     wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
+    wp_inv_cell = (
+        wp.from_torch(
+            inv_cell_buffer,
+            dtype=wp_mat_dtype,
+            requires_grad=False,
+            return_ctype=True,
+        )
+        if inv_cell_buffer is not None
+        else None
+    )
     naive_neighbor_matrix_pbc(
         positions=wp.from_torch(
             positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
@@ -579,6 +643,8 @@ def _naive_neighbor_matrix_pbc_pair_target(
         neighbor_distances=wp.from_torch(
             neighbor_distances, dtype=wp_dtype, requires_grad=False
         ),
+        inv_cell_buffer=wp_inv_cell,
+        reuse_inv_cell=reuse_inv_cell,
     )
 
 
@@ -713,6 +779,8 @@ def _register_compiled_naive_pbc_pair_op(compiled: CompiledPairFn):
         max_shifts_per_system: int,
         half_fill: bool,
         wrap_positions: bool,
+        inv_cell_buffer: torch.Tensor | None,
+        reuse_inv_cell: bool,
     ) -> None:
         device = positions.device
         wp_dtype = get_wp_dtype(positions.dtype)
@@ -784,6 +852,17 @@ def _register_compiled_naive_pbc_pair_op(compiled: CompiledPairFn):
             neighbor_distances=wp.from_torch(
                 neighbor_distances, dtype=wp_dtype, requires_grad=False
             ),
+            inv_cell_buffer=(
+                wp.from_torch(
+                    inv_cell_buffer,
+                    dtype=wp_mat_dtype,
+                    requires_grad=False,
+                    return_ctype=True,
+                )
+                if inv_cell_buffer is not None
+                else None
+            ),
+            reuse_inv_cell=reuse_inv_cell,
             pair_fn=compiled.pair_fn,
             pair_params=wp.from_torch(pair_params, dtype=wp_dtype, requires_grad=False),
             pair_energies=wp.from_torch(
@@ -796,25 +875,6 @@ def _register_compiled_naive_pbc_pair_op(compiled: CompiledPairFn):
 
     register_noop_fake(_compiled_naive_pbc_pair)
     return _compiled_naive_pbc_pair
-
-
-def _validate_output_buffer(
-    name: str,
-    tensor: torch.Tensor | None,
-    expected_shape: tuple[int, ...],
-    expected_dtype: torch.dtype | None = None,
-) -> None:
-    """Validate optional compact-row output buffers."""
-    if tensor is None:
-        return
-    if tuple(tensor.shape) != expected_shape:
-        raise ValueError(
-            f"{name} must have shape {expected_shape}; got {tuple(tensor.shape)}.",
-        )
-    if expected_dtype is not None and tensor.dtype != expected_dtype:
-        raise ValueError(
-            f"{name} dtype must be {expected_dtype}; got {tensor.dtype}.",
-        )
 
 
 @scoped_torch_warp_stream
@@ -839,6 +899,7 @@ def _naive_pair_outputs_forward(
     pair_params: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure for the torch naive autograd path.
 
@@ -892,6 +953,12 @@ def _naive_pair_outputs_forward(
                 max_shifts_per_system=int(max_shifts_per_system),
                 half_fill=half_fill,
                 wrap_positions=wrap_positions,
+                inv_cell_buffer=(
+                    _fixed_cell_geometry.inv_cell
+                    if _fixed_cell_geometry is not None
+                    else None
+                ),
+                reuse_inv_cell=_fixed_cell_geometry is not None,
             )
     elif pair_fn is None and not is_partial and pbc is None:
         _naive_neighbor_matrix_no_pbc_pair(
@@ -930,6 +997,12 @@ def _naive_pair_outputs_forward(
             max_shifts_per_system=int(max_shifts_per_system),
             half_fill=half_fill,
             wrap_positions=wrap_positions,
+            inv_cell_buffer=(
+                _fixed_cell_geometry.inv_cell
+                if _fixed_cell_geometry is not None
+                else None
+            ),
+            reuse_inv_cell=_fixed_cell_geometry is not None,
         )
     elif pair_fn is None:
         _naive_neighbor_matrix_pbc_pair_target(
@@ -948,6 +1021,12 @@ def _naive_pair_outputs_forward(
             max_shifts_per_system=int(max_shifts_per_system),
             half_fill=half_fill,
             wrap_positions=wrap_positions,
+            inv_cell_buffer=(
+                _fixed_cell_geometry.inv_cell
+                if _fixed_cell_geometry is not None
+                else None
+            ),
+            reuse_inv_cell=_fixed_cell_geometry is not None,
         )
     else:
         if torch.compiler.is_compiling():
@@ -957,7 +1036,7 @@ def _naive_pair_outputs_forward(
             )
         # ``pair_fn`` and/or ``target_indices`` bypass the custom op and call
         # the Warp scalar launcher directly. Torch custom ops cannot carry a
-        # Python pair_fn, and they do not expose compact partial rows.
+        # Python pair_fn; compact partial rows use their dedicated routing path.
         wp_dtype = get_wp_dtype(positions.dtype)
         wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
         pair_kwargs = {}
@@ -1075,6 +1154,17 @@ def _naive_pair_outputs_forward(
                 neighbor_distances=wp.from_torch(
                     neighbor_distances, dtype=wp_dtype, requires_grad=False
                 ),
+                inv_cell_buffer=(
+                    wp.from_torch(
+                        _fixed_cell_geometry.inv_cell,
+                        dtype=wp_mat_dtype,
+                        requires_grad=False,
+                        return_ctype=True,
+                    )
+                    if _fixed_cell_geometry is not None
+                    else None
+                ),
+                reuse_inv_cell=_fixed_cell_geometry is not None,
                 **pair_kwargs,
             )
     shifts_arg = (
@@ -1137,6 +1227,8 @@ def naive_neighbor_list(
     pair_forces: torch.Tensor | None = None,
     strategy: str = "auto",
     target_indices: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
+    _prepared_target_handle: _PreparedTargetValidationHandle | None = None,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -1159,6 +1251,7 @@ def naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        Eager calls with zero or negative cutoffs raise ``ValueError``.
     pbc : torch.Tensor, shape (1, 3), dtype=torch.bool, optional
         Periodic boundary condition flags for each dimension.
         True enables periodicity in that direction. Default is None (no PBC).
@@ -1250,8 +1343,10 @@ def naive_neighbor_list(
         omitted and ``pair_fn`` is set, allocated internally.
     strategy : {"auto", "scalar", "tile"}, default "auto"
         Naive kernel variant.  ``"scalar"`` uses a global-load O(N^2) path;
-        ``"tile"`` uses shared-memory tiling (CUDA only, no PBC pair outputs
-        or partial rows).  ``"auto"`` picks between them.
+        ``"tile"`` uses CUDA shared-memory tiling for topology-only compact
+        partial rows. Concrete-shape single-system CUDA ``"auto"`` selects tile
+        at float64 ``N >= 256`` and float16/float32 ``N >= 1024``. Explicit
+        tile rejects geometry and pair outputs.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
@@ -1260,7 +1355,11 @@ def naive_neighbor_list(
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
         ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        buffers must be compact-row shaped, not full atom-row shaped. Repeated
+        valid rows are supported. Eager calls reject out-of-bounds values; under
+        ``torch.compile`` callers must prevalidate them. When neither result
+        overflows capacity, scalar and tile stored ``(neighbor, shift)``
+        multisets agree although ordering may differ.
 
     Returns
     -------
@@ -1340,6 +1439,9 @@ def naive_neighbor_list(
     nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc : Core warp launcher (with PBC)
     cell_list : O(N) cell list method for larger systems
     """
+    if cutoff <= 0:
+        raise ValueError("cutoff must be positive")
+
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
     if pbc is not None and cell is None:
@@ -1350,7 +1452,7 @@ def naive_neighbor_list(
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc.unsqueeze(0)
 
-    has_pair_outputs = (
+    has_geometry_or_pair_outputs = (
         bool(return_distances)
         or bool(return_vectors)
         or neighbor_vectors is not None
@@ -1358,14 +1460,110 @@ def naive_neighbor_list(
         or pair_fn is not None
         or pair_energies is not None
         or pair_forces is not None
-        or target_indices is not None
     )
-    if strategy == "tile" and target_indices is not None:
-        raise NotImplementedError(
-            "strategy='tile' has no target_indices (partial "
-            "neighbor-list) variant; use strategy='scalar'.",
+    topology_only_partial = (
+        target_indices is not None and not has_geometry_or_pair_outputs
+    )
+    if target_indices is not None:
+        _validate_partial_request(
+            positions,
+            target_indices,
+            rebuild_flags,
+            strategy=strategy,
+            has_geometry_or_pair_outputs=has_geometry_or_pair_outputs,
+            prepared_target_handle=_prepared_target_handle,
         )
-    if has_pair_outputs:
+    if topology_only_partial:
+        strategy = _resolve_naive_strategy(
+            strategy,
+            _NaiveWorkload(
+                device_kind="cpu" if positions.device.type == "cpu" else "cuda",
+                wp_dtype=get_wp_dtype(positions.dtype),
+                num_atoms=int(positions.shape[0]),
+                num_systems=1,
+                partial=True,
+                batched=False,
+                pbc=pbc is not None,
+                wrap_positions=wrap_positions,
+                geometry_outputs=False,
+            ),
+        )
+        if fill_value is None:
+            fill_value = int(positions.shape[0])
+        (
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            _max_neighbors,
+            num_rows,
+        ) = _prepare_partial_outputs(
+            positions,
+            target_indices,
+            cutoff,
+            pbc_enabled=pbc is not None,
+            max_neighbors=max_neighbors,
+            fill_value=fill_value,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        if num_rows > 0:
+            if pbc is None:
+                _naive_neighbor_matrix_no_pbc(
+                    positions=positions,
+                    cutoff=cutoff,
+                    neighbor_matrix=neighbor_matrix,
+                    num_neighbors=num_neighbors,
+                    half_fill=half_fill,
+                    strategy=strategy,
+                    target_indices=target_indices,
+                )
+            else:
+                if (
+                    shift_range_per_dimension is None
+                    or num_shifts_per_system is None
+                    or max_shifts_per_system is None
+                ):
+                    (
+                        shift_range_per_dimension,
+                        num_shifts_per_system,
+                        max_shifts_per_system,
+                    ) = compute_naive_num_shifts(cell.detach(), cutoff, pbc)
+                _naive_neighbor_matrix_pbc(
+                    positions=positions,
+                    cutoff=cutoff,
+                    cell=cell,
+                    pbc=pbc,
+                    neighbor_matrix=neighbor_matrix,
+                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    num_neighbors=num_neighbors,
+                    shift_range_per_dimension=shift_range_per_dimension,
+                    num_shifts_per_system=num_shifts_per_system,
+                    max_shifts_per_system=max_shifts_per_system,
+                    half_fill=half_fill,
+                    wrap_positions=wrap_positions,
+                    positions_wrapped_buffer=positions_wrapped_buffer,
+                    per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+                    inv_cell_buffer=(
+                        _fixed_cell_geometry.inv_cell
+                        if _fixed_cell_geometry is not None
+                        else inv_cell_buffer
+                    ),
+                    reuse_inv_cell=(
+                        _fixed_cell_geometry is not None
+                        and _fixed_cell_geometry.inv_cell is not None
+                    ),
+                    strategy=strategy,
+                    target_indices=target_indices,
+                )
+        return _pack_partial_outputs(
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            fill_value=int(fill_value),
+            return_neighbor_list=return_neighbor_list,
+        )
+    if has_geometry_or_pair_outputs:
         if is_compiled_pair_fn(pair_fn) and torch.compiler.is_compiling():
             if return_neighbor_list:
                 raise NotImplementedError(
@@ -1419,48 +1617,54 @@ def naive_neighbor_list(
             else positions.shape[0]
         )
         if target_indices is not None:
-            _validate_output_buffer(
+            _validate_partial_output(
                 "neighbor_matrix",
                 neighbor_matrix,
                 (num_rows, max_neighbors),
                 torch.int32,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "num_neighbors",
                 num_neighbors,
                 (num_rows,),
                 torch.int32,
+                positions.device,
             )
-            if pbc is not None:
-                _validate_output_buffer(
-                    "neighbor_matrix_shifts",
-                    neighbor_matrix_shifts,
-                    (num_rows, max_neighbors, 3),
-                    torch.int32,
-                )
-            _validate_output_buffer(
+            _validate_partial_output(
+                "neighbor_matrix_shifts",
+                neighbor_matrix_shifts,
+                (num_rows, max_neighbors, 3) if pbc is not None else None,
+                torch.int32 if pbc is not None else None,
+                positions.device,
+            )
+            _validate_partial_output(
                 "neighbor_distances",
                 neighbor_distances,
                 (num_rows, max_neighbors),
                 positions.dtype,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "neighbor_vectors",
                 neighbor_vectors,
                 (num_rows, max_neighbors, 3),
                 positions.dtype,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "pair_energies",
                 pair_energies,
                 (num_rows, max_neighbors),
                 positions.dtype,
+                positions.device,
             )
-            _validate_output_buffer(
+            _validate_partial_output(
                 "pair_forces",
                 pair_forces,
                 (num_rows, max_neighbors, 3),
                 positions.dtype,
+                positions.device,
             )
         if neighbor_matrix is None:
             neighbor_matrix = torch.full(
@@ -1542,6 +1746,7 @@ def naive_neighbor_list(
             "pair_params": pair_params,
             "pair_energies": pair_energies,
             "pair_forces": pair_forces,
+            "_fixed_cell_geometry": _fixed_cell_geometry,
         }
         distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
             positions,
@@ -1634,33 +1839,6 @@ def naive_neighbor_list(
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
 
-    if cutoff <= 0:
-        if return_neighbor_list:
-            if pbc is not None:
-                return (
-                    torch.zeros((2, 0), dtype=torch.int32, device=positions.device),
-                    torch.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=torch.int32,
-                        device=positions.device,
-                    ),
-                    torch.zeros((0, 3), dtype=torch.int32, device=positions.device),
-                )
-            else:
-                return (
-                    torch.zeros((2, 0), dtype=torch.int32, device=positions.device),
-                    torch.zeros(
-                        (positions.shape[0] + 1,),
-                        dtype=torch.int32,
-                        device=positions.device,
-                    ),
-                )
-        else:
-            if pbc is not None:
-                return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
-            else:
-                return neighbor_matrix, num_neighbors
-
     if pbc is None:
         _naive_neighbor_matrix_no_pbc(
             positions=positions,
@@ -1697,8 +1875,13 @@ def naive_neighbor_list(
             wrap_positions=wrap_positions,
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
-            inv_cell_buffer=inv_cell_buffer,
+            inv_cell_buffer=(
+                _fixed_cell_geometry.inv_cell
+                if _fixed_cell_geometry is not None
+                else inv_cell_buffer
+            ),
             strategy=strategy,
+            reuse_inv_cell=_fixed_cell_geometry is not None,
         )
         if return_neighbor_list:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (

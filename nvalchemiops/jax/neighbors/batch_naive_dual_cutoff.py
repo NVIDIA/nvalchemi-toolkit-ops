@@ -120,6 +120,8 @@ def batch_naive_neighbor_list_dual_cutoff(
     per_atom_cell_offsets_buffer: jax.Array | None = None,
     inv_cell_buffer: jax.Array | None = None,
     coo_capacity: int | tuple[int, int] | None = None,
+    *,
+    _fixed_cell_geometry: tuple[jax.Array | None, ...] | None = None,
 ) -> (
     tuple[jax.Array, jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
@@ -272,6 +274,8 @@ def batch_naive_neighbor_list_dual_cutoff(
         # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
         if cell.dtype != positions.dtype:
             cell = cell.astype(positions.dtype)
+    if _fixed_cell_geometry is not None and _fixed_cell_geometry[0] is not None:
+        inv_cell_buffer = _fixed_cell_geometry[0]
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
 

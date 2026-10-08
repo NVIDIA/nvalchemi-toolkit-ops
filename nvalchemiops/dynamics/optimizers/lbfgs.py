@@ -161,15 +161,13 @@ The variable-cell contract
 **The one authoritative statement of these rules**; the bindings and the user
 guide defer here.
 
-*1. Align the cell first, exactly as FIRE2 requires.*
-   Call :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell` once
-   before the first step and pass the aligned cell and rotated positions in --
-   the same helper ``fire2_step_coord_cell`` documents, not a second
-   convention. The package calls the result **upper-triangular** in the
-   lattice-vector reading (``a`` along x, ``b`` in the xy-plane, ``c``
-   general); as a matrix with lattice vectors in columns that is zeros
-   strictly above the diagonal. :func:`lbfgs_prepare_cell_state` checks it for
-   you, once, and refuses an unaligned batch.
+*1. Align the cell once, as FIRE2 requires.*
+   Prepare geometry with
+   :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell`, which aligns
+   the cell and rotates positions consistently. The aligned matrix has zeros
+   strictly above the diagonal. Torch and JAX reference-cell setup validates
+   aligned input. Raw Warp setup and subsequent optimization steps assume
+   alignment; the six-component cell updates preserve it.
 
 *2. Six components, the same six FIRE2 packs.*
    ``(0,0), (1,0), (2,0) | (1,1), (2,1), (2,2)`` -- two ``vec3`` entries per
@@ -1752,9 +1750,10 @@ def lbfgs_prepare_cell_state(
     split. What went away is the caller's obligation to build
     ``ext_atom_ptr`` and ``ext_batch_idx`` by hand.
 
-    The cells must already be aligned -- see rule 1 of
-    :ref:`the variable-cell contract <lbfgs-cell-contract>` -- and that is
-    checked here, once, rather than every step.
+    The cell must already be aligned -- see rule 1 of
+    :ref:`the variable-cell contract <lbfgs-cell-contract>`. Raw Warp setup
+    assumes this precondition; the Torch and JAX reference-cell setup helpers
+    check it before capturing the reference cell.
 
     Parameters
     ----------
@@ -1780,7 +1779,7 @@ def lbfgs_prepare_cell_state(
     ------
     ValueError
         If ``dtype`` is not a supported vector type, if ``atom_ptr`` is not a
-        valid pointer, if any cell is unaligned, or if any system has no atoms.
+        valid pointer, or if any system has no atoms.
     """
     if dtype not in _VEC_TYPES:
         raise ValueError(f"dtype must be wp.vec3f or wp.vec3d; got {dtype}")
@@ -2814,52 +2813,6 @@ for _v, _mt in _MAT_TYPES.items():
     )
 
 
-def _check_cell_is_aligned(cell, atol: float = 1e-10) -> None:
-    """Confirm the cell is in the aligned form the packing assumes.
-
-    The six-component cell parameterization represents only the entries that
-    are non-zero once
-    :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell` has run; in an
-    unaligned frame the omitted entries are not the redundant ones, and the
-    cell keeps a rotation the optimizer cannot remove. See
-    :ref:`the variable-cell contract <lbfgs-cell-contract>`.
-
-    This reads the cell back to the host, so it is a setup-time check. It is
-    called for you by :func:`lbfgs_prepare_cell_state` and by
-    :func:`_lbfgs_set_reference_cell`, both of which run once.
-
-    Parameters
-    ----------
-    cell : array(dtype=mat33), shape (num_systems,)
-        Cell matrices, lattice vectors in columns.
-    atol : float, optional
-        Absolute tolerance on the entries that must be zero.
-
-    Raises
-    ------
-    ValueError
-        If any system's cell is not aligned.
-    """
-    import numpy as _np
-
-    values = _np.asarray(cell.numpy())
-    if values.ndim != 3 or values.shape[1:] != (3, 3):
-        raise ValueError(
-            f"cell must have shape (num_systems, 3, 3); got {values.shape}"
-        )
-    # Strictly above the diagonal: zero once the cell is aligned.
-    offenders = _np.abs(_np.triu(values, 1)).max(axis=(1, 2))
-    bad = _np.flatnonzero(offenders > atol)
-    if bad.size:
-        raise ValueError(
-            f"cell for system(s) {bad.tolist()} is not aligned: the entries "
-            f"above the diagonal reach {offenders[bad].max():.3e}, not zero. "
-            "Call nvalchemiops.dynamics.utils.cell_filter.align_cell(positions, "
-            "cell, transform) once before the first step, as fire2_step_coord_cell "
-            "also requires; see the variable-cell contract in this module."
-        )
-
-
 def _lbfgs_set_reference_cell(
     cell: wp.array,
     ref_cell: wp.array,
@@ -2882,8 +2835,8 @@ def _lbfgs_set_reference_cell(
     ----------
     cell : wp.array(dtype=mat33), shape (num_systems,)
         Current cell, lattice vectors as columns, already aligned by
-        :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell`. Checked
-        here, since this runs once.
+        :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell`. This raw
+        Warp helper assumes that precondition and does not check it.
     ref_cell, ref_cell_inv : wp.array(dtype=mat33), shape (num_systems,)
         OUTPUT. ``H0`` and its inverse.
 
@@ -2892,7 +2845,6 @@ def _lbfgs_set_reference_cell(
     :ref:`The variable-cell contract <lbfgs-cell-contract>` : why the reference
         is fixed, and what calling this a second time costs.
     """
-    _check_cell_is_aligned(cell)
     wp.copy(ref_cell, cell)
     compute_cell_inverse(cell, ref_cell_inv, device=str(cell.device))
 

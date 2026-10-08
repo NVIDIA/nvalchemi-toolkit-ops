@@ -92,9 +92,16 @@ The benchmark modules share a single entry point,
 directory for each reportable run, then promote a complete, reviewed CSV set
 into the documentation only after validation.
 
+JAX is constrained below 0.10.2 because of reported GPU scatter performance
+regressions that affect electrostatics workloads, including Ewald and PME;
+see [JAX issue #38806](https://github.com/jax-ml/jax/issues/38806).
+
 ::::{dropdown} Commands and controls
 
 ```bash
+uv sync --locked --extra torch --extra jax
+source .venv/bin/activate
+
 RESULT_DIR="$BENCHMARK_SCRATCH/results/reportable-run"
 
 # All modules, Torch backend (default)

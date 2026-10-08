@@ -51,15 +51,15 @@ torch-cu13 = [
 ]
 
 jax = [
-    "jax[cuda13]>=0.10.0",
+    "jax[cuda13]>=0.10.0,<0.10.2",
 ]
 
 jax-cu12 = [
-    "jax[cuda12]>=0.10.0",
+    "jax[cuda12]>=0.10.0,<0.10.2",
 ]
 
 jax-cu13 = [
-    "jax[cuda13]>=0.10.0",
+    "jax[cuda13]>=0.10.0,<0.10.2",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -18,6 +18,9 @@
 - **Buffer overflow detection:** Added the `TileBufferOverflow` exception and `max_tiles_per_group` parameter to detect undersized cluster-tile buffers.
 - **JAX compilation boundaries:** Added fixed-capacity `jax.jit` support for naive and cell-list neighbor lists through `coo_capacity`.
 - **JAX D3 parameters:** JAX `dftd3` accepts `D3Parameters` directly under `jax.jit` without manual array unpacking.
+- **Precision-selective erfc:** Added `wp_erfc_f32_fast` (an explicitly float32-grade approximation) and `wp_erfc_input_precision` (dispatches by input dtype) in `nvalchemiops.math`.
+- **Squared-magnitude PME grids:** Added `generate_k_squared_pme` in the Torch and JAX electrostatics namespaces for reciprocal paths that use squared magnitudes.
+- **Legacy electrostatics mode query:** Added `electrostatics_uses_legacy_fp32()` to report whether the legacy float64-core path is forced.
 
 ### Changed
 
@@ -26,6 +29,13 @@
 - **JAX dual-cutoff validation:** JAX dual-cutoff neighbor functions now require the second cutoff to be greater than or equal to the first.
 - **Segmented index types:** PyTorch segmented operations now accept int64 indices whose values fit in int32.
 - **Fourier DFT-D3 coordination numbers:** Fourier DFT-D3 tapers coordination numbers to zero at the cutoff radius. This produces small numerical differences from standard DFT-D3.
+- **PME mesh sizing:** PME mesh estimation now covers the requested spline support and prefers FFT-smooth dimensions. The default spline order is now 5 (previously 4), which can change numerical results; pass `spline_order=4` and the previous `mesh_dimensions` to reproduce the old configuration.
+- **Reduced PME peak memory:** PME energy and force paths generate only the squared reciprocal grid when Cartesian reciprocal vectors are unused; virial and cell-gradient paths still generate them.
+- **float32 electrostatics fast path:** Monopole Ewald and PME now evaluate in float32 for float32 CUDA inputs instead of promoting to float64; float32 results change at the ~1e-07 level, CPU execution is unchanged, and double-backward still uses the float64 formulation. Set `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to keep the previous behavior.
+
+### Deprecated
+
+- `nvalchemiops.math.wp_erfc` is deprecated in favor of `wp_erfc_input_precision` or `wp_erfc_f32_fast`; it keeps its original behavior for existing callers.
 
 ### Fixed
 

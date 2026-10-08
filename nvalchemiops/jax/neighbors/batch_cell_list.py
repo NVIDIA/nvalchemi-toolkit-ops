@@ -34,13 +34,16 @@ from nvalchemiops.jax.neighbors._registration import (
     _lazy_cell_list_build_kernel,
     _lazy_cell_list_query_kernel,
 )
+from nvalchemiops.jax.neighbors._resolution import (
+    resolve_cell_strategy as _resolve_cell_strategy,
+)
+from nvalchemiops.jax.neighbors._status import _build_cell_list_status_tail
 from nvalchemiops.jax.neighbors.cell_list import (
     _DEFAULT_CELL_LIST_BUFFER_FACTOR,
     _derive_neighbor_search_radius,
     _derive_promoted_cells_per_dimension,
     _is_cpu_array,
     _report_pair_centric_metadata_mismatch,
-    _resolve_cell_strategy,
     _validate_atom_centric_path,
     _validate_compact_target_buffers,
     _validate_pair_kwargs,
@@ -70,9 +73,11 @@ from nvalchemiops.neighbors.output_args import (
 # ==============================================================================
 
 
-def _build_registry(stage: str):
+def _build_registry(stage: str, *, fixed_cell: bool = False):
     """Create lazy dtype registrations for one batched build stage."""
-    return _lazy_cell_list_build_kernel(stage=stage, batched=True)
+    return _lazy_cell_list_build_kernel(
+        stage=stage, batched=True, fixed_cell=fixed_cell
+    )
 
 
 _BATCH_CELL_LIST_BUILD_REGISTRATIONS = {
@@ -84,6 +89,10 @@ _BATCH_CELL_LIST_BUILD_REGISTRATIONS = {
         "gather",
         "cells_per_system",
     )
+}
+_FIXED_BATCH_CELL_LIST_BUILD_REGISTRATIONS = {
+    stage: _build_registry(stage, fixed_cell=True)
+    for stage in ("count_atoms", "bin_atoms")
 }
 
 
@@ -954,6 +963,7 @@ def batch_build_cell_list(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
 ) -> tuple[
     jax.Array,
     jax.Array,
@@ -1051,6 +1061,7 @@ def batch_build_cell_list(
         dtype=cell_dtype,
     )
 
+    fixed_cell = _fixed_cell_geometry is not None
     if max_total_cells is None:
         max_total_cells = _estimate_batch_max_total_cells(
             batch_ptr,
@@ -1084,11 +1095,13 @@ def batch_build_cell_list(
     # Select kernels based on dtype.
     if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
-    _construct = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
-        positions.dtype
-    ]
-    _count = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
-    _bin = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
+    build_registrations = (
+        _FIXED_BATCH_CELL_LIST_BUILD_REGISTRATIONS
+        if fixed_cell
+        else _BATCH_CELL_LIST_BUILD_REGISTRATIONS
+    )
+    _count = build_registrations["count_atoms"][positions.dtype]
+    _bin = build_registrations["bin_atoms"][positions.dtype]
     _cells_per_system = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["cells_per_system"][
         positions.dtype
     ]
@@ -1096,44 +1109,54 @@ def batch_build_cell_list(
     if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
 
+    empty_cell = jnp.zeros((0, 3, 3), dtype=cell.dtype)
+    inv_cell = _fixed_cell_geometry[0] if fixed_cell else empty_cell
+
     empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
     empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
 
     total_atoms = positions.shape[0]
 
-    # Step 1: Construct bin sizes (one thread per system)
-    cells_per_dimension = _construct_batch_cells_per_dimension(
-        cell,
-        pbc_bool,
-        float(cutoff),
-        max_total_cells,
-    )
+    if fixed_cell:
+        cells_per_dimension = _fixed_cell_geometry[1]
+        neighbor_search_radius = _fixed_cell_geometry[2]
+        cells_per_system = _fixed_cell_geometry[3]
+        cell_offsets = _fixed_cell_geometry[4]
+    else:
+        # Step 1: Construct bin sizes (one thread per system)
+        cells_per_dimension = _construct_batch_cells_per_dimension(
+            cell,
+            pbc_bool,
+            float(cutoff),
+            max_total_cells,
+        )
 
-    neighbor_search_radius = _derive_neighbor_search_radius(
-        cell,
-        pbc_bool,
-        cutoff,
-        cells_per_dimension,
-    )
+        neighbor_search_radius = _derive_neighbor_search_radius(
+            cell,
+            pbc_bool,
+            cutoff,
+            cells_per_dimension,
+        )
 
-    # Step 2: Compute cells_per_system and cell_offsets
-    cells_per_system = jnp.zeros(num_systems, dtype=jnp.int32)
-    (cells_per_system,) = _cells_per_system(
-        cells_per_dimension,
-        cells_per_system,
-        launch_dims=(num_systems,),
-    )
-    cell_offsets = jnp.concatenate(
-        [
-            jnp.array([0], dtype=jnp.int32),
-            jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
-        ]
-    )
+        # Step 2: Compute cells_per_system and cell_offsets
+        cells_per_system = jnp.zeros(num_systems, dtype=jnp.int32)
+        (cells_per_system,) = _cells_per_system(
+            cells_per_dimension,
+            cells_per_system,
+            launch_dims=(num_systems,),
+        )
+        cell_offsets = jnp.concatenate(
+            [
+                jnp.array([0], dtype=jnp.int32),
+                jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+            ]
+        )
 
     # Step 3: Count atoms per bin
     atoms_per_cell_count, atom_periodic_shifts = _count(
         positions,
         cell,
+        inv_cell,
         empty_bool1d,
         pbc_bool,
         batch_idx,
@@ -1160,6 +1183,7 @@ def batch_build_cell_list(
     atom_to_cell_mapping, atoms_per_cell_count, cell_atom_list = _bin(
         positions,
         cell,
+        inv_cell,
         empty_bool1d,
         pbc_bool,
         batch_idx,
@@ -1221,6 +1245,7 @@ def _batch_query_cell_list_with_diagnostics(
     pair_centric_total_cells: int | None = None,
     pair_centric_n_outer: int | None = None,
     pair_centric_r_max: tuple[int, int, int] | None = None,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
 ) -> tuple[tuple[jax.Array, ...], jax.Array, jax.Array]:
     """Query batch cell lists to find neighbors.
 
@@ -1472,14 +1497,18 @@ def _batch_query_cell_list_with_diagnostics(
         max_total_cells = cell_atom_start_indices.shape[0]
         atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
 
-    # Compute cell_offsets from cells_per_dimension
-    cells_per_system = jnp.prod(cells_per_dimension, axis=1)
-    cell_offsets = jnp.concatenate(
-        [
-            jnp.array([0], dtype=jnp.int32),
-            jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
-        ]
-    )
+    if _fixed_cell_geometry is None:
+        # Compute cell_offsets from cells_per_dimension.
+        cells_per_system = jnp.prod(cells_per_dimension, axis=1)
+        cell_offsets = jnp.concatenate(
+            [
+                jnp.array([0], dtype=jnp.int32),
+                jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+            ]
+        )
+    else:
+        cells_per_system = _fixed_cell_geometry[3]
+        cell_offsets = _fixed_cell_geometry[4]
 
     batch_idx_i32 = batch_idx.astype(jnp.int32)
 
@@ -2179,6 +2208,8 @@ def batch_cell_list(
     pair_centric_total_cells: int | None = None,
     pair_centric_n_outer: int | None = None,
     pair_centric_r_max: tuple[int, int, int] | None = None,
+    _return_status: bool = False,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
 ) -> tuple[jax.Array, ...]:
     """Build and query spatial cell lists for batch of systems.
 
@@ -2448,6 +2479,7 @@ def batch_cell_list(
         pbc=pbc,
         cutoff=cutoff,
         max_total_cells=max_total_cells,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
 
     if has_pair_outputs:
@@ -2499,13 +2531,17 @@ def batch_cell_list(
             neighbor_vectors = jnp.zeros(
                 (num_rows, max_neighbors, 3), dtype=positions.dtype
             )
-        cells_per_system = jnp.prod(cells_per_dimension, axis=1)
-        cell_offsets = jnp.concatenate(
-            [
-                jnp.array([0], dtype=jnp.int32),
-                jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
-            ]
-        )
+        if _fixed_cell_geometry is None:
+            cells_per_system = jnp.prod(cells_per_dimension, axis=1)
+            cell_offsets = jnp.concatenate(
+                [
+                    jnp.array([0], dtype=jnp.int32),
+                    jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+                ]
+            )
+        else:
+            cells_per_system = _fixed_cell_geometry[3]
+            cell_offsets = _fixed_cell_geometry[4]
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
         # Pair-centric pair-output strategy (EXPLICIT only; "auto" resolves to
@@ -2673,6 +2709,39 @@ def batch_cell_list(
             tail.append(vectors_out)
         if pair_fn is not None:
             tail.extend((pe_out, pf_out))
+        if _return_status:
+            requested_grid = (
+                _fixed_cell_geometry[1]
+                if _fixed_cell_geometry is not None
+                else _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
+            )
+            requested_cells = jnp.prod(requested_grid, axis=1, dtype=jnp.int32)
+            row_owners = (
+                batch_idx[target_indices] if target_indices is not None else batch_idx
+            )
+            required_rows = jax.ops.segment_max(
+                raw_counts, row_owners, num_segments=num_systems
+            )
+            required_coo = jax.ops.segment_sum(
+                raw_counts, row_owners, num_segments=num_systems
+            )
+            available_rows = jnp.full_like(required_rows, int(max_neighbors))
+            available_coo = jnp.full_like(
+                required_rows, 0 if coo_capacity is None else int(coo_capacity)
+            )
+            status_tail = _build_cell_list_status_tail(
+                requested_cells=requested_cells,
+                available_cells=jnp.full_like(
+                    requested_cells, atoms_per_cell_count.shape[0] // num_systems
+                ),
+                required_rows=required_rows,
+                available_rows=available_rows,
+                required_coo=required_coo,
+                available_coo=available_coo,
+                metadata_valid=metadata_valid,
+                coo_capacity=coo_capacity,
+            )
+            return (*base, *tail, *status_tail)
         return (*base, *tail)
 
     # Query cell list
@@ -2702,7 +2771,52 @@ def batch_cell_list(
         pair_centric_n_outer=pair_centric_n_outer,
         pair_centric_r_max=pair_centric_r_max,
         atom_centric_path=atom_centric_path,
+        _fixed_cell_geometry=_fixed_cell_geometry,
     )
+
+    # The query allocates the authoritative width when callers leave
+    # ``max_neighbors`` unspecified.
+    max_neighbors = neighbor_matrix.shape[1]
+
+    if _return_status:
+        # Status describes the uncapped grid; direct calls need not construct
+        # this prepared-state-only diagnostic tail.
+        requested_grid = (
+            _fixed_cell_geometry[1]
+            if _fixed_cell_geometry is not None
+            else _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
+        )
+        requested_cells = jnp.prod(requested_grid, axis=1, dtype=jnp.int32)
+        available_cells = jnp.full_like(
+            requested_cells, atoms_per_cell_count.shape[0] // num_systems
+        )
+        row_owners = (
+            batch_idx[target_indices] if target_indices is not None else batch_idx
+        )
+        required_rows = jax.ops.segment_max(
+            raw_counts,
+            row_owners,
+            num_segments=num_systems,
+        )
+        required_coo = jax.ops.segment_sum(
+            raw_counts,
+            row_owners,
+            num_segments=num_systems,
+        )
+        available_rows = jnp.full_like(required_rows, int(max_neighbors))
+        available_coo = jnp.full_like(
+            required_rows, 0 if coo_capacity is None else int(coo_capacity)
+        )
+        status_tail = _build_cell_list_status_tail(
+            requested_cells=requested_cells,
+            available_cells=available_cells,
+            required_rows=required_rows,
+            available_rows=available_rows,
+            required_coo=required_coo,
+            available_coo=available_coo,
+            metadata_valid=metadata_valid,
+            coo_capacity=coo_capacity,
+        )
 
     if return_neighbor_list:
         if coo_capacity is not None:
@@ -2714,7 +2828,7 @@ def batch_cell_list(
                 fill_value=positions.shape[0],
                 metadata_valid=metadata_valid,
             )
-            return packed
+            return (*packed, *status_tail) if _return_status else packed
         neighbor_list, neighbor_ptr, neighbor_list_shifts = (
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
@@ -2723,7 +2837,8 @@ def batch_cell_list(
                 fill_value=positions.shape[0],
             )
         )
-        return neighbor_list, neighbor_ptr, neighbor_list_shifts
+        result = (neighbor_list, neighbor_ptr, neighbor_list_shifts)
+        return (*result, *status_tail) if _return_status else result
     else:
         if fill_value is not None and int(fill_value) != positions.shape[0]:
             # The kernel pads unfilled matrix entries with ``total_atoms``; real
@@ -2733,4 +2848,5 @@ def batch_cell_list(
                 jnp.int32(fill_value),
                 neighbor_matrix,
             )
-        return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
+        result = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+        return (*result, *status_tail) if _return_status else result

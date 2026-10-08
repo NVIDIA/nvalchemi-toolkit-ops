@@ -130,6 +130,7 @@ class TestCellListKernels:
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp_mat_dtype, wp_device),
                 wp_pbc,
                 _empty_sentinel(2, wp.bool, wp_device),
                 _empty_sentinel(1, wp.int32, wp_device),
@@ -213,6 +214,7 @@ class TestCellListKernels:
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp_mat_dtype, wp_device),
                 wp_pbc,
                 _empty_sentinel(2, wp.bool, wp_device),
                 _empty_sentinel(1, wp.int32, wp_device),
@@ -259,6 +261,7 @@ class TestCellListKernels:
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp_mat_dtype, wp_device),
                 wp_pbc,
                 _empty_sentinel(2, wp.bool, wp_device),
                 _empty_sentinel(1, wp.int32, wp_device),

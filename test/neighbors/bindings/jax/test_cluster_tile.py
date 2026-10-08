@@ -28,6 +28,7 @@ from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.cluster_tile import (
     _CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
+    _fixed_cluster_geometry_args,
     allocate_cluster_tile_list,
     build_cluster_tile_list,
     cluster_tile_neighbor_list,
@@ -359,6 +360,7 @@ class TestClusterTileGraphPreload:
 
         cell_n = cell[jnp.newaxis, :, :]
         inv_cell_n = jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
+        qr, axis, fractional, height, bbox, fixed = _fixed_cluster_geometry_args(None)
 
         @jax.jit
         def query(
@@ -384,12 +386,18 @@ class TestClusterTileGraphPreload:
                 tile_col_group,
                 cell_n,
                 inv_cell_n,
+                qr,
+                axis,
+                fractional,
+                height,
+                bbox,
                 pair_counter,
                 coo_list,
                 coo_shifts,
                 1.0,
                 positions.shape[0],
                 max_pairs,
+                fixed,
             )
 
         pair_counter, coo_list, coo_shifts = query(

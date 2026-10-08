@@ -212,12 +212,12 @@ def _prepare_explicit_energy_cache(
             normalize_source=normalize,
             normalize_receive=normalize,
         )
+        source_row = overlap[0].to(device=device, dtype=torch.float64)
         source_oc = torch.zeros(3, dtype=torch.float64, device=device)
-        source_oc[0] = float(overlap[0, 0])
-        if l_max >= 1:
-            source_oc[1] = float(overlap[0, 1])
+        source_oc[: l_max + 1] = source_row
         if l_max >= 2:
-            source_oc[2] = 1.5 * float(overlap[0, 2])
+            # Cartesian-Frobenius quadrupole norm contributes the angular 3/2 factor.
+            source_oc[2] *= 1.5
     else:
         source_oc = torch.zeros(3, dtype=torch.float64, device=device)
 
@@ -314,11 +314,12 @@ def multipole_electrostatic_energy(
         to ``K`` for every system. Only valid with batched ``k_vectors``.
     source_overlap_constants : torch.Tensor, optional, shape (3,), float64
         Precomputed source self-overlap coefficients for l=0, l=1, and l=2.
-        Supplying this tensor avoids host-side overlap quadrature and makes
-        the self-corrected explicit-k path suitable for symbolic tracing. The
-        l=2 entry includes the Cartesian-Frobenius angular factor. If omitted,
-        the coefficients are computed eagerly when self-interaction is
-        subtracted.
+        Supplying this tensor skips overlap quadrature; the l=2 entry includes
+        the Cartesian-Frobenius angular factor. If omitted while self-interaction
+        is subtracted, the coefficients are computed with tensor quadrature.
+        Symbolic tracing requires static ``sigma`` and normalization metadata.
+        Callers that reuse a prepared coefficient tensor can amortize this
+        calculation across repeated calls.
     normalize : NormMode | int | str
         Normalization convention for the density basis. Defaults to
         ``NormMode.MULTIPOLES`` (the only physically meaningful choice for

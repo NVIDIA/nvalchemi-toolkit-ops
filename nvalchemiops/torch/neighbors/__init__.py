@@ -91,15 +91,16 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
 )
-from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
-    ClusterTileState,
-    prepare_cluster_tile,
+from nvalchemiops.torch.neighbors.prepared_neighbor_list import (
+    NeighborListState,
+    _execute_prepared_neighbor_list,
+    prepare_neighbor_list,
 )
 
 
 def neighbor_list(
     positions: torch.Tensor,
-    cutoff: float,
+    cutoff: float | None = None,
     cell: torch.Tensor | None = None,
     pbc: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
@@ -110,13 +111,18 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
+    *,
+    state: NeighborListState | None = None,
     **kwargs: Any,
 ):
-    """Compute neighbor list using the appropriate method based on the provided parameters.
+    """Compute a neighbor list or execute a prepared Torch route.
 
-    This is the main entry point for PyTorch users of the neighbor list API. It automatically
-    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system
-    size and parameters.
+    Without ``state``, this entry point selects and executes an algorithm from
+    the supplied geometry and options. With a state returned by
+    :func:`prepare_neighbor_list`, it bypasses repeated selection and sizing,
+    uses state-owned route storage, and returns the ordinary route tuple.
+    Prepared state is the recommended high-level interface for repeated Torch
+    execution.
 
     Parameters
     ----------
@@ -125,9 +131,10 @@ def neighbor_list(
         Each row represents one atom's (x, y, z) position.
         Unwrapped (box-crossing) coordinates are supported when PBC is used;
         the kernel wraps positions internally.
-    cutoff : float
+    cutoff : float, optional
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        May be omitted when ``state`` is supplied.
     cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3), optional
         Cell matrix defining the simulation box.
     pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=torch.bool, optional
@@ -143,7 +150,9 @@ def neighbor_list(
         Cumulative atom counts defining system boundaries.
     cutoff2 : float, optional
         Second cutoff distance for neighbor detection in Cartesian units.
-        Must be positive. Atoms within this distance are considered neighbors.
+        Must be positive. Naive dual-cutoff routes require
+        ``cutoff2 >= cutoff``; cluster-tile routes accept either ordering.
+        Atoms within this distance are considered neighbors.
     half_fill : bool, optional
         If True, only store half of the neighbor relationships to avoid double counting.
         Another half could be reconstructed by swapping source and target indices and inverting unit shifts.
@@ -179,6 +188,11 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
+    state : NeighborListState, optional
+        State returned by :func:`prepare_neighbor_list`. Its fixed
+        configuration takes precedence. Prepared execution accepts positions,
+        an applicable current cell, selective ``rebuild_flags``, and current
+        ``pair_params`` as runtime inputs and returns the ordinary route tuple.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -242,13 +256,21 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
-            Can be provided to avoid CUDA synchronization.
+            with PBC for full-row launch sizing. Compact partial paths, including
+            geometry and pair-output paths, ignore this bound and do not require it.
+            Full-row calls infer it when omitted, which may synchronize.
         target_indices : torch.Tensor, optional
-            Restrict the source rows of the neighbor list to this subset of atom
-            indices (partial neighbor list). Matrix outputs use
-            ``len(target_indices)`` compact rows; COO source rows are compact row
-            ids. Supported by naive and cell-list methods; not by cluster_tile.
+            Select the central atoms for a partial neighbor list. Matrix outputs
+            use ``len(target_indices)`` compact rows; in COO output the first
+            row holds compact row ids. Supported by naive and cell-list methods;
+            not by cluster_tile. Repeated and empty valid targets are supported.
+            Topology-only naive partial calls may use CUDA ``method="naive_tile"``
+            explicitly. ``method="naive"`` lets the direct naive family choose its
+            strategy automatically; ``method=None`` uses calibrated method
+            selection. Explicit tile rejects CPU. Distances, vectors, and
+            pair-function outputs are scalar-only and reject explicit tile.
+            Eager calls reject out-of-bounds indices; under ``torch.compile``
+            callers must prevalidate them.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|`` in matrix layout
             ``(num_rows, max_neighbors)``, where ``num_rows`` is
@@ -276,8 +298,10 @@ def neighbor_list(
             Inline Warp pair potential evaluated as neighbors are enumerated;
             requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.
             Forward-only (not differentiable). Pass ``compile_pair_fn(pair_fn)``
-            before ``torch.compile(fullgraph=True)`` to use fixed-shape matrix
-            outputs in compiled regions. See ``examples/neighbors/06_pair_outputs_lj.py``.
+            to supported method-specific functions before
+            ``torch.compile(fullgraph=True)`` to use fixed-shape matrix outputs
+            in compiled regions. Prepared callbacks remain eager-only. See
+            ``examples/neighbors/06_pair_outputs_lj.py``.
         pair_params, pair_energies, pair_forces : torch.Tensor, optional
             Per-atom parameter table and per-pair energy / force output buffers
             consumed and filled by ``pair_fn``.
@@ -309,8 +333,8 @@ def neighbor_list(
               for partial lists. Row ``r`` contains neighbors for atom ``r`` or
               ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (tensor): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
@@ -370,7 +394,12 @@ def neighbor_list(
     cell_list : Direct access to cell list :math:`O(N)` algorithm
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
+    prepare_neighbor_list : Prepare managed repeated execution
     """
+    if state is not None:
+        return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
+    if cutoff is None:
+        raise ValueError("cutoff is required when state is not provided")
     if cell is not None and pbc is None:
         raise ValueError(
             "`pbc` is required when `cell` is provided. "
@@ -623,13 +652,13 @@ __all__ = [
     "compile_pair_fn",
     "NeighborOverflowError",
     "TileBufferOverflow",
+    "NeighborListState",
+    "prepare_neighbor_list",
     # Unbatched algorithms
     "cell_list",
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",
     "cluster_tile_neighbor_list",
-    "ClusterTileState",
-    "prepare_cluster_tile",
     "estimate_cell_list_sizes",
     # Batched algorithms
     "batch_cell_list",
