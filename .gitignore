@@ -42,6 +42,7 @@ htmlcov/
 .coverage.*
 .cache
 .tmp/
+# Local review files, docs builds, and validation output
 /tmp/
 nosetests.xml
 coverage.xml

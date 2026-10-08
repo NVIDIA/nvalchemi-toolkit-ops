@@ -573,12 +573,30 @@ This runner uses optional helpers imported through ``benchmarks.utils`` and
 ``pymatgen``, ``rdkit``, and ``loguru``, with ``make docs-install-benchmarks``
 or directly from ``benchmarks/benchmark-requires.txt``.
 
-The shipped optional configurations are distinct protocols:
+The shipped optional configurations are distinct protocols (the shared
+``benchmark_config_`` prefix is omitted in the table):
 
-| Configuration | Backends and methods | Warmups / timings | Precision | Default measured work |
-| ------------- | -------------------- | ----------------- | --------- | --------------------- |
-| ``benchmark_config_extended.yaml`` | Toolkit-Ops Torch/JAX and optional ``torchpme`` for Ewald/PME; Toolkit-Ops Torch and ``torch_dsf`` for DSF | 5 / 10 | ``float32`` | Full, real, and reciprocal components; forces and virial enabled; 12 Å real-space cutoff |
-| ``benchmark_config_multipole.yaml`` | Torch multipole Ewald and PME, ``l_max=1`` | 3 / 10 | ``float64`` | Compiled reciprocal component; forces enabled, virial disabled |
+```{list-table}
+:header-rows: 1
+:widths: 20 30 12 12 26
+
+* - Configuration
+  - Backends and methods
+  - Warmups / timings
+  - Precision
+  - Default work
+* - ``extended.yaml``
+  - Toolkit-Ops Torch/JAX and optional ``torchpme`` for Ewald/PME;
+    Toolkit-Ops Torch and ``torch_dsf`` for DSF
+  - 5 / 10
+  - ``float32``
+  - Full, real, and reciprocal components; forces and virial; 12 Å real-space cutoff
+* - ``multipole.yaml``
+  - Torch multipole Ewald and PME, ``l_max=1``
+  - 3 / 10
+  - ``float64``
+  - Compiled reciprocal component; forces only
+```
 
 These settings describe the optional CSVs only. They must not be compared as
 if they were rows from the reportable energy/forces/charge-gradient protocol.

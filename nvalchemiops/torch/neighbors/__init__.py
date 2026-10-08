@@ -28,6 +28,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     NEIGHBOR_LIST_STRATEGIES,
     neighbor_list_strategy_run_args,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 from nvalchemiops.torch.neighbors._compiled_pair_fn import (
     CompiledPairFn,
     compile_pair_fn,
@@ -112,6 +113,7 @@ def neighbor_list(
     method: str | None = None,
     wrap_positions: bool = True,
     *,
+    grid_policy: str = "configured",
     state: NeighborListState | None = None,
     **kwargs: Any,
 ):
@@ -188,11 +190,18 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        Grid-sizing policy for supported pair-centric cell-list paths.
+        ``"adaptive"`` opts into geometry/population-based grid selection;
+        ``"configured"`` preserves the existing grid-sizing rule. Other neighbor
+        methods retain their grid behavior.
     state : NeighborListState, optional
         State returned by :func:`prepare_neighbor_list`. Its fixed
         configuration takes precedence. Prepared execution accepts positions,
         an applicable current cell, selective ``rebuild_flags``, and current
         ``pair_params`` as runtime inputs and returns the ordinary route tuple.
+        Prepared states use configured sizing; adaptive ``grid_policy`` is
+        available only for calls without ``state``.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -396,7 +405,13 @@ def neighbor_list(
     batch_cell_list : Batched cell list algorithm
     prepare_neighbor_list : Prepare managed repeated execution
     """
+    _validate_grid_policy(grid_policy)
     if state is not None:
+        if grid_policy == "adaptive":
+            raise ValueError(
+                "grid_policy='adaptive' is not supported with state; "
+                "prepared states use configured sizing"
+            )
         return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
     if cutoff is None:
         raise ValueError("cutoff is required when state is not provided")
@@ -533,6 +548,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
@@ -566,10 +582,12 @@ def neighbor_list(
                 cell,
                 pbc,
                 batch_idx,
+                batch_ptr=batch_ptr,
                 half_fill=half_fill,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )

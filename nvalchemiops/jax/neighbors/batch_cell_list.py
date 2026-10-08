@@ -30,7 +30,9 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.jax.neighbors._cell_grid import _select_pair_grid
 from nvalchemiops.jax.neighbors._registration import (
+    _cached_jax_kernel_call,
     _lazy_cell_list_build_kernel,
     _lazy_cell_list_query_kernel,
 )
@@ -63,6 +65,7 @@ from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     is_pair_centric_parallelism_sufficient,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
@@ -291,7 +294,9 @@ def _construct_batch_cells_per_dimension(
     cells_per_dimension = jnp.zeros((num_systems, 3), dtype=jnp.int32)
     empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
     empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
-    construct = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][cell.dtype]
+    construct = _cached_jax_kernel_call(
+        _BATCH_CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][cell.dtype]
+    )
     (cells_per_dimension,) = construct(
         cell,
         empty_bool1d,
@@ -1048,6 +1053,59 @@ def batch_build_cell_list(
             "wrapper.",
         )
 
+    return _batch_build_cell_list(
+        positions,
+        batch_idx,
+        batch_ptr,
+        cell,
+        pbc,
+        cutoff,
+        max_total_cells,
+        _fixed_cell_geometry=_fixed_cell_geometry,
+    )
+
+
+def _batch_build_cell_list(
+    positions: jax.Array,
+    batch_idx: jax.Array | None = None,
+    batch_ptr: jax.Array | None = None,
+    cell: jax.Array | None = None,
+    pbc: jax.Array | None = None,
+    cutoff: float = 5.0,
+    max_total_cells: int | None = None,
+    *,
+    select_pair_grid: bool = False,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
+) -> tuple[jax.Array, ...]:
+    """Build batched cell lists with optional pair-grid selection.
+
+    Parameters
+    ----------
+    positions : jax.Array
+        Concatenated Cartesian coordinates for all systems.
+    batch_idx : jax.Array, optional
+        System index for each atom.
+    batch_ptr : jax.Array, optional
+        Cumulative atom offsets for each system.
+    cell : jax.Array, optional
+        Cell matrices for the systems.
+    pbc : jax.Array, optional
+        Per-axis periodicity flags for each system.
+    cutoff : float, default 5.0
+        Neighbor cutoff in the same length units as ``cell``.
+    max_total_cells : int, optional
+        Total cell capacity shared by the batch.
+    select_pair_grid : bool, default False
+        Select per-system grids from current geometry and populations for
+        supported eager pair-centric calls.
+    _fixed_cell_geometry : tuple of jax.Array, optional
+        Prepared fixed-cell geometry and sizing metadata.
+
+    Returns
+    -------
+    tuple[jax.Array, ...]
+        Batched cell-list buffers and geometry metadata consumed by the query.
+    """
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
         batch_idx, batch_ptr, positions.shape[0]
@@ -1060,7 +1118,6 @@ def batch_build_cell_list(
         num_systems=num_systems,
         dtype=cell_dtype,
     )
-
     fixed_cell = _fixed_cell_geometry is not None
     if max_total_cells is None:
         max_total_cells = _estimate_batch_max_total_cells(
@@ -1100,11 +1157,19 @@ def batch_build_cell_list(
         if fixed_cell
         else _BATCH_CELL_LIST_BUILD_REGISTRATIONS
     )
-    _count = build_registrations["count_atoms"][positions.dtype]
-    _bin = build_registrations["bin_atoms"][positions.dtype]
-    _cells_per_system = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["cells_per_system"][
-        positions.dtype
-    ]
+    if fixed_cell:
+        _count = build_registrations["count_atoms"][positions.dtype]
+        _bin = build_registrations["bin_atoms"][positions.dtype]
+    else:
+        _count = _cached_jax_kernel_call(
+            build_registrations["count_atoms"][positions.dtype]
+        )
+        _bin = _cached_jax_kernel_call(
+            build_registrations["bin_atoms"][positions.dtype]
+        )
+    _cells_per_system = _cached_jax_kernel_call(
+        _BATCH_CELL_LIST_BUILD_REGISTRATIONS["cells_per_system"][positions.dtype]
+    )
 
     if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
@@ -1117,33 +1182,31 @@ def batch_build_cell_list(
 
     total_atoms = positions.shape[0]
 
-    if fixed_cell:
+    if not fixed_cell and select_pair_grid:
+        cells_per_dimension, neighbor_search_radius, cells_per_system = (
+            _select_pair_grid(cell, pbc_bool, batch_ptr, cutoff, max_total_cells)
+        )
+        cell_offsets = jnp.concatenate(
+            [
+                jnp.array([0], dtype=jnp.int32),
+                jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+            ]
+        )
+    elif fixed_cell:
         cells_per_dimension = _fixed_cell_geometry[1]
         neighbor_search_radius = _fixed_cell_geometry[2]
         cells_per_system = _fixed_cell_geometry[3]
         cell_offsets = _fixed_cell_geometry[4]
     else:
-        # Step 1: Construct bin sizes (one thread per system)
         cells_per_dimension = _construct_batch_cells_per_dimension(
-            cell,
-            pbc_bool,
-            float(cutoff),
-            max_total_cells,
+            cell, pbc_bool, float(cutoff), max_total_cells
         )
-
         neighbor_search_radius = _derive_neighbor_search_radius(
-            cell,
-            pbc_bool,
-            cutoff,
-            cells_per_dimension,
+            cell, pbc_bool, cutoff, cells_per_dimension
         )
-
-        # Step 2: Compute cells_per_system and cell_offsets
         cells_per_system = jnp.zeros(num_systems, dtype=jnp.int32)
         (cells_per_system,) = _cells_per_system(
-            cells_per_dimension,
-            cells_per_system,
-            launch_dims=(num_systems,),
+            cells_per_dimension, cells_per_system, launch_dims=(num_systems,)
         )
         cell_offsets = jnp.concatenate(
             [
@@ -1751,10 +1814,12 @@ def _batch_query_cell_list_with_diagnostics(
         result = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
         return result, raw_counts, pc_metadata_matches
 
-    _gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
-    _sorted_build_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[
-        (bool(half_fill), False)
-    ][positions.dtype]
+    _gather_kernel = _cached_jax_kernel_call(
+        _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+    )
+    _sorted_build_kernel = _cached_jax_kernel_call(
+        _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(bool(half_fill), False)][positions.dtype]
+    )
     sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
     sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
     sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
@@ -2080,20 +2145,22 @@ def _batch_cell_list_pair_outputs_forward(
                 pair_fn, wp_dtype, is_partial, half_fill
             )
         elif half_fill:
-            pair_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(True, True)][
-                positions.dtype
-            ]
+            pair_kernel = _cached_jax_kernel_call(
+                _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(True, True)][positions.dtype]
+            )
         else:
-            pair_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(False, True)][
-                positions.dtype
-            ]
+            pair_kernel = _cached_jax_kernel_call(
+                _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(False, True)][positions.dtype]
+            )
         ti_arg = (
             jnp.asarray(target_indices, dtype=jnp.int32)
             if is_partial
             else jnp.zeros((0,), dtype=jnp.int32)
         )
 
-        gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+        gather_kernel = _cached_jax_kernel_call(
+            _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+        )
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(
@@ -2210,6 +2277,8 @@ def batch_cell_list(
     pair_centric_r_max: tuple[int, int, int] | None = None,
     _return_status: bool = False,
     _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
+    *,
+    grid_policy: str = "configured",
 ) -> tuple[jax.Array, ...]:
     """Build and query spatial cell lists for batch of systems.
 
@@ -2228,6 +2297,7 @@ def batch_cell_list(
         Cutoff distance for neighbor detection.
     cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional
         Cell matrices defining lattice vectors. Default is identity matrix.
+        Entries must be finite and each matrix must have nonzero volume.
     pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional
         Periodic boundary condition flags. Default is all True.
     batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
@@ -2256,6 +2326,16 @@ def batch_cell_list(
         Value used to pad unused entries in the returned ``neighbor_matrix``
         (matrix return path only; the COO path is unaffected). If None, the
         matrix retains the kernel's default padding of ``total_atoms``.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. ``"adaptive"`` selects grids from geometry and atom
+        populations on supported full-list pair-centric paths. Its cost model
+        assumes approximately uniform spatial occupancy; performance depends on
+        the input distribution. Each system is scored using its own stencil
+        radius; the batch query launch uses the largest radius across systems.
+        Adaptive selection applies to eager calls without static pair-centric
+        launch metadata; traced calls retain the configured grid.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy, forwarded to :func:`batch_query_cell_list`.
         Both strategies produce identical pair SETS; only per-row ordering in
@@ -2343,6 +2423,8 @@ def batch_cell_list(
     batch_query_cell_list : Query cell list separately
     batch_naive_neighbor_list : Naive O(N^2) method
     """
+
+    _validate_grid_policy(grid_policy)
 
     has_pair_outputs = _has_partial_or_pair_outputs(
         target_indices=target_indices,
@@ -2471,7 +2553,7 @@ def batch_cell_list(
         cell_atom_list,
         neighbor_search_radius,
         cell_origin,
-    ) = batch_build_cell_list(
+    ) = _batch_build_cell_list(
         positions,
         batch_idx=batch_idx,
         batch_ptr=batch_ptr,
@@ -2479,6 +2561,28 @@ def batch_cell_list(
         pbc=pbc,
         cutoff=cutoff,
         max_total_cells=max_total_cells,
+        select_pair_grid=(
+            grid_policy == "adaptive"
+            and not _return_status
+            and _fixed_cell_geometry is None
+            and (not has_pair_outputs or strategy == "pair_centric")
+            and _resolve_cell_strategy(
+                strategy,
+                total_atoms=int(positions.shape[0]),
+                cutoff=float(cutoff),
+                device_is_cpu=_is_cpu_array(positions),
+                half_fill=half_fill,
+            )
+            == "pair_centric"
+            and target_indices is None
+            and not half_fill
+            and pair_centric_total_cells is None
+            and not any(
+                isinstance(value, jax.core.Tracer)
+                for value in (positions, cell, pbc, batch_ptr)
+            )
+            and not _is_cpu_array(positions)
+        ),
         _fixed_cell_geometry=_fixed_cell_geometry,
     )
 

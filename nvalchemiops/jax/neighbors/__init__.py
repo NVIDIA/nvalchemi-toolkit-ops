@@ -126,6 +126,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     neighbor_list_strategy_run_args,
 )
 from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 
 
 def neighbor_list(
@@ -142,6 +143,7 @@ def neighbor_list(
     method: str | None = None,
     wrap_positions: bool = True,
     *,
+    grid_policy: str = "configured",
     state: NeighborListState | None = None,
     **kwargs: Any,
 ):
@@ -213,11 +215,21 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        Grid-sizing policy for supported pair-centric cell-list paths.
+        ``"adaptive"`` opts into geometry/population-based grid selection;
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. Other neighbor methods retain their grid behavior. JAX
+        adaptive selection is eager-only.
     state : NeighborListState, optional
         State returned by :func:`prepare_neighbor_list`. Its fixed
         configuration takes precedence. Prepared execution accepts positions,
         an applicable current cell, selective ``rebuild_flags``, and current
         ``pair_params`` as runtime inputs and returns ``(results, next_state)``.
+        A ``NeighborListState`` uses configured grid sizing. Adaptive
+        ``grid_policy`` is available only for eager calls without a
+        ``NeighborListState``.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -421,7 +433,13 @@ def neighbor_list(
     prepare_neighbor_list : Prepare managed repeated execution
     check_neighbor_list_state : Report sticky prepared-state failures
     """
+    _validate_grid_policy(grid_policy)
     if state is not None:
+        if grid_policy == "adaptive":
+            raise ValueError(
+                "grid_policy='adaptive' is not supported with NeighborListState; "
+                "NeighborListState uses configured grid sizing"
+            )
         return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
     if cutoff is None:
         raise ValueError("cutoff is required when state is not provided")
@@ -563,6 +581,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
@@ -604,6 +623,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )

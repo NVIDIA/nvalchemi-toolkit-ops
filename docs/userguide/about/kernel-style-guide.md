@@ -150,7 +150,7 @@ numbers_wp = wp.from_torch(numbers.contiguous(), dtype=wp.int32)
 
 ---
 
-## 3. Kernel Design Patterns
+## Kernel Design Patterns
 
 ### Naming Conventions
 
