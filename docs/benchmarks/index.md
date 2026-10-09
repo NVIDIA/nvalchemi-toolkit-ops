@@ -86,22 +86,29 @@ the boundary used for every point.
 
 ## Running the full suite
 
-The three modules share a single entry point,
+The benchmark modules share a single entry point,
 ``benchmarks.benchmark_suite``, which loads each per-module
 ``benchmark_config.yaml`` and dispatches in-process. Use a fresh scratch
 directory for each reportable run, then promote a complete, reviewed CSV set
 into the documentation only after validation.
 
+JAX is constrained below 0.10.2 because of reported GPU scatter performance
+regressions that affect electrostatics workloads, including Ewald and PME;
+see [JAX issue #38806](https://github.com/jax-ml/jax/issues/38806).
+
 ::::{dropdown} Commands and controls
 
 ```bash
+uv sync --locked --extra torch --extra jax
+source .venv/bin/activate
+
 RESULT_DIR="$BENCHMARK_SCRATCH/results/reportable-run"
 
-# All three modules, Torch backend (default)
+# All modules, Torch backend (default)
 python -m benchmarks.benchmark_suite --benchmark all \
     --run-dir "$RESULT_DIR"
 
-# All three modules, JAX backend
+# All modules, JAX backend
 python -m benchmarks.benchmark_suite --benchmark all --backend jax \
     --run-dir "$RESULT_DIR"
 

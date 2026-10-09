@@ -29,9 +29,12 @@ The torch wrapper auto-selects between two batch query kernels:
 
 Auto-select uses sync-free quantities (``total_atoms``, ``num_systems``,
 ``cutoff``); the ``total_cells`` Python int is already paid by
-:func:`estimate_batch_cell_list_sizes` at allocation time.  Defaults
-are calibrated empirically; overrides are exposed via environment
-variables - see :func:`select_batch_cell_list_strategy`.
+:func:`estimate_batch_cell_list_sizes` at allocation time. ``grid_policy="adaptive"`
+opts into geometry and population-based sizing on supported full-list
+pair-centric calls. The default ``"configured"`` policy retains the configured
+sizing rule, including when caller-provided cell workspaces are reused.
+Strategy defaults are calibrated empirically; overrides are exposed via
+environment variables - see :func:`select_batch_cell_list_strategy`.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ import warnings
 import torch
 import warp as wp
 
+from nvalchemiops.neighbors.base_dispatch import DEFAULT_BATCH_MAX_NBINS
 from nvalchemiops.neighbors.cell_list import (
     batch_build_cell_list as wp_batch_build_cell_list,
 )
@@ -53,6 +57,12 @@ from nvalchemiops.neighbors.cell_list import (
     is_pair_centric_parallelism_sufficient,
     select_batch_cell_list_strategy,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import (
+    _get_grid_radius_kernel,
+    _get_pair_grid_kernel,
+    _validate_grid_policy,
+)
+from nvalchemiops.neighbors.cell_list.launchers import _PAIR_CENTRIC_BLOCK_DIM
 from nvalchemiops.neighbors.neighbor_utils import empty_sentinel, estimate_max_neighbors
 from nvalchemiops.neighbors.neighbor_utils import (
     fill_neighbor_matrix_tail as wp_fill_neighbor_matrix_tail,
@@ -70,10 +80,15 @@ from nvalchemiops.torch.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.torch.neighbors._cell_grid import (
+    _pair_grid_boundaries,
+    _select_pair_grid,
+)
 from nvalchemiops.torch.neighbors._compiled_pair_fn import (
     CompiledPairFn,
     is_compiled_pair_fn,
 )
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _validate_pair_params_present,
     allocate_cell_list,
@@ -113,7 +128,7 @@ def estimate_batch_cell_list_sizes(
     cell: torch.Tensor,
     pbc: torch.Tensor,
     cutoff: float,
-    max_nbins: int = 8192,
+    max_nbins: int = DEFAULT_BATCH_MAX_NBINS,
     min_cells_per_dimension: int = 4,
 ) -> tuple[int, torch.Tensor]:
     """Estimate memory allocation sizes for batch cell list construction.
@@ -144,9 +159,8 @@ def estimate_batch_cell_list_sizes(
 
     Notes
     -----
-    - Currently, only unit cells with a positive determinant (i.e. with
-      positive volume) are supported. For non-periodic systems, pass an identity
-      cell.
+    - Unit cells must have nonzero volume. Both right- and left-handed cells
+      are supported. For non-periodic systems, pass an identity cell.
     - Estimates assume roughly uniform atomic distribution within each system
     - Cell sizes are determined by the smallest cutoff to ensure neighbor completeness
     - For degenerate cells or empty systems, returns conservative fallback values
@@ -159,7 +173,15 @@ def estimate_batch_cell_list_sizes(
     """
     if max_nbins <= 0:
         raise ValueError("max_nbins must be positive")
-    if cell.numel() > 0 and torch.any(cell.det().abs() == 0.0):
+    if cell.numel() > 0:
+        # Accept any leading batch dimensions, as the determinant check did.
+        cell_rows = cell.reshape(-1, 3, 3)
+        cell_volume = (
+            torch.cross(cell_rows[:, 0], cell_rows[:, 1], dim=-1)
+            .mul(cell_rows[:, 2])
+            .sum(dim=-1)
+        )
+    if cell.numel() > 0 and torch.any(cell_volume.abs() == 0.0):
         raise RuntimeError(
             "Cells with volume == 0.0 detected and are not supported."
             " Please pass unit cells with `det(cell) != 0.0`."
@@ -232,6 +254,7 @@ def estimate_batch_cell_list_sizes(
     "nvalchemiops::batch_build_cell_list",
     mutates_args=(
         "cells_per_dimension",
+        "neighbor_search_radius",
         "atom_periodic_shifts",
         "atom_to_cell_mapping",
         "atoms_per_cell_count",
@@ -247,12 +270,16 @@ def _batch_build_cell_list_op(
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
     cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
     atom_periodic_shifts: torch.Tensor,
     atom_to_cell_mapping: torch.Tensor,
     atoms_per_cell_count: torch.Tensor,
     cell_atom_start_indices: torch.Tensor,
     cell_atom_list: torch.Tensor,
     min_cells_per_dimension: int = 4,
+    grid_is_prepared: bool = False,
+    pair_grid_boundaries: torch.Tensor | None = None,
+    refresh_search_radius: bool = False,
 ) -> None:
     """Internal custom op for building batch spatial cell lists.
 
@@ -295,12 +322,14 @@ def _batch_build_cell_list_op(
         cells_per_dimension, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
 
-    # Allocate cell_offsets internally (shape num_systems, not num_systems+1)
-    cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
+    # Pair preparation and the exclusive scan overwrite every scratch entry.
+    prepared_pair_grid = grid_is_prepared or pair_grid_boundaries is not None
+    allocate_scratch = torch.empty if prepared_pair_grid else torch.zeros
+    cell_offsets = allocate_scratch(num_systems, dtype=torch.int32, device=device)
     wp_cell_offsets = wp.from_torch(cell_offsets, dtype=wp.int32, requires_grad=False)
 
     # Allocate cells_per_system scratch buffer
-    cells_per_system = torch.zeros(num_systems, dtype=torch.int32, device=device)
+    cells_per_system = allocate_scratch(num_systems, dtype=torch.int32, device=device)
     wp_cells_per_system = wp.from_torch(
         cells_per_system, dtype=wp.int32, requires_grad=False
     )
@@ -326,6 +355,39 @@ def _batch_build_cell_list_op(
     # Zero atoms_per_cell_count before building
     atoms_per_cell_count.zero_()
 
+    if pair_grid_boundaries is not None:
+        # Each system gets an equal share of the caller's existing cell storage.
+        # Reuse build scratch and write the selected dimensions/radii in place.
+        capacity = min(atoms_per_cell_count.shape[0], cell_atom_start_indices.shape[0])
+        wp.launch(
+            _get_pair_grid_kernel(wp_dtype, _PAIR_CENTRIC_BLOCK_DIM),
+            dim=num_systems,
+            device=wp_device,
+            inputs=[
+                wp_cell,
+                wp_pbc,
+                wp.from_torch(
+                    pair_grid_boundaries,
+                    dtype=wp.int32,
+                    requires_grad=False,
+                    return_ctype=True,
+                ),
+                0,
+                wp_dtype(cutoff),
+                min(DEFAULT_BATCH_MAX_NBINS, capacity // num_systems),
+                min_cells_per_dimension,
+                wp_cells_per_dimension,
+                wp.from_torch(
+                    neighbor_search_radius,
+                    dtype=wp.vec3i,
+                    requires_grad=False,
+                    return_ctype=True,
+                ),
+                wp_cells_per_system,
+            ],
+        )
+        grid_is_prepared = True
+
     # Call core warp launcher
     wp_batch_build_cell_list(
         positions=wp_positions,
@@ -344,7 +406,29 @@ def _batch_build_cell_list_op(
         wp_dtype=wp_dtype,
         device=wp_device,
         min_cells_per_dimension=int(min_cells_per_dimension),
+        grid_is_prepared=grid_is_prepared,
+        cells_per_system_is_prepared=pair_grid_boundaries is not None,
     )
+    if refresh_search_radius:
+        # A reused adaptive workspace can contain radii for a coarser grid.
+        # Derive coverage from the dimensions that this build actually wrote.
+        wp.launch(
+            _get_grid_radius_kernel(wp_dtype),
+            dim=num_systems,
+            device=wp_device,
+            inputs=[
+                wp_cell,
+                wp_pbc,
+                wp_cells_per_dimension,
+                wp_dtype(cutoff),
+                wp.from_torch(
+                    neighbor_search_radius,
+                    dtype=wp.vec3i,
+                    requires_grad=False,
+                    return_ctype=True,
+                ),
+            ],
+        )
 
 
 @_batch_build_cell_list_op.register_fake
@@ -355,6 +439,40 @@ def _(
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
     cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    min_cells_per_dimension: int = 4,
+    grid_is_prepared: bool = False,
+    pair_grid_boundaries: torch.Tensor | None = None,
+    refresh_search_radius: bool = False,
+) -> None:
+    return None
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_build_cell_list_fixed",
+    mutates_args=(
+        "atom_periodic_shifts",
+        "atom_to_cell_mapping",
+        "atoms_per_cell_count",
+        "cell_atom_start_indices",
+        "cell_atom_list",
+    ),
+)
+@scoped_torch_warp_stream
+def _batch_build_cell_list_fixed_op(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    cell_offsets: torch.Tensor,
+    inv_cell: torch.Tensor,
     atom_periodic_shifts: torch.Tensor,
     atom_to_cell_mapping: torch.Tensor,
     atoms_per_cell_count: torch.Tensor,
@@ -362,6 +480,64 @@ def _(
     cell_atom_list: torch.Tensor,
     min_cells_per_dimension: int = 4,
 ) -> None:
+    """Build batched occupancy using read-only prepared grid geometry."""
+    if positions.shape[0] == 0 or cutoff <= 0:
+        return
+    device = positions.device
+    wp_dtype = get_wp_dtype(positions.dtype)
+    wp_device = str(device)
+    wp_positions = wp.from_torch(
+        positions, dtype=get_wp_vec_dtype(positions.dtype), return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=get_wp_mat_dtype(positions.dtype), return_ctype=True
+    )
+    wp_inv_cell = wp.from_torch(
+        inv_cell, dtype=get_wp_mat_dtype(positions.dtype), return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_batch_idx = wp.from_torch(
+        batch_idx.to(dtype=torch.int32), dtype=wp.int32, return_ctype=True
+    )
+    wp_cells_per_dimension = wp.from_torch(
+        cells_per_dimension, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_cell_offsets = wp.from_torch(cell_offsets, dtype=wp.int32)
+    wp_atom_periodic_shifts = wp.from_torch(
+        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_atom_to_cell_mapping = wp.from_torch(
+        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_atoms_per_cell_count = wp.from_torch(atoms_per_cell_count, dtype=wp.int32)
+    wp_cell_atom_start_indices = wp.from_torch(cell_atom_start_indices, dtype=wp.int32)
+    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    atoms_per_cell_count.zero_()
+    wp_batch_build_cell_list(
+        positions=wp_positions,
+        cell=wp_cell,
+        pbc=wp_pbc,
+        cutoff=cutoff,
+        batch_idx=wp_batch_idx,
+        cells_per_dimension=wp_cells_per_dimension,
+        cell_offsets=wp_cell_offsets,
+        # The cells_per_system scratch is unused for fixed grids.
+        cells_per_system=wp_cell_offsets,
+        atom_periodic_shifts=wp_atom_periodic_shifts,
+        atom_to_cell_mapping=wp_atom_to_cell_mapping,
+        atoms_per_cell_count=wp_atoms_per_cell_count,
+        cell_atom_start_indices=wp_cell_atom_start_indices,
+        cell_atom_list=wp_cell_atom_list,
+        wp_dtype=wp_dtype,
+        device=wp_device,
+        min_cells_per_dimension=int(min_cells_per_dimension),
+        fixed_cell=True,
+        inv_cell=wp_inv_cell,
+    )
+
+
+@_batch_build_cell_list_fixed_op.register_fake
+def _(*args, **kwargs) -> None:
     return None
 
 
@@ -379,6 +555,9 @@ def batch_build_cell_list(
     cell_atom_start_indices: torch.Tensor,
     cell_atom_list: torch.Tensor,
     min_cells_per_dimension: int = 4,
+    *,
+    cell_offsets: torch.Tensor | None = None,
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> None:
     """Build batch spatial cell lists with fixed allocation sizes for torch.compile compatibility.
 
@@ -421,6 +600,25 @@ def batch_build_cell_list(
     batch_query_cell_list : Query the built cell list for neighbors
     batch_cell_list : High-level function that builds and queries in one call
     """
+    if _fixed_cell_geometry is not None:
+        if cell_offsets is None:
+            raise ValueError("fixed batch cell-list build requires cached cell_offsets")
+        return _batch_build_cell_list_fixed_op(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            cells_per_dimension,
+            cell_offsets,
+            _fixed_cell_geometry.inv_cell,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            min_cells_per_dimension,
+        )
     return _batch_build_cell_list_op(
         positions,
         cutoff,
@@ -428,6 +626,7 @@ def batch_build_cell_list(
         pbc,
         batch_idx,
         cells_per_dimension,
+        neighbor_search_radius,
         atom_periodic_shifts,
         atom_to_cell_mapping,
         atoms_per_cell_count,
@@ -462,6 +661,8 @@ def _batch_query_cell_list_op(
     fill_value: int | None = None,
     algorithm: str = "auto",
     atom_centric_path: str = "auto",
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> None:
     """Internal custom op for querying batch spatial cell lists to build neighbor matrices.
 
@@ -520,11 +721,17 @@ def _batch_query_cell_list_op(
     )
 
     #  cell_offsets[i] = sum of cells for systems 0..i-1
-    cells_per_system = cells_per_dimension.prod(dim=1)
-    cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
-    if num_systems > 1:
-        torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
-    # cell_offsets[0] is already 0 from zeros initialization
+    cells_per_system = (
+        cached_cells_per_system
+        if cached_cells_per_system is not None
+        else cells_per_dimension.prod(dim=1)
+    )
+    if cached_cell_offsets is None:
+        cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
+        if num_systems > 1:
+            torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
+    else:
+        cell_offsets = cached_cell_offsets
     wp_cell_offsets = wp.from_torch(
         cell_offsets, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
@@ -712,6 +919,8 @@ def _batch_query_cell_list_selective_op(
     rebuild_flags: torch.Tensor,
     half_fill: bool = False,
     atom_centric_path: str = "auto",
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> None:
     """Internal custom op for querying batch cell lists with per-system selective skip.
 
@@ -756,10 +965,17 @@ def _batch_query_cell_list_selective_op(
         neighbor_search_radius, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
 
-    cells_per_system = cells_per_dimension.prod(dim=1)
-    cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
-    if num_systems > 1:
-        torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
+    cells_per_system = (
+        cached_cells_per_system
+        if cached_cells_per_system is not None
+        else cells_per_dimension.prod(dim=1)
+    )
+    if cached_cell_offsets is None:
+        cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
+        if num_systems > 1:
+            torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
+    else:
+        cell_offsets = cached_cell_offsets
     wp_cell_offsets = wp.from_torch(
         cell_offsets, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
@@ -853,6 +1069,9 @@ def batch_query_cell_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    *,
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> None:
     """Query batch spatial cell lists to build neighbor matrices for multiple systems.
 
@@ -989,6 +1208,8 @@ def batch_query_cell_list(
                 atom_centric_path,
                 return_vectors,
                 return_distances,
+                cached_cell_offsets,
+                cached_cells_per_system,
             )
         if is_compiled_pair_fn(pair_fn):
             op = pair_fn.get_or_register(
@@ -1024,6 +1245,8 @@ def batch_query_cell_list(
                 atom_centric_path,
                 return_vectors,
                 return_distances,
+                cached_cell_offsets,
+                cached_cells_per_system,
             )
         if torch.compiler.is_compiling():
             raise NotImplementedError(
@@ -1063,6 +1286,8 @@ def batch_query_cell_list(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            cached_cell_offsets=cached_cell_offsets,
+            cached_cells_per_system=cached_cells_per_system,
         )
         return None
     if rebuild_flags is None:
@@ -1086,6 +1311,8 @@ def batch_query_cell_list(
             fill_value,
             strategy,
             atom_centric_path,
+            cached_cell_offsets,
+            cached_cells_per_system,
         )
     return _batch_query_cell_list_selective_op(
         positions,
@@ -1106,6 +1333,8 @@ def batch_query_cell_list(
         rebuild_flags,
         half_fill,
         atom_centric_path,
+        cached_cell_offsets,
+        cached_cells_per_system,
     )
 
 
@@ -1130,6 +1359,8 @@ def _(
     fill_value: int | None = None,
     algorithm: str = "auto",
     atom_centric_path: str = "auto",
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> None:
     return None
 
@@ -1154,6 +1385,8 @@ def _(
     rebuild_flags: torch.Tensor,
     half_fill: bool = False,
     atom_centric_path: str = "auto",
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> None:
     return None
 
@@ -1194,6 +1427,8 @@ def _batch_query_cell_list_optional_no_pair_fn_op(
     atom_centric_path: str,
     return_vectors: bool,
     return_distances: bool,
+    cached_cell_offsets: torch.Tensor | None,
+    cached_cells_per_system: torch.Tensor | None,
 ) -> None:
     _batch_query_cell_list_optional(
         positions,
@@ -1225,6 +1460,8 @@ def _batch_query_cell_list_optional_no_pair_fn_op(
         neighbor_distances=neighbor_distances,
         pair_energies=None,
         pair_forces=None,
+        cached_cell_offsets=cached_cell_offsets,
+        cached_cells_per_system=cached_cells_per_system,
     )
 
 
@@ -1255,8 +1492,114 @@ def _(
     atom_centric_path: str,
     return_vectors: bool,
     return_distances: bool,
+    cached_cell_offsets: torch.Tensor | None,
+    cached_cells_per_system: torch.Tensor | None,
 ) -> None:
     return None
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_query_cell_list_geometry_metadata",
+    mutates_args=(
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _batch_query_cell_list_geometry_metadata_op(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cutoff: float,
+    batch_idx: torch.Tensor,
+    cell_list_cache: list[torch.Tensor],
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    target_indices: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    half_fill: bool,
+    fill_value: int | None,
+    strategy: str,
+    atom_centric_path: str,
+    return_vectors: bool,
+    return_distances: bool,
+    cached_cell_offsets: torch.Tensor | None,
+    cached_cells_per_system: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Query geometry and snapshot topology together for compiled backward.
+
+    Keeping the snapshots in the query op prevents AOT from moving their
+    construction into backward and saving the reusable query buffers.
+    """
+    _batch_query_cell_list_optional_no_pair_fn_op(
+        positions,
+        cell,
+        pbc,
+        cutoff,
+        batch_idx,
+        *cell_list_cache,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        rebuild_flags,
+        target_indices,
+        neighbor_vectors,
+        neighbor_distances,
+        half_fill,
+        fill_value,
+        strategy,
+        atom_centric_path,
+        return_vectors,
+        return_distances,
+        cached_cell_offsets,
+        cached_cells_per_system,
+    )
+    slots = torch.arange(
+        neighbor_matrix.shape[1], device=neighbor_matrix.device, dtype=torch.int32
+    )
+    active = slots[None, :] < num_neighbors[:, None]
+    return (
+        torch.where(active, neighbor_matrix, 0).reshape(-1),
+        torch.where(active.unsqueeze(-1), neighbor_matrix_shifts, 0).reshape(-1, 3),
+        active,
+    )
+
+
+@_batch_query_cell_list_geometry_metadata_op.register_fake
+def _(
+    positions,
+    cell,
+    pbc,
+    cutoff,
+    batch_idx,
+    cell_list_cache,
+    neighbor_matrix,
+    neighbor_matrix_shifts,
+    num_neighbors,
+    rebuild_flags,
+    target_indices,
+    neighbor_vectors,
+    neighbor_distances,
+    half_fill,
+    fill_value,
+    strategy,
+    atom_centric_path,
+    return_vectors,
+    return_distances,
+    cached_cell_offsets,
+    cached_cells_per_system,
+):
+    n_pairs = neighbor_matrix.numel()
+    return (
+        neighbor_matrix.new_empty((n_pairs,)),
+        neighbor_matrix_shifts.new_empty((n_pairs, 3)),
+        neighbor_matrix.new_empty(neighbor_matrix.shape, dtype=torch.bool),
+    )
 
 
 def _register_compiled_batch_query_cell_list_optional_pair_op(compiled: CompiledPairFn):
@@ -1303,6 +1646,8 @@ def _register_compiled_batch_query_cell_list_optional_pair_op(compiled: Compiled
         atom_centric_path: str,
         return_vectors: bool,
         return_distances: bool,
+        cached_cell_offsets: torch.Tensor | None,
+        cached_cells_per_system: torch.Tensor | None,
     ) -> None:
         _batch_query_cell_list_optional(
             positions,
@@ -1334,6 +1679,8 @@ def _register_compiled_batch_query_cell_list_optional_pair_op(compiled: Compiled
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            cached_cell_offsets=cached_cell_offsets,
+            cached_cells_per_system=cached_cells_per_system,
         )
 
     register_noop_fake(_compiled_batch_query_cell_list_optional_pair)
@@ -1372,6 +1719,8 @@ def _batch_query_cell_list_optional(
     neighbor_distances: torch.Tensor | None,
     pair_energies: torch.Tensor | None,
     pair_forces: torch.Tensor | None,
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> None:
     """Route to the warp factory when optional per-neighbor outputs are used.
 
@@ -1432,10 +1781,17 @@ def _batch_query_cell_list_optional(
         neighbor_search_radius, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
 
-    cells_per_system = cells_per_dimension.prod(dim=1)
-    cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
-    if num_systems > 1:
-        torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
+    cells_per_system = (
+        cached_cells_per_system
+        if cached_cells_per_system is not None
+        else cells_per_dimension.prod(dim=1)
+    )
+    if cached_cell_offsets is None:
+        cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
+        if num_systems > 1:
+            torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
+    else:
+        cell_offsets = cached_cell_offsets
     wp_cell_offsets = wp.from_torch(
         cell_offsets, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
@@ -1686,6 +2042,10 @@ def batch_cell_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    batch_ptr: torch.Tensor | None = None,
+    *,
+    grid_policy: str = "configured",
+    _fixed_cell_geometry: _FixedCellGeometry | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build complete batch neighbor matrices using spatial cell list acceleration.
 
@@ -1700,6 +2060,19 @@ def batch_cell_list(
     source ids are compact row ids.  Build/cache buffers
     (``atom_periodic_shifts``, ``atom_to_cell_mapping``, ``cell_atom_list``)
     remain ``total_atoms``-shaped.
+
+    ``grid_policy="adaptive"`` opts into choosing grids from the current box,
+    cutoff and system populations for supported full-list CUDA pair-centric
+    calls. Compiled calls require complete cell workspaces. Adaptive builds
+    update workspace grid dimensions and search radii within an equal
+    per-system share of the available cell capacity.
+
+    The default ``grid_policy="configured"`` uses configured grid sizing.
+    Ordinary targeted calls with reused workspaces refresh search radii from
+    the constructed grid, including when switching from a full adaptive call.
+    Supplied storage capacity must cover the current grid. Configured full-list
+    and selective calls require supplied radii valid for the current cell and
+    cutoff.
 
     Parameters
     ----------
@@ -1756,6 +2129,11 @@ def batch_cell_list(
         non-rebuilt systems entirely on the GPU (no CPU-GPU sync). When this is used,
         pre-allocated ``neighbor_matrix`` and ``num_neighbors`` tensors must be provided
         and will not be globally zeroed - only rebuilt-system entries are reset.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` uses the existing grid-sizing rule. ``"adaptive"``
+        selects grids from geometry and atom populations on supported full-list
+        pair-centric paths. Its cost model assumes approximately uniform spatial
+        occupancy; performance depends on the input distribution.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query kernel selection.  Both strategies return identical
         pair sets; per-row ordering inside ``neighbor_matrix`` differs.
@@ -1793,6 +2171,11 @@ def batch_cell_list(
         OUTPUT: Pre-allocated per-pair forces written by ``pair_fn``.  When
         omitted and ``pair_fn`` is set, allocated internally.
 
+    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32, optional
+        Cumulative atom counts consistent with ``batch_idx``. Eager full-list
+        pair-centric sizing uses these boundaries directly. When omitted,
+        populations are counted from ``batch_idx``.
+
     Returns
     -------
     results : tuple of torch.Tensor
@@ -1813,8 +2196,14 @@ def batch_cell_list(
     batch_naive_neighbor_list : O(N^2) method for small systems
     """
 
+    _validate_grid_policy(grid_policy)
+
     total_atoms = positions.shape[0]
     device = positions.device
+    if _fixed_cell_geometry is not None:
+        if _fixed_cell_geometry.cell_offsets is None:
+            raise ValueError("fixed batch cell-list state requires cached cell_offsets")
+        cell_offsets = _fixed_cell_geometry.cell_offsets
     if device == "cpu":
         warnings.warn(
             "The CPU version of `batch_cell_list` is known to experience"
@@ -1906,8 +2295,7 @@ def batch_cell_list(
     elif rebuild_flags is None:
         num_neighbors.zero_()
 
-    # Allocate cell list if needed.  Explicit atom-centric queries use the
-    # legacy 1-cell minimum; auto/pair-centric keep the current 4-cell policy.
+    # Size the current cell using geometry and the selected query strategy.
     allocated_cell_list = (
         cells_per_dimension is None
         or neighbor_search_radius is None
@@ -1918,17 +2306,80 @@ def batch_cell_list(
         or cell_atom_list is None
     )
     cell_list_min_cells = 1 if strategy == "atom_centric" else 4
+    selected_grid = None
+    pair_grid_boundaries = None
+    if (
+        grid_policy == "adaptive"
+        and (
+            strategy == "pair_centric"
+            or (
+                strategy == "auto"
+                and select_batch_cell_list_strategy(total_atoms, cell.shape[0], cutoff)
+                == "pair_centric"
+            )
+        )
+        and not half_fill
+        and target_indices is None
+        and rebuild_flags is None
+        and _fixed_cell_geometry is None
+        and device.type == "cuda"
+        and (not torch.compiler.is_compiling() or not allocated_cell_list)
+    ):
+        if allocated_cell_list:
+            max_total_cells, neighbor_search_radius, selected_grid = _select_pair_grid(
+                cell,
+                pbc,
+                cutoff,
+                batch_idx,
+                batch_ptr,
+                DEFAULT_BATCH_MAX_NBINS,
+                cell_list_min_cells,
+            )
+        else:
+            num_systems = cell.shape[0]
+            for name, value in (
+                ("cells_per_dimension", cells_per_dimension),
+                ("neighbor_search_radius", neighbor_search_radius),
+            ):
+                if (
+                    value.shape != (num_systems, 3)
+                    or value.dtype != torch.int32
+                    or value.device != device
+                ):
+                    raise ValueError(
+                        f"{name} must be an int32 tensor of shape (num_systems, 3) on {device}"
+                    )
+            capacity = min(
+                atoms_per_cell_count.shape[0], cell_atom_start_indices.shape[0]
+            )
+            if capacity < num_systems:
+                raise ValueError(
+                    "cell workspace has insufficient capacity for one cell per system"
+                )
+            if (
+                min(
+                    atom_periodic_shifts.shape[0],
+                    atom_to_cell_mapping.shape[0],
+                    cell_atom_list.shape[0],
+                )
+                < total_atoms
+            ):
+                raise ValueError(
+                    "cell workspace has insufficient capacity for the current atoms"
+                )
+            pair_grid_boundaries = _pair_grid_boundaries(cell, batch_idx, batch_ptr)
     if allocated_cell_list:
         _warn_compile_missing_argument_inference(
             missing="`cells_per_dimension` and related cache buffers",
             inference="inferring their allocation from `cell` and `pbc`",
         )
-        max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
-            cell,
-            pbc,
-            cutoff,
-            min_cells_per_dimension=cell_list_min_cells,
-        )
+        if selected_grid is None:
+            max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+                cell,
+                pbc,
+                cutoff,
+                min_cells_per_dimension=cell_list_min_cells,
+            )
         (
             cells_per_dimension,
             neighbor_search_radius,
@@ -1943,6 +2394,8 @@ def batch_cell_list(
             neighbor_search_radius,
             device,
         )
+        if selected_grid is not None:
+            cells_per_dimension = selected_grid
         cell_list_cache = (
             cells_per_dimension,
             neighbor_search_radius,
@@ -1953,11 +2406,10 @@ def batch_cell_list(
             cell_atom_list,
         )
     else:
-        # Caller-provided caches are assumed to have been sized with the
-        # default public estimate policy.
+        # Other strategies and compiled/selective calls retain their sizing rule.
         cell_list_min_cells = 4
-        # atoms_per_cell_count is atomic_add'd; the rest are fully overwritten.
-        atoms_per_cell_count.zero_()
+        # The build op initializes occupancy, and the build stages rewrite the
+        # per-atom outputs and scanned cell starts.
         cell_list_cache = (
             cells_per_dimension,
             neighbor_search_radius,
@@ -1968,16 +2420,48 @@ def batch_cell_list(
             cell_atom_list,
         )
 
-    # Build batch cell list with fixed allocations
-    batch_build_cell_list(
-        positions,
-        cutoff,
-        cell,
-        pbc,
-        batch_idx,
-        *cell_list_cache,
-        min_cells_per_dimension=cell_list_min_cells,
-    )
+    # Reuse dimensions already selected for this call's current geometry.
+    if _fixed_cell_geometry is not None:
+        batch_build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            cells_per_dimension,
+            neighbor_search_radius,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            min_cells_per_dimension=cell_list_min_cells,
+            cell_offsets=cell_offsets,
+            _fixed_cell_geometry=_fixed_cell_geometry,
+        )
+    else:
+        _batch_build_cell_list_op(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            cells_per_dimension,
+            neighbor_search_radius,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            min_cells_per_dimension=cell_list_min_cells,
+            grid_is_prepared=selected_grid is not None,
+            pair_grid_boundaries=pair_grid_boundaries,
+            refresh_search_radius=(
+                not allocated_cell_list
+                and target_indices is not None
+                and rebuild_flags is None
+            ),
+        )
 
     if return_vectors or return_distances or pair_fn is not None:
         # Pair_fn receives distance/vector values as local kernel variables;
@@ -2024,6 +2508,14 @@ def batch_cell_list(
             "neighbor_distances": neighbor_distances,
             "pair_energies": pair_energies,
             "pair_forces": pair_forces,
+            "cached_cell_offsets": (
+                cell_offsets if _fixed_cell_geometry is not None else None
+            ),
+            "cached_cells_per_system": (
+                _fixed_cell_geometry.cells_per_system
+                if _fixed_cell_geometry is not None
+                else None
+            ),
         }
         distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
             positions,
@@ -2086,6 +2578,14 @@ def batch_cell_list(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
+        cached_cell_offsets=(
+            cell_offsets if _fixed_cell_geometry is not None else None
+        ),
+        cached_cells_per_system=(
+            _fixed_cell_geometry.cells_per_system
+            if _fixed_cell_geometry is not None
+            else None
+        ),
     )
 
     if return_neighbor_list:
@@ -2127,41 +2627,83 @@ def _batch_cell_list_query_forward(
     neighbor_distances: torch.Tensor | None,
     pair_energies: torch.Tensor | None,
     pair_forces: torch.Tensor | None,
+    cached_cell_offsets: torch.Tensor | None = None,
+    cached_cells_per_system: torch.Tensor | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure consumed by ``_NeighborDistanceVectorFn`` (batched)."""
-    batch_query_cell_list(
-        positions,
-        cell,
-        pbc,
-        cutoff,
-        batch_idx,
-        *cell_list_cache,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        num_neighbors,
-        half_fill,
-        rebuild_flags,
-        fill_value,
-        strategy,
-        atom_centric_path,
-        target_indices=target_indices,
-        return_vectors=return_vectors,
-        return_distances=return_distances,
-        pair_fn=pair_fn,
-        pair_params=pair_params,
-        neighbor_vectors=neighbor_vectors,
-        neighbor_distances=neighbor_distances,
-        pair_energies=pair_energies,
-        pair_forces=pair_forces,
-    )
-    i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
-        neighbor_matrix,
-        num_neighbors,
-        neighbor_matrix_shifts,
-        target_indices=target_indices,
-        batch_idx=batch_idx,
-    )
     K, M = neighbor_matrix.shape
+    if (
+        torch.compiler.is_compiling()
+        and pair_fn is None
+        and pair_params is None
+        and pair_energies is None
+        and pair_forces is None
+    ):
+        j_idx, shifts_flat, mask = _batch_query_cell_list_geometry_metadata_op(
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            batch_idx,
+            list(cell_list_cache),
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            rebuild_flags,
+            target_indices,
+            neighbor_vectors,
+            neighbor_distances,
+            half_fill,
+            fill_value,
+            strategy,
+            atom_centric_path,
+            return_vectors,
+            return_distances,
+            cached_cell_offsets,
+            cached_cells_per_system,
+        )
+        row_to_atom_i = (
+            target_indices.to(torch.int32)
+            if target_indices is not None
+            else torch.arange(K, device=positions.device, dtype=torch.int32)
+        )
+        i_idx = row_to_atom_i.unsqueeze(-1).expand(-1, M).reshape(-1)
+        batch_idx_flat = batch_idx.to(torch.int32)[i_idx]
+    else:
+        batch_query_cell_list(
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            batch_idx,
+            *cell_list_cache,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            half_fill,
+            rebuild_flags,
+            fill_value,
+            strategy,
+            atom_centric_path,
+            target_indices=target_indices,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            pair_fn=pair_fn,
+            pair_params=pair_params,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            pair_energies=pair_energies,
+            pair_forces=pair_forces,
+            cached_cell_offsets=cached_cell_offsets,
+            cached_cells_per_system=cached_cells_per_system,
+        )
+        i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            target_indices=target_indices,
+            batch_idx=batch_idx,
+        )
     return _NeighborForwardOutput(
         distances=neighbor_distances,
         vectors=neighbor_vectors,

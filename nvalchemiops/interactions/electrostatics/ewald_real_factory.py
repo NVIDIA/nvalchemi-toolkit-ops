@@ -88,6 +88,7 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
     _pair_virial_outer,
     _require_component,
     _require_supported_dtype,
+    _use_fp32_electrostatics,
     _validate_common_axes,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -256,6 +257,30 @@ def _name_and_document(
 # === Per-pair helper factories ===
 
 
+def _core_scalar(wp_dtype: type) -> type:
+    """Device-agnostic fallback precision for the per-pair scalar cores.
+
+    float64 callers always evaluate in float64. float32 callers do so too
+    unless ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` is set, in which case
+    they fall back to float64 as well.
+
+    This is the fallback used when a caller does not pass an explicit
+    ``core_scalar`` to :func:`get_ewald_real_kernel` / :func:`make_ewald_real_kernel`.
+    Torch-layer callers that know the runtime device (``_ewald_real_chain.py``,
+    ``_ewald_direct.py``) resolve ``core_scalar`` themselves, additionally gated
+    on CUDA, and pass it explicitly -- they never reach this function. It
+    remains the device-agnostic (no CUDA gate) behavior for callers that have
+    not been updated yet (the JAX bindings, the low-level direct warp helper
+    in ``ewald_kernels.py``).
+
+    Read at kernel-specialisation time, not per call: the value is part of the
+    ``lru_cache`` key on the ``_make_*_pair_fn`` builders.
+    """
+    if wp_dtype is wp.float64:
+        return wp.float64
+    return wp_dtype if _use_fp32_electrostatics() else wp.float64
+
+
 @lru_cache(maxsize=None)
 def _make_forward_pair_fn(
     wp_dtype: type,
@@ -263,6 +288,7 @@ def _make_forward_pair_fn(
     deriv_state: _DerivState,
     cell_grad: bool,
     cell_literal: bool = False,
+    core_scalar: type = wp.float64,
 ) -> wp.Function:
     """Build the specialized forward per-pair accumulator.
 
@@ -311,31 +337,41 @@ def _make_forward_pair_fn(
             ``dE/dsep``; ``n`` == integer shift). The block is f64 (``wp.mat33d``)
             regardless of ``wp_dtype`` to match the f64 cache the chain allocates.
             """
-            qj = wp.float64(charges[j])
+            # Pair math runs in input precision; only the accumulators stay
+            # float64. wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7
+            # error, so evaluating it in float64 cannot beat evaluating it in
+            # float32 -- it just costs a float64 erfc, exp and several divides
+            # on every pair.
+            qj_s = core_scalar(charges[j])
             separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-            distance = wp.float64(wp.length(separation_vector))
+            distance = core_scalar(wp.length(separation_vector))
+            qi_s = core_scalar(qi)
+            alpha_s = core_scalar(alpha_)
 
-            if distance > wp.float64(_DISTANCE_EPSILON):
-                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                    qi, qj, distance, alpha_
+            if distance > core_scalar(_DISTANCE_EPSILON):
+                energy_acc += wp.float64(
+                    _ewald_real_space_energy_kernel_compute_energy(
+                        qi_s, qj_s, distance, alpha_s
+                    )
                 )
                 if HAS_FORCE:
                     force_mag = _ewald_real_space_force_magnitude(
-                        qi, qj, distance, alpha_
+                        qi_s, qj_s, distance, alpha_s
                     )
+                    fm = type(pos_i[0])(force_mag)
                     force = type(pos_i)(
-                        type(pos_i[0])(force_mag) * separation_vector[0],
-                        type(pos_i[0])(force_mag) * separation_vector[1],
-                        type(pos_i[0])(force_mag) * separation_vector[2],
+                        fm * separation_vector[0],
+                        fm * separation_vector[1],
+                        fm * separation_vector[2],
                     )
                     force_i_acc -= force
                     wp.atomic_add(atomic_forces, j, force)
                     if HAS_CHARGE:
                         potential = _ewald_real_space_charge_grad_potential(
-                            distance, alpha_
+                            distance, alpha_s
                         )
-                        cg_i_acc += qj * potential
-                        wp.atomic_add(charge_gradients, j, qi * potential)
+                        cg_i_acc += wp.float64(qj_s * potential)
+                        wp.atomic_add(charge_gradients, j, wp.float64(qi_s * potential))
                     if CELL_GRAD:
                         virial_acc += _pair_virial_outer(separation_vector, force)
                     # Literal dE/dcell block for atom i: n (x) dE/dsep, dE/dsep = -force.
@@ -380,29 +416,40 @@ def _make_forward_pair_fn(
         ``i``. ``HAS_FORCE``, ``HAS_CHARGE`` and ``CELL_GRAD`` are static
         specializations, so inactive sentinel buffers are not read.
         """
-        qj = wp.float64(charges[j])
+        # Pair math runs in input precision; only the accumulators stay float64.
+        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
+        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
+        # costs a float64 erfc, exp and several divides on every pair.
+        qj_s = core_scalar(charges[j])
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-        distance = wp.float64(wp.length(separation_vector))
+        distance = core_scalar(wp.length(separation_vector))
+        qi_s = core_scalar(qi)
+        alpha_s = core_scalar(alpha_)
 
-        if distance > wp.float64(_DISTANCE_EPSILON):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
+        if distance > core_scalar(_DISTANCE_EPSILON):
+            energy_acc += wp.float64(
+                _ewald_real_space_energy_kernel_compute_energy(
+                    qi_s, qj_s, distance, alpha_s
+                )
             )
             if HAS_FORCE:
-                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi_s, qj_s, distance, alpha_s
+                )
+                fm = type(pos_i[0])(force_mag)
                 force = type(pos_i)(
-                    type(pos_i[0])(force_mag) * separation_vector[0],
-                    type(pos_i[0])(force_mag) * separation_vector[1],
-                    type(pos_i[0])(force_mag) * separation_vector[2],
+                    fm * separation_vector[0],
+                    fm * separation_vector[1],
+                    fm * separation_vector[2],
                 )
                 force_i_acc -= force
                 wp.atomic_add(atomic_forces, j, force)
                 if CELL_GRAD:
                     virial_acc += _pair_virial_outer(separation_vector, force)
             if HAS_CHARGE:
-                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
-                cg_i_acc += qj * potential
-                wp.atomic_add(charge_gradients, j, qi * potential)
+                potential = _ewald_real_space_charge_grad_potential(distance, alpha_s)
+                cg_i_acc += wp.float64(qj_s * potential)
+                wp.atomic_add(charge_gradients, j, wp.float64(qi_s * potential))
 
         return energy_acc, force_i_acc, cg_i_acc, virial_acc
 
@@ -415,6 +462,7 @@ def _make_backward_pair_fn(
     *,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type = wp.float64,
 ) -> wp.Function:
     """Build the specialized backward per-pair accumulator."""
     info = _DTYPE_INFO[wp_dtype]
@@ -449,13 +497,21 @@ def _make_backward_pair_fn(
         thread-local atom-``i`` accumulators. ``HAS_CHARGE`` and ``CELL_GRAD`` are
         static specializations, so inactive sentinel buffers are not read.
         """
-        qj = wp.float64(charges[j])
+        # Pair math runs in input precision; only the accumulators stay float64.
+        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
+        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
+        # costs a float64 erfc, exp and several divides on every pair.
+        qj_s = core_scalar(charges[j])
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-        distance = wp.float64(wp.length(separation_vector))
-        if distance > wp.float64(_DISTANCE_EPSILON):
+        distance = core_scalar(wp.length(separation_vector))
+        qi_s = core_scalar(qi)
+        alpha_s = core_scalar(alpha_)
+        if distance > core_scalar(_DISTANCE_EPSILON):
             ge_fm = wp.float64(0.0)
             if HAS_FORCE or CELL_GRAD:
-                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
+                force_mag = wp.float64(
+                    _ewald_real_space_force_magnitude(qi_s, qj_s, distance, alpha_s)
+                )
                 ge_fm = ge * force_mag
                 if HAS_FORCE:
                     # dL/dR_i += ge*(+F); dL/dR_j += ge*(-F).
@@ -474,7 +530,10 @@ def _make_backward_pair_fn(
                         ),
                     )
             if HAS_CHARGE:
-                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
+                potential = wp.float64(
+                    _ewald_real_space_charge_grad_potential(distance, alpha_s)
+                )
+                qj = wp.float64(qj_s)
                 cg_i_acc += ge * qj * potential
                 wp.atomic_add(charge_gradients, j, ge * qi * potential)
             if CELL_GRAD:
@@ -501,6 +560,7 @@ def _make_double_backward_pair_fn(
     *,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type = wp.float64,
 ) -> wp.Function:
     """Build the specialized double-backward per-pair accumulator."""
     info = _DTYPE_INFO[wp_dtype]
@@ -542,8 +602,15 @@ def _make_double_backward_pair_fn(
         not read.
         """
         qj = wp.float64(charges[j])
+        # The shared erfc cores (distance, alpha only -- charge-unbundled, see
+        # _factory_common.py) run in input precision; only their results and
+        # every other accumulator here (ddE_acc, gpos_i, gq_i, gcell_acc, the
+        # sep/vij bookkeeping) stay float64 -- mirrors _make_forward_pair_fn /
+        # _make_backward_pair_fn.
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
         distance = wp.float64(wp.length(separation_vector))
+        distance_s = core_scalar(wp.length(separation_vector))
+        alpha_s = core_scalar(alpha_)
         if distance > wp.float64(_DISTANCE_EPSILON):
             sep = wp.vec3d(
                 wp.float64(separation_vector[0]),
@@ -556,8 +623,8 @@ def _make_double_backward_pair_fn(
                 wp.float64(v_pos[j][2]),
             )
 
-            half_s = _ewald_half_force_scale(distance, alpha_)
-            half_ds = _ewald_half_force_scale_deriv(distance, alpha_)
+            half_s = wp.float64(_ewald_half_force_scale(distance_s, alpha_s))
+            half_ds = wp.float64(_ewald_half_force_scale_deriv(distance_s, alpha_s))
 
             fm = qi * qj * half_s
             coeff = qi * qj * half_ds / distance
@@ -594,8 +661,10 @@ def _make_double_backward_pair_fn(
 
             if HAS_CHARGE:
                 vqj = v_charge[j]
-                g_pot = _ewald_real_space_charge_grad_potential(distance, alpha_)
-                dg = _ewald_charge_potential_deriv(distance, alpha_)
+                g_pot = wp.float64(
+                    _ewald_real_space_charge_grad_potential(distance_s, alpha_s)
+                )
+                dg = wp.float64(_ewald_charge_potential_deriv(distance_s, alpha_s))
                 ddE_acc += g_pot * (qj * vqi + qi * vqj)
 
                 dgr = dg / distance
@@ -730,6 +799,7 @@ def make_ewald_real_kernel(
     tiled: bool = False,
     cell_literal: bool = False,
     energy_layout: Literal["atom", "system"] = "atom",
+    core_scalar: type | None = None,
 ) -> wp.Kernel:
     """Return a cached, specialized ``ewald_real`` Warp kernel.
 
@@ -772,13 +842,23 @@ def make_ewald_real_kernel(
     energy_layout : {"atom", "system"}
         Forward energy layout. ``"atom"`` writes atom-major energy; ``"system"``
         writes system-major energy and is valid only for ``order="forward"``.
+    core_scalar : type, optional
+        Precision for the per-pair scalar cores (erfc/exp/divides). Pass this
+        explicitly when the caller knows the runtime device, gated on CUDA (the
+        torch chain / direct call sites do this). ``None`` (the default) falls
+        back to :func:`_core_scalar`'s device-agnostic
+        ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` check, for callers that have
+        not been updated to gate on device yet (JAX bindings, the low-level
+        direct warp helper in ``ewald_kernels.py``). Part of the ``lru_cache``
+        key, so CPU and CUDA calls of the same ``wp_dtype`` that pass different
+        ``core_scalar`` values get independently cached kernels.
 
     Returns
     -------
     wp.Kernel
         Cached, specialized Warp kernel for the requested ``(wp_dtype, batched,
         neighbor_input, deriv_state, cell_grad, order, tiled, cell_literal,
-        energy_layout)``
+        energy_layout, core_scalar)``
         combination. The same object is returned on repeated calls with identical
         arguments (``@lru_cache``).
 
@@ -798,6 +878,8 @@ def make_ewald_real_kernel(
         cell_literal,
         energy_layout,
     )
+    if core_scalar is None:
+        core_scalar = _core_scalar(wp_dtype)
 
     if order == "forward":
         if tiled:
@@ -809,27 +891,46 @@ def make_ewald_real_kernel(
                     deriv_state,
                     cell_grad,
                     energy_layout,
+                    core_scalar,
                 )
             return _make_forward_kernel_tiled(
-                wp_dtype, batched, neighbor_input, deriv_state, cell_grad, energy_layout
+                wp_dtype,
+                batched,
+                neighbor_input,
+                deriv_state,
+                cell_grad,
+                energy_layout,
+                core_scalar,
             )
         if cell_literal:
             return _make_forward_kernel_cell_literal(
-                wp_dtype, batched, neighbor_input, deriv_state, cell_grad, energy_layout
+                wp_dtype,
+                batched,
+                neighbor_input,
+                deriv_state,
+                cell_grad,
+                energy_layout,
+                core_scalar,
             )
         return _make_forward_kernel(
-            wp_dtype, batched, neighbor_input, deriv_state, cell_grad, energy_layout
+            wp_dtype,
+            batched,
+            neighbor_input,
+            deriv_state,
+            cell_grad,
+            energy_layout,
+            core_scalar,
         )
     if order == "backward":
         return _make_backward_kernel(
-            wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+            wp_dtype, batched, neighbor_input, deriv_state, cell_grad, core_scalar
         )
     if tiled:
         return _make_double_backward_kernel_tiled(
-            wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+            wp_dtype, batched, neighbor_input, deriv_state, cell_grad, core_scalar
         )
     return _make_double_backward_kernel(
-        wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+        wp_dtype, batched, neighbor_input, deriv_state, cell_grad, core_scalar
     )
 
 
@@ -845,6 +946,7 @@ def get_ewald_real_kernel(
     cell_literal: bool = False,
     energy_layout: Literal["atom", "system"] = "atom",
     component: str = "ewald_real",
+    core_scalar: type | None = None,
 ) -> wp.Kernel:
     """Return a cached ``ewald_real`` kernel, validating dtype + component.
 
@@ -880,6 +982,8 @@ def get_ewald_real_kernel(
     component : str
         Must be ``"ewald_real"``; validated before delegating to
         :func:`make_ewald_real_kernel`.
+    core_scalar : type, optional
+        Forwarded to :func:`make_ewald_real_kernel`; see its docstring.
 
     Returns
     -------
@@ -904,6 +1008,7 @@ def get_ewald_real_kernel(
         tiled=tiled,
         cell_literal=cell_literal,
         energy_layout=energy_layout,
+        core_scalar=core_scalar,
     )
 
 
@@ -917,6 +1022,7 @@ def _make_forward_kernel(
     deriv_state: _DerivState,
     cell_grad: bool,
     energy_layout: Literal["atom", "system"],
+    core_scalar: type,
 ) -> wp.Kernel:
     """Build the forward kernel: energy (+forces +charge-grad +virial)."""
     info = _DTYPE_INFO[wp_dtype]
@@ -934,7 +1040,10 @@ def _make_forward_kernel(
         wp_dtype, BATCHED, neighbor_input, "forward", energy_layout=energy_layout
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1066,6 +1175,7 @@ def _make_forward_kernel_cell_literal(
     deriv_state: _DerivState,
     cell_grad: bool,
     energy_layout: Literal["atom", "system"],
+    core_scalar: type,
 ) -> wp.Kernel:
     """Build the CSR/list forward kernel that also emits literal ``dE/dcell``.
 
@@ -1092,7 +1202,11 @@ def _make_forward_kernel_cell_literal(
         energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad, cell_literal=True
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
+        cell_literal=True,
     )
 
     @wp.kernel(module=module_name)
@@ -1201,6 +1315,7 @@ def _make_forward_kernel_tiled(
     deriv_state: _DerivState,
     cell_grad: bool,
     energy_layout: Literal["atom", "system"],
+    core_scalar: type,
 ) -> wp.Kernel:
     """Build the cooperative-block forward kernel for the neighbor-matrix layout.
 
@@ -1238,7 +1353,10 @@ def _make_forward_kernel_tiled(
         energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1354,6 +1472,7 @@ def _make_forward_kernel_tiled_cell_literal(
     deriv_state: _DerivState,
     cell_grad: bool,
     energy_layout: Literal["atom", "system"],
+    core_scalar: type,
 ) -> wp.Kernel:
     """Cooperative-block forward kernel that also emits the literal ``dE/dcell``.
 
@@ -1387,7 +1506,11 @@ def _make_forward_kernel_tiled_cell_literal(
         energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad, cell_literal=True
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
+        cell_literal=True,
     )
 
     @wp.kernel(module=module_name)
@@ -1513,6 +1636,7 @@ def _make_backward_kernel(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type,
 ) -> wp.Kernel:
     """Build the first-derivative autograd node.
 
@@ -1546,7 +1670,10 @@ def _make_backward_kernel(
 
     module_name = _ewald_real_module_name(wp_dtype, BATCHED, neighbor_input, "backward")
     accumulate_pair = _make_backward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1665,6 +1792,7 @@ def _make_double_backward_kernel(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type,
 ) -> wp.Kernel:
     """Build the second-derivative (pair-Hessian / HVP) node, recompute mode.
 
@@ -1724,7 +1852,10 @@ def _make_double_backward_kernel(
         wp_dtype, BATCHED, neighbor_input, "double_backward"
     )
     accumulate_pair = _make_double_backward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1891,6 +2022,7 @@ def _make_double_backward_kernel_tiled(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type,
 ) -> wp.Kernel:
     """Cooperative-block second-derivative kernel for the neighbor-matrix layout.
 
@@ -1915,7 +2047,10 @@ def _make_double_backward_kernel_tiled(
         wp_dtype, BATCHED, neighbor_input, "double_backward", tiled=True
     )
     accumulate_pair = _make_double_backward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=core_scalar,
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)

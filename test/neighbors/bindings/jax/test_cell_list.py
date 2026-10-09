@@ -40,11 +40,11 @@ pytestmark = requires_gpu
 cell_list_module = import_module("nvalchemiops.jax.neighbors.cell_list")
 
 
-def _pair_shift_set(neighbor_matrix, num_neighbors, shifts):
+def _pair_shift_multiset(neighbor_matrix, num_neighbors, shifts):
     nm = np.asarray(neighbor_matrix)
     nn = np.asarray(num_neighbors)
     nms = np.asarray(shifts)
-    return {
+    return sorted(
         (
             row,
             int(nm[row, slot]),
@@ -52,7 +52,12 @@ def _pair_shift_set(neighbor_matrix, num_neighbors, shifts):
         )
         for row in range(nm.shape[0])
         for slot in range(int(nn[row]))
-    }
+    )
+
+
+def _pair_shift_set(neighbor_matrix, num_neighbors, shifts):
+    """Return unique pair/shift tuples for legacy set-based assertions."""
+    return set(_pair_shift_multiset(neighbor_matrix, num_neighbors, shifts))
 
 
 class TestCellList:
@@ -98,6 +103,37 @@ class TestCellList:
         assert shifts.shape[2] == 3
         # Each atom should have at least some neighbors
         assert jnp.sum(num_neighbors) > 0
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_managed_atom_centric_grid_matches_naive_triclinic(self, dtype):
+        """Managed atom-centric grids recover exact JAX pairs and shifts."""
+        rng = np.random.default_rng(79)
+        cell = jnp.asarray(
+            [[[-7.0, 0.2, 0.1], [0.6, 8.0, 0.3], [-0.2, 0.7, 9.0]]],
+            dtype=dtype,
+        )
+        positions = jnp.asarray(rng.random((23, 3)), dtype=dtype) @ cell[0]
+        pbc = jnp.asarray([[True, False, True]])
+
+        nm, nn, shifts = cell_list(
+            positions,
+            cutoff=2.2,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=96,
+            strategy="atom_centric",
+        )
+        naive_nm, naive_nn, naive_shifts = naive_neighbor_list(
+            positions,
+            cutoff=2.2,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=96,
+        )
+
+        assert _pair_shift_multiset(nm, nn, shifts) == _pair_shift_multiset(
+            naive_nm, naive_nn, naive_shifts
+        )
 
     def test_topology_only_grad_pbc_is_zero(self):
         """Topology-only cell-list outputs do not differentiate Warp FFI."""
@@ -663,8 +699,8 @@ class TestEstimateCellListSizes:
             naive_nm, naive_nn, naive_shifts
         )
 
-    def test_estimate_adaptive_promotion_doubles_three_to_six(self):
-        """JAX estimates and Warp construction promote a natural three to six."""
+    def test_estimate_adaptive_promotion_retains_doubling(self):
+        """JAX estimates and Warp construction retain the doubling minimum rule."""
         positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
         cell = jnp.diag(jnp.array([3.9, 10.9, 10.9], dtype=jnp.float32)).reshape(
             1, 3, 3
@@ -788,9 +824,9 @@ class TestEstimateCellListSizes:
             strategy="atom_centric",
         )
 
-        assert _pair_shift_set(warp_nm, warp_nn, warp_shifts) == _pair_shift_set(
-            default_nm, default_nn, default_shifts
-        )
+        assert _pair_shift_multiset(
+            warp_nm, warp_nn, warp_shifts
+        ) == _pair_shift_multiset(default_nm, default_nn, default_shifts)
 
 
 def _vesin_brute_force(positions_np, cell_np, pbc_np, cutoff):

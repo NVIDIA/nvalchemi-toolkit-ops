@@ -159,10 +159,11 @@ def _normalize_selector_cell_pbc(
 @scoped_torch_warp_stream
 def estimate_neighbor_list_costs(
     batch_ptr: torch.Tensor,
-    cell: torch.Tensor,
-    pbc: torch.Tensor,
-    cutoff: float,
+    cell: torch.Tensor | None = None,
+    pbc: torch.Tensor | None = None,
+    cutoff: float = 0.0,
     *,
+    positions: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     max_nbins: int | None = None,
     optional_outputs: Iterable[str] | None = None,
@@ -185,10 +186,14 @@ def estimate_neighbor_list_costs(
         Cumulative atom counts. ``batch_ptr[-1]`` is the total atom count.
     cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3)
         Per-system cells, or one shared cell to broadcast.
-    pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=bool
+    positions : torch.Tensor, shape (total_atoms, 3), optional
+        Required when ``cell`` and ``pbc`` are omitted, to synthesize the same
+        bounding box the dispatcher would.
+    pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=bool, optional
+        Omit together with ``cell``; see above.
         Shared or per-system PBC flags.
     cutoff : float
-        Neighbor cutoff.  For dual-cutoff routing, pass the larger cutoff.
+        Neighbor cutoff. For dual-cutoff routing, pass the larger cutoff.
     batch_idx : torch.Tensor, optional
         Dense per-atom system ids, shape ``(total_atoms,)``, dtype=int32.
         When provided, the selector validates that the labels match the
@@ -206,7 +211,7 @@ def estimate_neighbor_list_costs(
         Aliases matching common public buffers such as ``"neighbor_vectors"``
         and ``"pair_fn"`` are accepted.
     cutoff2 : float, optional
-        Secondary cutoff distance.  When set, marks dual-cutoff output as
+        Secondary cutoff distance. When set, marks dual-cutoff output as
         active for cluster-tile feasibility scoring.
     half_fill : bool, default=False
         When ``True``, marks half-fill output as active for feasibility
@@ -215,20 +220,20 @@ def estimate_neighbor_list_costs(
         When ``True``, marks COO/list conversion as active for feasibility
         scoring.
     target_indices : torch.Tensor, optional
-        Public partial-row source indices, shape ``(num_targets,)``,
-        dtype=int32.  Its length is used to score targeted naive/cell-list
-        work.
+        Central-atom indices for compact partial rows, shape
+        ``(num_targets,)``, dtype=int32. Its length is used to score targeted
+        naive/cell-list work.
     return_vectors : bool, default=False
         When ``True``, marks per-pair displacement output as active for
         feasibility scoring.
     return_distances : bool, default=False
-        When ``True``, marks per-pair distance output as active for
-        feasibility scoring.
+        When ``True``, marks per-pair distance output as active for feasibility
+        scoring.
     use_pair_fn : bool, default=False
         When ``True``, marks inline ``pair_fn`` evaluation as active for
         feasibility scoring.
     rebuild_flags : torch.Tensor, optional
-        Per-system rebuild flags.  When provided, marks selective rebuild as
+        Per-system rebuild flags. When provided, marks selective rebuild as
         active for feasibility scoring (disqualifies cluster-tile).
     wrap_positions : bool, default=True
         When ``False``, marks unwrapped batched PBC positions as active for
@@ -243,23 +248,15 @@ def estimate_neighbor_list_costs(
         Feasible strategies (from
         :data:`nvalchemiops.neighbors.base_dispatch.NEIGHBOR_LIST_STRATEGIES`)
         and their relative estimated cost (lower is faster), sorted
-        cheapest-first.  Batched inputs (``num_systems > 1``) return
-        ``batch_`` prefixed names.
+        cheapest-first. Batched inputs return ``batch_`` prefixed names.
 
     Notes
     -----
-    The returned costs are *relative* (arbitrary units): only their ordering is
-    meaningful, so compare them to each other, not to a wall-clock time.  The
-    model approximates algorithmic work (candidate pairs, neighbors written,
-    launch overhead) and is **hardware-independent** -- the true crossover
-    between strategies shifts with the device, so when the top costs are within a
-    small factor the predicted best may be marginally slower than a close
-    runner-up; benchmark the top few on your hardware in that case.
-
-    This launches one Warp kernel over systems (and over atoms when validating
-    ``batch_idx`` contiguity) and reads back five costs plus nine flags, so it
-    is **host-only**: call it outside ``torch.compile`` and pass the chosen
-    name as an explicit ``method=`` to run compiled.
+    Costs are relative estimates of algorithmic work with calibrated setup and
+    launch costs and a device-dependent float64 penalty; only their ordering is
+    meaningful. This host-only function synchronizes a small selector result.
+    Call it outside ``torch.compile`` and pass the chosen name as an explicit
+    ``method=`` argument.
     """
     _raise_if_compiling_host_only(
         "estimate_neighbor_list_costs",
@@ -271,6 +268,32 @@ def estimate_neighbor_list_costs(
     if batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
+    if (cell is None) != (pbc is None):
+        raise ValueError("cell and pbc must be provided together, or neither")
+    if cell is None:
+        # Cost a free boundary against the same padded bounding box the
+        # dispatcher synthesizes, with an all-False pbc.
+        if positions is None:
+            raise ValueError(
+                "estimate_neighbor_list_costs needs either cell and pbc, or "
+                "positions to synthesize a bounding box from for a "
+                "free-boundary system"
+            )
+        if batch_idx is not None and num_systems > 1:
+            # Per-system boxes: one shared box inflates every system's volume
+            # when they occupy different regions, which is not what the
+            # dispatcher builds.
+            _, cell, pbc = synthesize_cell_for_batch(
+                positions,
+                batch_idx.detach().to(dtype=torch.int32),
+                batch_ptr.detach().to(dtype=torch.int32),
+                cutoff,
+            )
+        else:
+            _, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
+            if num_systems > 1:
+                cell = cell.expand(num_systems, -1, -1)
+                pbc = pbc.unsqueeze(0).expand(num_systems, -1)
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.detach().to(dtype=torch.int32).contiguous()
     if batch_idx is not None:
@@ -326,7 +349,9 @@ def suggest_neighbor_list_method(*args, **kwargs) -> str:
 
     Thin wrapper over
     :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`
-    returning only the top-ranked strategy name.  Accepts the same arguments
+    returning only the top-ranked strategy name. ``cell`` and ``pbc`` are
+    optional there and so are optional here: omit both and pass ``positions``
+    for a free-boundary system. Accepts the same arguments
     and carries the same host-only sync caveat: call outside ``torch.compile``
     and pass the result as an explicit ``method=`` argument.
 
@@ -342,8 +367,8 @@ def suggest_neighbor_list_method(*args, **kwargs) -> str:
     Returns
     -------
     str
-        Name of the cheapest feasible strategy, e.g. ``"cell_list_atom_centric"``
-        or ``"batch_naive_tile"``.
+        Name of the cheapest feasible strategy, e.g.
+        ``"cell_list_atom_centric"`` or ``"batch_naive_tile"``.
 
     See Also
     --------

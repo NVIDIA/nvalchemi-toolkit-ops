@@ -73,4 +73,3 @@ pair cutoff on the dispersion sum.
 
 .. autoclass:: nvalchemiops.jax.interactions.dispersion.FourierD3Parameters
     :members:
-    :undoc-members:

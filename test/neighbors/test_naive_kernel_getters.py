@@ -15,11 +15,14 @@
 
 """Tests for the public naive kernel kernel getter helper."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
 import warp as wp
 
+import nvalchemiops.neighbors.naive.launchers as naive_launchers
 from nvalchemiops.neighbors.naive import (
     get_naive_neighbor_matrix_kernel,
     naive_neighbor_matrix,
@@ -103,6 +106,305 @@ def _skip_missing_cuda(device: str) -> None:
     """Skip CUDA cases when the local test host has no CUDA device."""
     if device.startswith("cuda") and not torch.cuda.is_available():
         pytest.skip("CUDA is required for this test parameter")
+
+
+@pytest.mark.parametrize(
+    ("wp_dtype", "num_atoms", "strategy", "expected_launch"),
+    [
+        (wp.float16, 1023, "auto", "scalar"),
+        (wp.float16, 1024, "auto", "tile"),
+        (wp.float32, 1023, "auto", "scalar"),
+        (wp.float32, 1024, "auto", "tile"),
+        (wp.float64, 255, "auto", "scalar"),
+        (wp.float64, 256, "auto", "tile"),
+        (wp.float32, 1, "tile", "tile"),
+    ],
+)
+def test_partial_auto_dispatch_uses_dtype_threshold(
+    monkeypatch,
+    wp_dtype,
+    num_atoms,
+    strategy,
+    expected_launch,
+):
+    """Partial routing changes at each dtype threshold; explicit tile does not."""
+    launches = []
+    monkeypatch.setattr(naive_launchers, "_is_cpu_device", lambda _device: False)
+    monkeypatch.setattr(
+        naive_launchers,
+        "_scalar_sentinels",
+        lambda _dtype, _device: (None,) * 16,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "_prepare_pair_output_args",
+        lambda *_args, **_kwargs: (None,) * 5,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "get_naive_neighbor_matrix_kernel",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch",
+        lambda **_kwargs: launches.append("scalar"),
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch_tiled",
+        lambda **_kwargs: launches.append("tile"),
+    )
+
+    naive_launchers._launch_naive_neighbor_matrix_no_pbc(
+        SimpleNamespace(shape=(num_atoms, 3)),
+        1.0,
+        None,
+        None,
+        wp_dtype,
+        "cuda:0",
+        batched=False,
+        target_indices=SimpleNamespace(shape=(6,)),
+        strategy=strategy,
+    )
+
+    assert launches == [expected_launch]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected_launch"),
+    [
+        ("auto", "scalar"),
+        ("scalar", "scalar"),
+        ("tile", "tile"),
+    ],
+)
+def test_batched_partial_dispatches_requested_strategy(
+    monkeypatch,
+    strategy,
+    expected_launch,
+):
+    """Batched partial routing is scalar by default but honors overrides."""
+    launches = []
+    monkeypatch.setattr(naive_launchers, "_is_cpu_device", lambda _device: False)
+    monkeypatch.setattr(
+        naive_launchers,
+        "_scalar_sentinels",
+        lambda _dtype, _device: (None,) * 16,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "get_naive_neighbor_matrix_kernel",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch",
+        lambda **_kwargs: launches.append("scalar"),
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch_tiled",
+        lambda **_kwargs: launches.append("tile"),
+    )
+
+    naive_launchers._launch_naive_neighbor_matrix_no_pbc(
+        SimpleNamespace(shape=(4096, 3)),
+        1.0,
+        None,
+        None,
+        wp.float64,
+        "cuda:0",
+        batched=True,
+        batch_idx=SimpleNamespace(shape=(4096,)),
+        batch_ptr=SimpleNamespace(shape=(1025,)),
+        target_indices=SimpleNamespace(shape=(6,)),
+        strategy=strategy,
+    )
+
+    assert launches == [expected_launch]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected_launch"),
+    [
+        ("auto", "scalar"),
+        ("scalar", "scalar"),
+        ("tile", "tile"),
+    ],
+)
+def test_batched_pbc_partial_dispatches_requested_strategy(
+    monkeypatch,
+    strategy,
+    expected_launch,
+):
+    """Batched PBC partial routing is scalar by default but honors overrides."""
+    launches = []
+    monkeypatch.setattr(naive_launchers, "_is_cpu_device", lambda _device: False)
+    monkeypatch.setattr(
+        naive_launchers,
+        "_prepare_pbc_positions",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "_scalar_sentinels",
+        lambda _dtype, _device: (None,) * 16,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "get_naive_neighbor_matrix_kernel",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch",
+        lambda **_kwargs: launches.append("scalar"),
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch_tiled",
+        lambda **_kwargs: launches.append("tile"),
+    )
+
+    naive_launchers._launch_naive_neighbor_matrix_pbc(
+        SimpleNamespace(shape=(4096, 3)),
+        1.0,
+        SimpleNamespace(shape=(1024, 3, 3)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        wp.float64,
+        "cuda:0",
+        batched=True,
+        batch_ptr=SimpleNamespace(shape=(1025,)),
+        batch_idx=SimpleNamespace(shape=(4096,)),
+        num_shifts_arr=SimpleNamespace(shape=(1024,)),
+        max_shifts_per_system=1,
+        max_atoms_per_system=4,
+        target_indices=SimpleNamespace(shape=(6,)),
+        strategy=strategy,
+    )
+
+    assert launches == [expected_launch]
+
+
+def test_partial_selective_tile_kernel_is_rejected():
+    """Partial tile kernels do not expose selective rebuild specialization."""
+    with pytest.raises(
+        NotImplementedError,
+        match="Partial tile kernels do not support selective rebuilds",
+    ):
+        get_naive_neighbor_matrix_kernel(
+            wp.float32,
+            partial=True,
+            selective=True,
+            strategy="tile",
+        )
+
+
+@pytest.mark.parametrize("pbc", [False, True], ids=["no_pbc", "pbc"])
+def test_private_partial_rebuild_rejects_before_allocation_or_launch(
+    monkeypatch,
+    pbc,
+):
+    """Private compact selective calls fail before changing sentinel outputs."""
+    positions = SimpleNamespace(shape=(2, 3))
+    target_indices = SimpleNamespace(shape=(1,))
+    rebuild_flags = SimpleNamespace(shape=(1,))
+    neighbor_matrix = torch.full((1, 4), 73, dtype=torch.int32)
+    num_neighbors = torch.full((1,), 29, dtype=torch.int32)
+    matrix_before = neighbor_matrix.clone()
+    counts_before = num_neighbors.clone()
+
+    def unexpected_boundary(*_args, **_kwargs):
+        raise AssertionError("private launcher must reject before allocation or launch")
+
+    monkeypatch.setattr(naive_launchers, "_scalar_sentinels", unexpected_boundary)
+    monkeypatch.setattr(naive_launchers.wp, "launch", unexpected_boundary)
+    monkeypatch.setattr(naive_launchers.wp, "launch_tiled", unexpected_boundary)
+
+    if pbc:
+        neighbor_matrix_shifts = torch.full((1, 4, 3), 17, dtype=torch.int32)
+        shifts_before = neighbor_matrix_shifts.clone()
+        monkeypatch.setattr(
+            naive_launchers,
+            "_prepare_pbc_positions",
+            unexpected_boundary,
+        )
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_launchers._launch_naive_neighbor_matrix_pbc(
+                positions,
+                1.0,
+                SimpleNamespace(shape=(1, 3, 3)),
+                None,
+                SimpleNamespace(shape=(1, 3)),
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                wp.float32,
+                "cpu",
+                batched=False,
+                num_shifts=1,
+                target_indices=target_indices,
+                rebuild_flags=rebuild_flags,
+            )
+        assert torch.equal(neighbor_matrix_shifts, shifts_before)
+    else:
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_launchers._launch_naive_neighbor_matrix_no_pbc(
+                positions,
+                1.0,
+                neighbor_matrix,
+                num_neighbors,
+                wp.float32,
+                "cpu",
+                batched=False,
+                target_indices=target_indices,
+                rebuild_flags=rebuild_flags,
+            )
+
+    assert torch.equal(neighbor_matrix, matrix_before)
+    assert torch.equal(num_neighbors, counts_before)
+
+
+def test_batch_pbc_partial_forwards_explicit_strategy(monkeypatch):
+    """Batched PBC partial calls preserve the caller's strategy selection."""
+    captured_kwargs = {}
+    monkeypatch.setattr(
+        naive_launchers,
+        "_launch_naive_neighbor_matrix_pbc",
+        lambda *_args, **kwargs: captured_kwargs.update(kwargs),
+    )
+
+    naive_launchers.batch_naive_neighbor_matrix_pbc(
+        None,
+        None,
+        1.0,
+        None,
+        None,
+        None,
+        None,
+        1,
+        None,
+        None,
+        None,
+        wp.float32,
+        "cuda:0",
+        1,
+        target_indices=SimpleNamespace(shape=(1,)),
+        strategy="scalar",
+    )
+
+    assert captured_kwargs["strategy"] == "scalar"
 
 
 def test_single_cutoff_kernel_uses_pair_fn_object_cache_key():

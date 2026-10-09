@@ -39,6 +39,7 @@ from nvalchemiops.jax.interactions.electrostatics.ewald import (
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_ewald_miller_indices,
+    generate_k_squared_pme,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     generate_miller_indices,
@@ -232,6 +233,7 @@ __all__ = [
     "compute_bspline_moduli_1d",
     # K-vectors
     "generate_ewald_miller_indices",
+    "generate_k_squared_pme",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
     "generate_miller_indices",

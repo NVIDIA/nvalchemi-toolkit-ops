@@ -32,6 +32,19 @@ def _warn_compile_missing_argument_inference(
 ) -> None:
     """Warn when compiled execution falls back to host-side inference.
 
+    Parameters
+    ----------
+    missing : str
+        Name or description of the argument that was not supplied.
+    inference : str
+        Description of the host-side inference performed in its place.
+    stacklevel : int, optional
+        Warning stack level, by default 3.
+
+    Returns
+    -------
+    None
+
     Examples
     --------
     Warn when ``max_atoms_per_system`` is inferred from ``batch_ptr``:
@@ -43,8 +56,9 @@ def _warn_compile_missing_argument_inference(
     """
     if torch.compiler.is_compiling():
         warnings.warn(
-            f"Missing {missing}; {inference} introduces a graph break under "
-            "torch.compile. This will become an error in a future release.",
+            f"Missing {missing}; {inference} requires host-side computation during "
+            "compiled execution. Pass the argument explicitly. This fallback "
+            "will become an error in a future release.",
             FutureWarning,
             stacklevel=stacklevel,
         )

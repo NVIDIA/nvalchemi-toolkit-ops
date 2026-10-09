@@ -30,10 +30,16 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.jax.neighbors._cell_grid import _select_pair_grid
 from nvalchemiops.jax.neighbors._registration import (
+    _cached_jax_kernel_call,
     _lazy_cell_list_build_kernel,
     _lazy_cell_list_query_kernel,
 )
+from nvalchemiops.jax.neighbors._resolution import (
+    resolve_cell_strategy as _resolve_cell_strategy,
+)
+from nvalchemiops.jax.neighbors._status import _build_cell_list_status_tail
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
@@ -47,11 +53,11 @@ from nvalchemiops.neighbors.cell_list import (
 from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     is_pair_centric_parallelism_sufficient,
-    select_cell_list_strategy,
 )
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as _warp_query_cell_list,
 )
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
     selective_zero_num_neighbors_single,
@@ -65,14 +71,20 @@ from nvalchemiops.neighbors.output_args import (
 # ==============================================================================
 
 
-def _build_registry(stage: str):
+def _build_registry(stage: str, *, fixed_cell: bool = False):
     """Create lazy dtype registrations for a single-system build stage."""
-    return _lazy_cell_list_build_kernel(stage=stage, batched=False)
+    return _lazy_cell_list_build_kernel(
+        stage=stage, batched=False, fixed_cell=fixed_cell
+    )
 
 
 _CELL_LIST_BUILD_REGISTRATIONS = {
     stage: _build_registry(stage)
     for stage in ("construct_bin_size", "count_atoms", "bin_atoms", "gather")
+}
+_FIXED_CELL_LIST_BUILD_REGISTRATIONS = {
+    stage: _build_registry(stage, fixed_cell=True)
+    for stage in ("count_atoms", "bin_atoms")
 }
 
 
@@ -139,7 +151,6 @@ __all__ = [
 
 ADAPTIVE_MIN_CELLS = 4
 _DEFAULT_CELL_LIST_BUFFER_FACTOR = 1.5
-_MAX_ADAPTIVE_PROMOTION_STEPS = 8
 
 
 def _reset_query_outputs(
@@ -200,7 +211,8 @@ def _derive_promoted_cells_per_dimension(
         1,
     )
     promote_mask = pbc.astype(jnp.bool_) | (cells_per_dimension > 1)
-    for _ in range(_MAX_ADAPTIVE_PROMOTION_STEPS):
+    # Starting at one, this many doublings reaches the configured minimum.
+    for _ in range((ADAPTIVE_MIN_CELLS - 1).bit_length()):
         cells_per_dimension = jnp.where(
             promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
             cells_per_dimension * 2,
@@ -319,50 +331,6 @@ def _validate_compact_target_buffers(
         "pair_forces",
         pair_forces,
         (num_rows, max_neighbors, 3),
-    )
-
-
-def _resolve_cell_strategy(
-    strategy: str,
-    *,
-    total_atoms: int,
-    cutoff: float,
-    device_is_cpu: bool,
-    half_fill: bool = False,
-) -> str:
-    """Resolve the cell-list query sub-strategy to ``atom_centric``/``pair_centric``.
-
-    Mirrors the Torch resolution (``torch/neighbors/cell_list.py:565-585``):
-
-    - ``"auto"`` -> :func:`select_cell_list_strategy` on GPU, or ``"atom_centric"``
-      on CPU (pair-centric kernels use CUDA block scheduling).  When
-      ``half_fill`` is set, ``"auto"`` also resolves to ``"atom_centric"``
-      because the JAX pair-centric path is full-fill only - so the default
-      (no explicit strategy) keeps working for every geometry with half_fill.
-    - ``"atom_centric"`` -> ``"atom_centric"``.
-    - ``"pair_centric"`` -> ``"pair_centric"`` on GPU; raises on CPU.
-
-    This is the strategy *decision* only. Pair-centric parallelism guards,
-    transparent launch coarsening, and launch sizing live in
-    ``query_cell_list``. Callers can supply a static ``n_outer`` when the
-    runtime ``neighbor_search_radius`` is traced.
-    """
-    if strategy == "auto":
-        if device_is_cpu or half_fill:
-            return "atom_centric"
-        return select_cell_list_strategy(int(total_atoms), float(cutoff))
-    if strategy == "atom_centric":
-        return "atom_centric"
-    if strategy == "pair_centric":
-        if device_is_cpu:
-            raise ValueError(
-                "strategy='pair_centric' is not supported on CPU "
-                "(kernels use CUDA block scheduling).  Pass 'auto' or "
-                "'atom_centric' instead.",
-            )
-        return "pair_centric"
-    raise ValueError(
-        f"strategy must be 'auto' | 'atom_centric' | 'pair_centric', got {strategy!r}",
     )
 
 
@@ -1557,8 +1525,8 @@ def estimate_cell_list_sizes(
     max_total_cells = jnp.max(jnp.array([num_cells_est, 8]))  # Minimum 8 cells
 
     pbc_squeezed = pbc.squeeze()[:3] if pbc.ndim > 1 else pbc[:3]
-    # Match Warp's natural-grid calculation and repeated-doubling promotion,
-    # then apply the single-system capacity clamp below.
+    # Match Warp's natural-grid calculation and minimum-cell promotion, then
+    # apply the single-system capacity clamp below.
     cells_per_dimension = _derive_promoted_cells_per_dimension(
         cell,
         pbc,
@@ -1742,19 +1710,21 @@ def _cell_list_pair_outputs_forward(
                 pair_fn, wp_dtype, is_partial, half_fill
             )
         elif half_fill:
-            pair_kernel = _CELL_LIST_QUERY_REGISTRATIONS[(True, True, "sorted")][
-                positions.dtype
-            ]
+            pair_kernel = _cached_jax_kernel_call(
+                _CELL_LIST_QUERY_REGISTRATIONS[(True, True, "sorted")][positions.dtype]
+            )
         else:
-            pair_kernel = _CELL_LIST_QUERY_REGISTRATIONS[(False, True, "sorted")][
-                positions.dtype
-            ]
+            pair_kernel = _cached_jax_kernel_call(
+                _CELL_LIST_QUERY_REGISTRATIONS[(False, True, "sorted")][positions.dtype]
+            )
         ti_arg = (
             jnp.asarray(target_indices, dtype=jnp.int32)
             if is_partial
             else jnp.zeros((0,), dtype=jnp.int32)
         )
-        gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+        gather_kernel = _cached_jax_kernel_call(
+            _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+        )
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(
@@ -1864,6 +1834,7 @@ def build_cell_list(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
 ) -> tuple[
     jax.Array,
     jax.Array,
@@ -1973,6 +1944,83 @@ def build_cell_list(
             "Use query_cell_list() or the top-level cell_list() wrapper.",
         )
 
+    return _build_cell_list(
+        positions,
+        cutoff,
+        cell,
+        pbc,
+        cells_per_dimension,
+        neighbor_search_radius,
+        atom_periodic_shifts,
+        atom_to_cell_mapping,
+        atoms_per_cell_count,
+        cell_atom_start_indices,
+        cell_atom_list,
+        max_total_cells,
+        graph_mode,
+        _fixed_cell_geometry=_fixed_cell_geometry,
+    )
+
+
+def _build_cell_list(
+    positions: jax.Array,
+    cutoff: float,
+    cell: jax.Array,
+    pbc: jax.Array,
+    cells_per_dimension: jax.Array | None = None,
+    neighbor_search_radius: jax.Array | None = None,
+    atom_periodic_shifts: jax.Array | None = None,
+    atom_to_cell_mapping: jax.Array | None = None,
+    atoms_per_cell_count: jax.Array | None = None,
+    cell_atom_start_indices: jax.Array | None = None,
+    cell_atom_list: jax.Array | None = None,
+    max_total_cells: int | None = None,
+    graph_mode: Literal["none", "warp"] = "none",
+    *,
+    select_pair_grid: bool = False,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
+) -> tuple[jax.Array, ...]:
+    """Build a cell list using configured sizing or eager pair-grid selection.
+
+    Parameters
+    ----------
+    positions : jax.Array
+        Concatenated Cartesian coordinates for the atoms.
+    cutoff : float
+        Neighbor cutoff in the same length units as ``cell``.
+    cell : jax.Array
+        Single-system cell matrix, shaped ``(3, 3)`` or ``(1, 3, 3)``.
+    pbc : jax.Array
+        Per-axis periodicity flags.
+    cells_per_dimension : jax.Array, optional
+        Caller-provided cell counts for each axis.
+    neighbor_search_radius : jax.Array, optional
+        Caller-provided cell stencil radius for each axis.
+    atom_periodic_shifts : jax.Array, optional
+        Output buffer for atom image shifts.
+    atom_to_cell_mapping : jax.Array, optional
+        Output buffer mapping each atom to a cell.
+    atoms_per_cell_count : jax.Array, optional
+        Output buffer for cell populations.
+    cell_atom_start_indices : jax.Array, optional
+        Output buffer for cell offsets in the packed atom list.
+    cell_atom_list : jax.Array, optional
+        Output buffer for atom indices grouped by cell.
+    max_total_cells : int, optional
+        Maximum number of cells available to the build.
+    graph_mode : {"none", "warp"}, default "none"
+        Execution mode used by registered Warp calls.
+    select_pair_grid : bool, default False
+        Select grids from current geometry and populations for supported eager
+        pair-centric calls.
+    _fixed_cell_geometry : tuple of jax.Array, optional
+        Prepared fixed-cell geometry and sizing metadata.
+
+    Returns
+    -------
+    tuple[jax.Array, ...]
+        Cell-list buffers and geometry metadata consumed by the query.
+    """
     graph_mode = _validate_graph_mode(graph_mode)
 
     if cell.ndim == 2:
@@ -1980,7 +2028,11 @@ def build_cell_list(
     if pbc.ndim == 1:
         pbc = pbc[jnp.newaxis, :]
 
-    derive_radius = neighbor_search_radius is None
+    fixed_cell = _fixed_cell_geometry is not None
+    derive_radius = neighbor_search_radius is None and not fixed_cell
+    if fixed_cell:
+        cells_per_dimension = _fixed_cell_geometry[1][0]
+        neighbor_search_radius = _fixed_cell_geometry[2][0]
 
     if max_total_cells is None:
         max_total_cells, _, _ = estimate_cell_list_sizes(positions, cell, cutoff, pbc)
@@ -2017,8 +2069,12 @@ def build_cell_list(
     empty_bool2d = jnp.zeros((0, 3), dtype=jnp.bool_)
     empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
     empty_vec3i = jnp.zeros((0, 3), dtype=jnp.int32)
+    empty_cell = jnp.zeros((0, 3, 3), dtype=cell.dtype)
+    inv_cell = _fixed_cell_geometry[0] if fixed_cell else empty_cell
 
     if graph_mode == "warp":
+        if fixed_cell:
+            raise ValueError("fixed-cell geometry requires graph_mode='none'")
         graph_build = (
             _jax_graph_build_cell_list_f64
             if positions.dtype == jnp.float64
@@ -2044,27 +2100,57 @@ def build_cell_list(
             float(cutoff),
         )
     else:
-        _construct_bin_size = _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
-            positions.dtype
-        ]
-        _count_atoms = _CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
-        _bin_atoms = _CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
-        # Step 1: Construct bin sizes
-        (cells_per_dimension,) = _construct_bin_size(
-            cell,
-            pbc_bool,
-            empty_bool2d,
-            cells_per_dimension,
-            empty_vec3i,
-            float(cutoff),
-            int(max_total_cells),
-            launch_dims=(1,),
+        build_registrations = (
+            _FIXED_CELL_LIST_BUILD_REGISTRATIONS
+            if fixed_cell
+            else _CELL_LIST_BUILD_REGISTRATIONS
         )
+        if fixed_cell:
+            _count_atoms = build_registrations["count_atoms"][positions.dtype]
+            _bin_atoms = build_registrations["bin_atoms"][positions.dtype]
+        else:
+            _construct_bin_size = _cached_jax_kernel_call(
+                _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][positions.dtype]
+            )
+            _count_atoms = _cached_jax_kernel_call(
+                build_registrations["count_atoms"][positions.dtype]
+            )
+            _bin_atoms = _cached_jax_kernel_call(
+                build_registrations["bin_atoms"][positions.dtype]
+            )
+        if not fixed_cell and select_pair_grid:
+            capacity = min(
+                max_total_cells,
+                atoms_per_cell_count.shape[0],
+                cell_atom_start_indices.shape[0],
+            )
+            grids, radii, _ = _select_pair_grid(
+                cell,
+                pbc_bool,
+                jnp.asarray([0, total_atoms], dtype=jnp.int32),
+                cutoff,
+                capacity,
+                single_system=True,
+            )
+            cells_per_dimension, neighbor_search_radius = grids[0], radii[0]
+            derive_radius = False
+        elif not fixed_cell:
+            (cells_per_dimension,) = _construct_bin_size(
+                cell,
+                pbc_bool,
+                empty_bool2d,
+                cells_per_dimension,
+                empty_vec3i,
+                float(cutoff),
+                int(max_total_cells),
+                launch_dims=(1,),
+            )
 
         # Step 2: Count atoms per bin
         atoms_per_cell_count, atom_periodic_shifts = _count_atoms(
             positions,
             cell,
+            inv_cell,
             pbc_bool,
             empty_bool2d,
             empty_i32,
@@ -2091,6 +2177,7 @@ def build_cell_list(
         atom_to_cell_mapping, atoms_per_cell_count, cell_atom_list = _bin_atoms(
             positions,
             cell,
+            inv_cell,
             pbc_bool,
             empty_bool2d,
             empty_i32,
@@ -2754,7 +2841,9 @@ def _query_cell_list_with_diagnostics(
             # Sorted path: gather positions/shifts into cell order for coalesced
             # reads.  The direct kernel reads ``positions`` directly and ignores the
             # sorted arrays, so it skips the gather (matching the Torch binding).
-            _gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+            _gather_kernel = _cached_jax_kernel_call(
+                _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+            )
             sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
                 positions,
                 atom_periodic_shifts,
@@ -2763,13 +2852,15 @@ def _query_cell_list_with_diagnostics(
                 sorted_atom_periodic_shifts,
                 launch_dims=(total_atoms,),
             )
-        _build_kernel = _CELL_LIST_QUERY_REGISTRATIONS[
-            (
-                bool(half_fill),
-                False,
-                "direct" if use_direct else "sorted",
-            )
-        ][positions.dtype]
+        _build_kernel = _cached_jax_kernel_call(
+            _CELL_LIST_QUERY_REGISTRATIONS[
+                (
+                    bool(half_fill),
+                    False,
+                    "direct" if use_direct else "sorted",
+                )
+            ][positions.dtype]
+        )
         neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _build_kernel(
             positions,
             atom_periodic_shifts,
@@ -2917,6 +3008,10 @@ def cell_list(
     pair_forces: jax.Array | None = None,
     coo_capacity: int | None = None,
     pair_centric_n_outer: int | None = None,
+    _return_status: bool = False,
+    _fixed_cell_geometry: tuple[jax.Array, ...] | None = None,
+    *,
+    grid_policy: str = "configured",
 ) -> tuple[jax.Array, ...]:
     """Build and query spatial cell list for efficient neighbor finding.
 
@@ -2938,6 +3033,7 @@ def cell_list(
         Cutoff distance for neighbor detection.
     cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64, optional
         Cell matrix defining lattice vectors. Default is identity matrix.
+        Entries must be finite and the matrix must have nonzero volume.
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags. Default is all True.
     max_neighbors : int, optional
@@ -3012,6 +3108,15 @@ def cell_list(
         Pre-shaped output buffer for per-pair energies from ``pair_fn``.
     pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped output buffer for per-pair forces from ``pair_fn``.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. ``"adaptive"`` selects grids from geometry and atom
+        populations on supported full-list pair-centric paths. Its cost model
+        assumes approximately uniform spatial occupancy; performance depends on
+        the input distribution.
+        Adaptive selection applies to eager calls without static pair-centric
+        launch metadata; traced calls retain the configured grid.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy, forwarded to :func:`query_cell_list`.
         Both strategies produce identical pair SETS; only per-row ordering in
@@ -3079,6 +3184,8 @@ def cell_list(
     query_cell_list : Query cell list separately
     naive_neighbor_list : Naive :math:`O(N^2)` method
     """
+
+    _validate_grid_policy(grid_policy)
 
     has_pair_outputs = _has_partial_or_pair_outputs(
         target_indices=target_indices,
@@ -3333,7 +3440,7 @@ def cell_list(
             cell_atom_start_indices,
             cell_atom_list,
             neighbor_search_radius,
-        ) = build_cell_list(
+        ) = _build_cell_list(
             positions,
             cutoff,
             cell,
@@ -3347,6 +3454,29 @@ def cell_list(
             cell_atom_list=cell_atom_list,
             max_total_cells=max_total_cells,
             graph_mode="none",
+            select_pair_grid=(
+                grid_policy == "adaptive"
+                and not _return_status
+                and _fixed_cell_geometry is None
+                and (not has_pair_outputs or strategy == "pair_centric")
+                and _resolve_cell_strategy(
+                    strategy,
+                    total_atoms=int(positions.shape[0]),
+                    cutoff=float(cutoff),
+                    device_is_cpu=_is_cpu_array(positions),
+                    half_fill=half_fill,
+                )
+                == "pair_centric"
+                and target_indices is None
+                and not half_fill
+                and pair_centric_n_outer is None
+                and not any(
+                    isinstance(value, jax.core.Tracer)
+                    for value in (positions, cell, pbc)
+                )
+                and not _is_cpu_array(positions)
+            ),
+            _fixed_cell_geometry=_fixed_cell_geometry,
         )
 
         if has_pair_outputs:
@@ -3524,6 +3654,32 @@ def cell_list(
                 tail.append(vectors_out)
             if pair_fn is not None:
                 tail.extend((pe_out, pf_out))
+            if _return_status:
+                requested_grid = (
+                    _fixed_cell_geometry[1][0]
+                    if _fixed_cell_geometry is not None
+                    else _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
+                )
+                requested_cells = jnp.prod(requested_grid, dtype=jnp.int32).reshape(1)
+                required_rows = jnp.max(raw_counts, initial=jnp.int32(0)).reshape(1)
+                required_coo = jnp.sum(raw_counts, dtype=jnp.int32).reshape(1)
+                available_rows = jnp.full_like(required_rows, int(max_neighbors))
+                available_coo = jnp.full_like(
+                    required_rows, 0 if coo_capacity is None else int(coo_capacity)
+                )
+                status_tail = _build_cell_list_status_tail(
+                    requested_cells=requested_cells,
+                    available_cells=jnp.full_like(
+                        requested_cells, atoms_per_cell_count.shape[0]
+                    ),
+                    required_rows=required_rows,
+                    available_rows=available_rows,
+                    required_coo=required_coo,
+                    available_coo=available_coo,
+                    metadata_valid=metadata_valid,
+                    coo_capacity=coo_capacity,
+                )
+                return (*base, *tail, *status_tail)
             return (*base, *tail)
 
         (
@@ -3555,6 +3711,34 @@ def cell_list(
             sorted_atom_periodic_shifts=sorted_atom_periodic_shifts,
         )
 
+    if _return_status:
+        # The private prepared-state suffix is deliberately computed from raw
+        # query counts, not fixed COO pointers.  Ordinary direct calls do not
+        # need this diagnostic-only work.
+        requested_grid = (
+            _fixed_cell_geometry[1][0]
+            if _fixed_cell_geometry is not None
+            else _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
+        )
+        requested_cells = jnp.prod(requested_grid, dtype=jnp.int32).reshape(1)
+        available_cells = jnp.full_like(requested_cells, atoms_per_cell_count.shape[0])
+        required_rows = jnp.max(raw_counts, initial=jnp.int32(0)).reshape(1)
+        available_rows = jnp.full_like(required_rows, int(max_neighbors))
+        required_coo = jnp.sum(raw_counts, dtype=jnp.int32).reshape(1)
+        available_coo = jnp.full_like(
+            required_rows, 0 if coo_capacity is None else int(coo_capacity)
+        )
+        status_tail = _build_cell_list_status_tail(
+            requested_cells=requested_cells,
+            available_cells=available_cells,
+            required_rows=required_rows,
+            available_rows=available_rows,
+            required_coo=required_coo,
+            available_coo=available_coo,
+            metadata_valid=metadata_valid,
+            coo_capacity=coo_capacity,
+        )
+
     if return_neighbor_list:
         if coo_capacity is not None:
             packed, _plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
@@ -3565,7 +3749,9 @@ def cell_list(
                 fill_value=positions.shape[0],
                 metadata_valid=metadata_valid,
             )
-            return packed
+            if not _return_status:
+                return packed
+            return (*packed, *status_tail)
         neighbor_list, neighbor_ptr, neighbor_list_shifts = (
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
@@ -3574,11 +3760,14 @@ def cell_list(
                 fill_value=positions.shape[0],
             )
         )
-        return (
+        result = (
             neighbor_list,
             neighbor_ptr,
             neighbor_list_shifts,
         )
+        if not _return_status:
+            return result
+        return (*result, *status_tail)
     else:
         if fill_value is not None and int(fill_value) != positions.shape[0]:
             # The kernel pads unfilled matrix entries with ``total_atoms``; real
@@ -3588,8 +3777,11 @@ def cell_list(
                 jnp.int32(fill_value),
                 neighbor_matrix,
             )
-        return (
+        result = (
             neighbor_matrix,
             num_neighbors,
             neighbor_matrix_shifts,
         )
+        if not _return_status:
+            return result
+        return (*result, *status_tail)

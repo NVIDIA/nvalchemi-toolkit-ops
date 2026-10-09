@@ -19,6 +19,7 @@ import pytest
 import torch
 
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.torch.neighbors import neighbor_list as dispatch_neighbor_list
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_build_cell_list,
     batch_cell_list,
@@ -47,6 +48,55 @@ def _search_radius_envelope(neighbor_search_radius: torch.Tensor) -> int:
 
 class TestBatchCellListAPI:
     """Test the main batch cell list API functions."""
+
+    @pytest.mark.gpu
+    def test_dispatch_uses_fixed_grid_without_counting_atoms(self, device):
+        """Keep fixed-grid calls free of atom-count preparation."""
+        if torch.device(device).type != "cuda":
+            pytest.skip("Pair-centric query kernels require CUDA")
+        positions = (
+            torch.arange(36, device=device, dtype=torch.float32).reshape(12, 3) / 10
+        )
+        cell = torch.eye(3, device=device).repeat(3, 1, 1) * 12
+        pbc = torch.ones((3, 3), dtype=torch.bool, device=device)
+        for sizes in ([5, 0, 7], [3, 4, 5]):
+            counts = torch.tensor(sizes, dtype=torch.int32, device=device)
+            batch_idx = torch.arange(
+                3, dtype=torch.int32, device=device
+            ).repeat_interleave(counts)
+            batch_ptr = torch.cat(
+                (counts.new_zeros(1), counts.cumsum(0).to(torch.int32))
+            )
+            kwargs = dict(
+                positions=positions,
+                cell=cell,
+                pbc=pbc,
+                cutoff=3.0,
+                batch_idx=batch_idx,
+                max_neighbors=16,
+                method="batch_cell_list_pair_centric",
+            )
+            expected = batch_cell_list(
+                positions,
+                3.0,
+                cell,
+                pbc,
+                batch_idx,
+                max_neighbors=16,
+                strategy="pair_centric",
+            )
+            dispatch_neighbor_list(**kwargs, batch_ptr=batch_ptr)
+            with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU]
+            ) as profile:
+                actual = dispatch_neighbor_list(**kwargs, batch_ptr=batch_ptr)
+            assert "aten::bincount" not in {
+                event.key for event in profile.key_averages()
+            }
+            assert torch.equal(actual[1], expected[1])
+            assert torch.equal(
+                actual[0].sort(dim=1).values, expected[0].sort(dim=1).values
+            )
 
     @requires_vesin
     @pytest.mark.parametrize("cutoff", [1.0, 3.0])
@@ -651,7 +701,14 @@ class TestBatchEdgeCases:
         pbc = torch.ones((4, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
         with pytest.raises(RuntimeError, match="Cells with volume == 0"):
-            _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+            _ = batch_cell_list(
+                positions,
+                3.0,
+                cells,
+                pbc,
+                batch_idx,
+                strategy="atom_centric",
+            )
 
     def test_negative_det_is_valid(self, device, dtype):
         """Left-handed cells (negative determinant) should not raise an error."""
@@ -725,6 +782,222 @@ class TestBatchEdgeCases:
 
         with pytest.raises(ValueError, match="max_nbins must be positive"):
             estimate_batch_cell_list_sizes(cell, pbc, 1.0, max_nbins=0)
+
+    def test_preallocated_atom_centric_grid_matches_estimate(self, device, dtype):
+        """Build batched atom-centric lists in a cache from the public estimate."""
+        expected_capacity = 200
+        expected_radius = [2, 1, 1]
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        system_cell = torch.diag(
+            torch.tensor([51.0, 126.0, 126.0], dtype=dtype, device=device)
+        )
+        cell = torch.stack((system_cell, system_cell))
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff=25.0,
+        )
+        assert max_cells == expected_capacity
+        assert torch.equal(
+            neighbor_search_radius,
+            torch.tensor(
+                [expected_radius, expected_radius],
+                dtype=torch.int32,
+                device=device,
+            ),
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius,
+            device,
+        )
+
+        _, num_neighbors, _ = batch_cell_list(
+            positions,
+            25.0,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=8,
+            return_neighbor_list=False,
+            strategy="atom_centric",
+            cells_per_dimension=cell_list_cache[0],
+            neighbor_search_radius=cell_list_cache[1],
+            atom_periodic_shifts=cell_list_cache[2],
+            atom_to_cell_mapping=cell_list_cache[3],
+            atoms_per_cell_count=cell_list_cache[4],
+            cell_atom_start_indices=cell_list_cache[5],
+            cell_atom_list=cell_list_cache[6],
+        )
+
+        # The grid follows the estimator's four-cell minimum, so the caller's
+        # search radius fits the cells that were built.
+        assert torch.equal(
+            cell_list_cache[0],
+            torch.tensor(
+                [[4, 5, 5], [4, 5, 5]],
+                dtype=torch.int32,
+                device=device,
+            ),
+        )
+        assert torch.equal(
+            num_neighbors,
+            torch.ones((4,), dtype=torch.int32, device=device),
+        )
+
+    def test_caller_cache_search_radius_matches_built_grid(self, device, dtype):
+        """A caller cache from the public estimate matches the grids built."""
+        positions = torch.tensor(
+            [
+                [0.5, 0.5, 0.5],
+                [2.0, 2.5, 3.0],
+                [4.5, 1.0, 6.5],
+                [1.0, 4.0, 2.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        lengths = torch.tensor([5.0, 5.0, 7.0], dtype=dtype, device=device)
+        system_cell = torch.diag(lengths)
+        cell = torch.stack((system_cell, system_cell))
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        cutoff = 2.0
+
+        max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff,
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius,
+            device,
+        )
+
+        batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=8,
+            strategy="atom_centric",
+            cells_per_dimension=cell_list_cache[0],
+            neighbor_search_radius=cell_list_cache[1],
+            atom_periodic_shifts=cell_list_cache[2],
+            atom_to_cell_mapping=cell_list_cache[3],
+            atoms_per_cell_count=cell_list_cache[4],
+            cell_atom_start_indices=cell_list_cache[5],
+            cell_atom_list=cell_list_cache[6],
+        )
+
+        cells_per_dimension = cell_list_cache[0]
+        assert torch.equal(
+            cells_per_dimension,
+            torch.tensor([[4, 4, 6], [4, 4, 6]], dtype=torch.int32, device=device),
+        )
+        # For an orthogonal cell the radius a grid needs is
+        # ceil(cutoff * cells / length) along each axis.
+        radius_for_built_grid = torch.ceil(
+            cutoff * cells_per_dimension.to(dtype) / lengths
+        ).to(torch.int32)
+        assert torch.equal(cell_list_cache[1], radius_for_built_grid)
+
+    @pytest.mark.gpu
+    @requires_vesin
+    @pytest.mark.parametrize("half_fill", [False, True])
+    def test_managed_atom_centric_grid_matches_per_system_brute_force(
+        self,
+        device,
+        dtype,
+        half_fill,
+    ):
+        """Recover exact pair and shift multiplicity for unequal batch sizes."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for atom-centric neighbor tests")
+        torch.manual_seed(73)
+        base_cell = torch.tensor(
+            [[7.0, 0.2, 0.1], [0.5, 8.0, 0.3], [-0.2, 0.6, 9.0]],
+            dtype=dtype,
+            device=device,
+        )
+        left_cell = base_cell.clone()
+        left_cell[0].neg_()
+        cell = torch.stack((base_cell, left_cell))
+        counts = (7, 13)
+        positions = torch.cat(
+            [
+                torch.rand((count, 3), dtype=dtype, device=device) @ cell[index]
+                for index, count in enumerate(counts)
+            ]
+        )
+        pbc = torch.tensor(
+            [[True, True, True], [True, False, True]],
+            dtype=torch.bool,
+            device=device,
+        )
+        batch_idx = torch.repeat_interleave(
+            torch.arange(2, dtype=torch.int32, device=device),
+            torch.tensor(counts, device=device),
+        )
+        cutoff = 2.2
+
+        neighbor_list, _, shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=96,
+            return_neighbor_list=True,
+            half_fill=half_fill,
+            strategy="atom_centric",
+        )
+
+        ref_i = []
+        ref_j = []
+        ref_shifts = []
+        start = 0
+        for system_idx, count in enumerate(counts):
+            stop = start + count
+            i_ref, j_ref, shifts_ref, _ = brute_force_neighbors(
+                positions[start:stop],
+                cell[system_idx : system_idx + 1],
+                pbc[system_idx],
+                cutoff,
+            )
+            ref_i.append(i_ref + start)
+            ref_j.append(j_ref + start)
+            ref_shifts.append(shifts_ref)
+            start = stop
+
+        actual_i, actual_j = neighbor_list
+        actual_shifts = shifts
+        if half_fill:
+            actual_i, actual_j, actual_shifts = (
+                torch.cat((actual_i, actual_j)),
+                torch.cat((actual_j, actual_i)),
+                torch.cat((actual_shifts, -actual_shifts)),
+            )
+
+        assert_neighbor_lists_equal(
+            (actual_i, actual_j, actual_shifts),
+            (torch.cat(ref_i), torch.cat(ref_j), torch.cat(ref_shifts)),
+        )
 
     @pytest.mark.parametrize("box", [6.0e4, 1.0e5, 1.0e6])
     def test_large_cell_does_not_overflow(self, device, dtype, box):

@@ -95,11 +95,16 @@ def wpdivmod(a: int, b: int):  # type: ignore
 
 
 @wp.func
-def wp_erfc(x: Any) -> Any:
+def wp_erfc_f32_fast(x: Any) -> Any:
     """Complementary error function approximation for float32.
 
     Uses the Abramowitz and Stegun approximation with maximum error ~1.5e-7.
     erfc(x) = 1 - erf(x) for x >= 0, and erfc(-x) = 2 - erfc(x) for x < 0.
+
+    This is a float32-grade approximation: its own error (~1.5e-7) is close to
+    float32 epsilon, so evaluating it in float64 buys no accuracy, only cost.
+    Do not use it for float64 inputs -- use native ``wp.erfc`` there, or call
+    :func:`wp_erfc_input_precision` to dispatch automatically.
 
     Parameters
     ----------
@@ -137,3 +142,35 @@ def wp_erfc(x: Any) -> Any:
 
     # Handle sign: erfc(-x) = 2 - erfc(x)
     return wp.where(x >= type(x)(0.0), erfc_abs_x, type(x)(2.0) - erfc_abs_x)
+
+
+@wp.func
+def wp_erfc(x: Any) -> Any:
+    """Deprecated alias for :func:`wp_erfc_f32_fast`.
+
+    .. deprecated::
+        Kept only for backward compatibility: existing callers that evaluate
+        this float32-grade approximation at float64 get exactly the same
+        (imprecise, for float64) result they always did. New code should call
+        :func:`wp_erfc_input_precision`, which dispatches to native
+        ``wp.erfc`` for float64 and to :func:`wp_erfc_f32_fast` otherwise.
+    """
+    return wp_erfc_f32_fast(x)
+
+
+@wp.func
+def wp_erfc_input_precision(x: wp.float64) -> wp.float64:
+    """``erfc(x)`` at the precision of ``x``: native for float64, fast for float32.
+
+    Native ``wp.erfc`` is exact to machine precision but costs more than the
+    ~1.5e-7-accurate polynomial in :func:`wp_erfc_f32_fast`, which is already
+    below float32 epsilon. Use this dispatcher in code that evaluates in the
+    caller's input precision rather than a type hard-coded to one dtype.
+    """
+    return wp.erfc(x)
+
+
+@wp.func
+def wp_erfc_input_precision(x: wp.float32) -> wp.float32:  # noqa: F811
+    """See the ``wp.float64`` overload."""
+    return wp_erfc_f32_fast(x)
