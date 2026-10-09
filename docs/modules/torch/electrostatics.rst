@@ -101,6 +101,11 @@ K-Vector Generation
 .. autofunction:: generate_k_vectors_pme
 .. autofunction:: generate_k_squared_pme
 
+Execution Mode
+--------------
+
+.. autofunction:: electrostatics_uses_legacy_fp32
+
 Parameter Estimation
 --------------------
 
@@ -140,6 +145,7 @@ Energy Components
 .. autofunction:: multipole_electrostatic_energy
 .. autofunction:: multipole_real_space_energy
 .. autofunction:: multipole_reciprocal_space_energy
+.. autofunction:: multipole_real_space_quadrupole_energy
 
 Atom-Centered Features
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -150,6 +156,11 @@ Moment Packing
 ~~~~~~~~~~~~~~
 
 .. autofunction:: pack_multipole_moments
+.. autofunction:: infer_l_max
+
+.. autoclass:: nvalchemiops.torch.math.NormMode
+   :members:
+   :undoc-members:
 
 SCF Cache (Amortized Workflow)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -159,6 +170,7 @@ evaluations at fixed cell (MD steps / SCF iterations).
 
 .. autofunction:: prepare_multipole_scf_cache
 .. autofunction:: multipole_scf_step_energy
+.. autofunction:: multipole_ewald_scf_step_energy
 .. autofunction:: multipole_scf_step_features
 
 .. autoclass:: MultipoleSCFCache
