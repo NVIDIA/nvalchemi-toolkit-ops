@@ -66,6 +66,21 @@ from nvalchemiops.neighbors.neighbor_utils import (
 _CELL_INVERSE_REGISTRATION = _lazy_cell_inverse_kernel()
 
 
+@jax.jit
+def _compute_cell_inverse(cell: jax.Array, inverse: jax.Array) -> jax.Array:
+    """Compute Warp-precision inverse cells for every system under ``jit``.
+
+    An eager FFI call re-lowers on every invocation; jitting here lets
+    repeated calls with the same dtype and shape reuse one executable.
+    """
+    (inverse,) = _CELL_INVERSE_REGISTRATION[cell.dtype](
+        cell,
+        inverse,
+        launch_dims=(cell.shape[0],),
+    )
+    return inverse
+
+
 def _prepare_wrapped_tile_operands(
     positions: jax.Array,
     cell: jax.Array,
@@ -161,11 +176,7 @@ def _prepare_wrapped_tile_operands(
         inverse = (
             inv_cell_buffer if inv_cell_buffer is not None else jnp.empty_like(cell)
         )
-        (inverse,) = _CELL_INVERSE_REGISTRATION[positions.dtype](
-            cell,
-            inverse,
-            launch_dims=(cell.shape[0],),
-        )
+        inverse = _compute_cell_inverse(cell, inverse)
     positions_wrapped = (
         positions_wrapped_buffer
         if positions_wrapped_buffer is not None
