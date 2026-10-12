@@ -19,8 +19,12 @@ import math
 
 import pytest
 import torch
+import warp as wp
 
-from nvalchemiops.neighbors.base_dispatch import neighbor_list_strategy_run_args
+from nvalchemiops.neighbors.base_dispatch import (
+    fp64_naive_penalty,
+    neighbor_list_strategy_run_args,
+)
 from nvalchemiops.torch.neighbors import (
     estimate_neighbor_list_costs as report_torch,
 )
@@ -291,3 +295,31 @@ def test_extreme_cell_to_cutoff_ratio_stays_finite():
     assert rep, "expected at least one feasible strategy"
     assert all(math.isfinite(c) and c >= 0.0 for _, c in rep)
     assert _base_method(rep) in ("naive", "cell_list", "cluster_tile")
+
+
+def test_tiny_cell_huge_cutoff_does_not_overflow_stencil_cost():
+    """A cell far thinner than the cutoff keeps cell-list costs positive and large."""
+    rep = _report([512], [1.0], 1.0e4)
+    assert all(math.isfinite(c) and c >= 0.0 for _, c in rep)
+    cell_costs = [c for name, c in rep if name.startswith("cell_list")]
+    naive_costs = [c for name, c in rep if name.startswith("naive")]
+    if cell_costs and naive_costs:
+        assert min(cell_costs) > min(naive_costs)
+    assert _base_method(rep) == "naive"
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "-1.0", "0", "abc", ""])
+def test_fp64_naive_penalty_ignores_invalid_override(monkeypatch, raw):
+    """A malformed FP64 penalty override falls back to the built-in default."""
+    name = "NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY"
+    device = wp.get_device("cpu")
+    monkeypatch.delenv(name, raising=False)
+    default = fp64_naive_penalty(device)
+    monkeypatch.setenv(name, raw)
+    assert fp64_naive_penalty(device) == default
+
+
+def test_fp64_naive_penalty_accepts_positive_override(monkeypatch):
+    """A finite positive override replaces the built-in FP64 penalty."""
+    monkeypatch.setenv("NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY", "2.5")
+    assert fp64_naive_penalty(wp.get_device("cpu")) == 2.5

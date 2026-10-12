@@ -1231,6 +1231,36 @@ def test_prepared_periodic_geometry_gradients_across_routes(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("method", ["naive", "batch_naive"])
+@pytest.mark.parametrize("output", ["return_vectors", "return_distances"])
+def test_prepared_selective_naive_rejects_pair_outputs(
+    method: str, output: str
+) -> None:
+    """Preparing a selective naive state with pair outputs fails up front."""
+    positions = torch.rand((4, 3), dtype=torch.float32, device="cuda") * 4.0
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 4.0
+    pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+    kwargs = {}
+    if method == "batch_naive":
+        cell = cell.repeat(2, 1, 1)
+        pbc = pbc.repeat(2, 1)
+        kwargs["batch_ptr"] = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    with pytest.raises(ValueError, match="does not support pair outputs"):
+        prepare_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            method=method,
+            max_neighbors=8,
+            selective=True,
+            **{output: True},
+            **kwargs,
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_prepared_selective_geometry_preserves_stationary_unselected_system() -> None:
     """A selective rebuild preserves borrowed geometry for an unchanged system."""
     positions = torch.tensor(

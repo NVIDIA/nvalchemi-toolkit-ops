@@ -12,7 +12,7 @@
 - **Precision preservation:** L-BFGS matches coordinate precision end-to-end and selects curvature thresholds for float32 and float64.
 - **Fourier DFT-D3 dispersion:** Added periodic `fourier_dftd3` in PyTorch and JAX for energy, forces, and optional virial on batched neighbor lists.
 - **Fourier DFT-D3 caching:** Added `FourierD3Parameters` for reusable C6 coefficients and `FourierD3Setup` for optional cell and mesh preprocessing caches.
-- **Prepared cluster-tile execution:** Added `prepare_cluster_tile` and `batch_prepare_cluster_tile` in PyTorch for reusable neighbor list storage.
+- **Prepared cluster-tile execution:** PyTorch `prepare_neighbor_list` accepts cluster-tile methods, preparing reusable neighbor list storage for repeated calls.
 - **Compiled cluster-tile lists:** PyTorch cluster-tile neighbor lists support `torch.compile` and `torch.cuda.CUDAGraph` replay with selective rebuilds.
 - **Reciprocal Miller topology:** Added `generate_ewald_miller_indices` and `k_vectors_from_miller_indices` in PyTorch and JAX to cache reciprocal grids.
 - **Buffer overflow detection:** Added the `TileBufferOverflow` exception and `max_tiles_per_group` parameter to detect undersized cluster-tile buffers.
@@ -31,7 +31,13 @@
 - **Fourier DFT-D3 coordination numbers:** Fourier DFT-D3 tapers coordination numbers to zero at the cutoff radius. This produces small numerical differences from standard DFT-D3.
 - **PME mesh sizing:** PME mesh estimation now covers the requested spline support and prefers FFT-smooth dimensions. The default spline order is now 5 (previously 4), which can change numerical results; pass `spline_order=4` and the previous `mesh_dimensions` to reproduce the old configuration.
 - **Reduced PME peak memory:** PME energy and force paths generate only the squared reciprocal grid when Cartesian reciprocal vectors are unused; virial and cell-gradient paths still generate them.
-- **float32 electrostatics fast path:** Monopole Ewald and PME now evaluate in float32 for float32 CUDA inputs instead of promoting to float64; float32 results change at the ~1e-07 level, CPU execution is unchanged, and double-backward still uses the float64 formulation. Set `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to keep the previous behavior.
+- **float32 electrostatics fast path:** Monopole Ewald and PME now evaluate in float32 for float32 CUDA inputs instead of promoting to float64; float32 results change at the ~1e-07 level, double-backward still uses the float64 formulation, and Torch CPU execution is unchanged (JAX does not yet gate on device and also uses float32 on CPU). Set `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to evaluate float32 inputs in float64 as before. Independently of this flag, float64 real-space pair evaluation now uses the native `erfc`, so float64 results can differ from 0.4.x at the ~1e-07 relative level.
+- Opt-in `grid_policy="adaptive"` selects pair-centric cell grids from geometry
+  and atom populations to reduce estimated search work in Torch and eager JAX
+  full-list CUDA calls. The model assumes approximately uniform occupancy;
+  performance depends on the workload. `"configured"` remains the default.
+- Eager JAX naive tile and cell-list queries reuse compiled inner calls.
+- Torch `naive_neighbor_list` checks the shape, dtype, and device of caller-provided output buffers and raises `ValueError` instead of writing past an undersized buffer.
 
 ### Deprecated
 
@@ -49,21 +55,11 @@
 - Fixed symbolic shape tracing for PyTorch electrostatics and multipole operations under `torch.compile`.
 - Prevented host synchronization during cell matrix inversion inside CUDA graph capture.
 - Corrected cluster-tile neighbor periodic image selection for skewed triclinic cells.
-
-### Changed
-
-- Opt-in `grid_policy="adaptive"` selects pair-centric cell grids from geometry
-  and atom populations to reduce estimated search work in Torch and eager JAX
-  full-list CUDA calls. The model assumes approximately uniform occupancy;
-  performance depends on the workload. `"configured"` remains the default.
-- Eager JAX naive tile and cell-list queries reuse compiled inner calls.
-
-### Fixed
-
 - Pair-centric grid sizing accounts for estimated neighbor-loop work in dense
   systems.
 - Targeted Torch cell-list calls refresh search radii when reusing workspaces,
   preventing missed neighbors after a full-list adaptive call.
+- Loaded the benchmark dataset cache with `weights_only=True`.
 
 ## v0.4.1 - 2026-08-03
 

@@ -187,13 +187,43 @@ def _use_fp32_electrostatics() -> bool:
 
     Equivalent to ``not electrostatics_uses_legacy_fp32()``. Kept as the
     fallback for call sites that have not been updated to gate on device
-    explicitly and pass a resolved ``core_scalar`` instead (the JAX
-    bindings, the low-level direct warp helpers in ``ewald_kernels.py``) --
-    for those, this makes the fast path available on CPU too, unlike the
-    torch chain call sites, which pass an explicit, CUDA-gated
-    ``core_scalar`` and never reach this function.
+    explicitly and pass a resolved ``core_scalar`` instead (currently the
+    JAX bindings, whose kernels are specialized per dtype before the device
+    is known) -- for those, this makes the fast path available on CPU too,
+    unlike the torch chain and direct Warp launcher call sites, which pass an
+    explicit, CUDA-gated ``core_scalar`` (see :func:`_resolve_core_scalar`)
+    and never reach this function.
     """
     return not electrostatics_uses_legacy_fp32()
+
+
+def _resolve_core_scalar(wp_dtype: type, device: Any) -> type:
+    """Device-aware precision for the real-space per-pair scalar cores.
+
+    float64 callers always evaluate in float64. float32 callers on CUDA do too
+    only when :func:`electrostatics_uses_legacy_fp32` forces the legacy
+    float64 core; otherwise they evaluate in float32. float32 callers on any
+    other device always get float64, so CPU execution is unchanged. This
+    mirrors the Torch layer's CUDA gate for callers that know their Warp
+    device.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        Warp scalar dtype of the caller's inputs.
+    device : str or warp.context.Device
+        Warp device the kernel will launch on.
+
+    Returns
+    -------
+    type
+        ``wp.float64`` or ``wp_dtype``.
+    """
+    if wp_dtype is wp.float64:
+        return wp.float64
+    if not wp.get_device(device).is_cuda:
+        return wp.float64
+    return wp.float64 if electrostatics_uses_legacy_fp32() else wp_dtype
 
 
 # === Shared per-pair scalar cores (input precision) ===

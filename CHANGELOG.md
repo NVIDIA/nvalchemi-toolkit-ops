@@ -207,11 +207,26 @@
   no-store structure-factor path) now default to float32 evaluation for
   float32 CUDA inputs, instead of promoting to float64 internally. Both real
   and reciprocal space are affected -- real space is shared by Ewald and PME.
-  CPU execution is unchanged either way; the fast path is CUDA-only. Set
+  Torch and direct Warp CPU execution is unchanged either way; the fast path
+  is CUDA-only there. The JAX real-space binding does not yet gate on device,
+  so float32 JAX inputs also use the float32 core on CPU. Set
   `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
-  (always float64-core) behavior. Changes float32 results at the ~1e-07 level
-  and float32 Hessian-vector products at ~7e-07, the latter also 2.5-3.2x
-  faster.
+  (always float64-core) evaluation of float32 inputs. Changes float32 results
+  at the ~1e-07 level and float32 Hessian-vector products at ~7e-07, the
+  latter also 2.5-3.2x faster. Independently of this flag, real-space pair
+  evaluation in float64 now uses the native `erfc` rather than the float32-grade
+  approximation, so float64 energies and derivatives can differ from 0.4.x at
+  the ~1e-07 relative level.
+- Opt-in `grid_policy="adaptive"` selects pair-centric cell grids from geometry
+  and atom populations to reduce estimated search work in Torch and eager JAX
+  full-list CUDA calls. The model assumes approximately uniform occupancy;
+  performance depends on the workload. `"configured"` remains the default.
+- Eager JAX naive tile and cell-list queries reuse compiled inner calls.
+- Torch `naive_neighbor_list` checks the shape, dtype, and device of
+  caller-provided `neighbor_matrix`, `num_neighbors`, and
+  `neighbor_matrix_shifts` buffers before launching, and raises `ValueError`
+  instead of writing past an undersized buffer. A matrix wider than
+  `max_neighbors` is still accepted.
 
 ### Fixed
 
@@ -249,6 +264,12 @@
 - `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
   `dict`, so type checkers no longer reject valid keyword options.
 - Fixed JAX PME cell gradients when reusing cached setup.
+- Pair-centric grid sizing accounts for estimated neighbor-loop work in dense
+  systems.
+- Targeted Torch cell-list calls refresh search radii when reusing workspaces,
+  preventing missed neighbors after a full-list adaptive call.
+- The benchmark dataset cache is loaded with `torch.load(..., weights_only=True)`,
+  and the D3 parameter docstring example does the same.
 
 ### Deprecated
 
@@ -265,21 +286,6 @@
   list cutoff, so its coordination numbers do not depend on the list used to build them.
   Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
   `dftd3`; pass both the same table.
-
-### Changed
-
-- Opt-in `grid_policy="adaptive"` selects pair-centric cell grids from geometry
-  and atom populations to reduce estimated search work in Torch and eager JAX
-  full-list CUDA calls. The model assumes approximately uniform occupancy;
-  performance depends on the workload. `"configured"` remains the default.
-- Eager JAX naive tile and cell-list queries reuse compiled inner calls.
-
-### Fixed
-
-- Pair-centric grid sizing accounts for estimated neighbor-loop work in dense
-  systems.
-- Targeted Torch cell-list calls refresh search radii when reusing workspaces,
-  preventing missed neighbors after a full-list adaptive call.
 
 ## 0.4.1 - 2026-08-03
 

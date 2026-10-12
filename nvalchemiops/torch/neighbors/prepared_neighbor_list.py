@@ -1997,6 +1997,14 @@ def prepare_neighbor_list(
                 "format contradicts return_neighbor_list; omit format or use "
                 f"format={derived_format!r}"
             )
+        if (
+            selective
+            and route in ("naive", "batch_naive")
+            and (return_vectors or return_distances or pair_fn is not None)
+        ):
+            raise ValueError(
+                "selective prepared naive execution does not support pair outputs"
+            )
         format = derived_format
     synthesized = False
     span_capacity: torch.Tensor | None = None

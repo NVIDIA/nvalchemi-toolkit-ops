@@ -976,6 +976,64 @@ class TestNaiveErrors:
                 max_neighbors=10,
             )
 
+    @pytest.mark.parametrize(
+        ("which", "match"),
+        [
+            ("rows", "neighbor_matrix must have shape"),
+            ("dtype", "neighbor_matrix dtype must be"),
+            ("counts", "num_neighbors must have shape"),
+            ("narrow", "allocate at least that many"),
+        ],
+    )
+    def test_undersized_or_mismatched_outputs_rejected(self, device, which, match):
+        """Caller-provided output buffers are checked before any kernel launch."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=torch.float32, device=device
+        )
+        width = 4
+        matrix = torch.full((2, width), 2, dtype=torch.int32, device=device)
+        counts = torch.zeros(2, dtype=torch.int32, device=device)
+        if which == "rows":
+            matrix = matrix[:1].contiguous()
+        elif which == "dtype":
+            matrix = matrix.to(torch.int64)
+        elif which == "counts":
+            counts = counts[:1].contiguous()
+        elif which == "narrow":
+            matrix = matrix[:, :2].contiguous()
+
+        with pytest.raises(ValueError, match=match):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=width,
+                neighbor_matrix=matrix,
+                num_neighbors=counts,
+            )
+
+    def test_wrong_shift_buffer_rejected(self, device):
+        """A periodic query rejects a shift buffer that is too short."""
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=torch.float32, device=device
+        )
+        n = positions.shape[0]
+        width = 8
+        with pytest.raises(ValueError, match="neighbor_matrix_shifts must have shape"):
+            naive_neighbor_list(
+                positions,
+                1.1,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=width,
+                neighbor_matrix=torch.full(
+                    (n, width), n, dtype=torch.int32, device=device
+                ),
+                num_neighbors=torch.zeros(n, dtype=torch.int32, device=device),
+                neighbor_matrix_shifts=torch.zeros(
+                    (n - 1, width, 3), dtype=torch.int32, device=device
+                ),
+            )
+
 
 class TestNaiveOutputFormats:
     """Test different output formats (matrix vs list)."""

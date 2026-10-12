@@ -132,7 +132,7 @@ max_neighbors = estimate_max_neighbors(cutoff, atomic_density=density)
 neighbor_matrix = torch.empty((n_atoms, max_neighbors), dtype=torch.int32,
                               device=device)
 neighbor_matrix_shifts = torch.empty((n_atoms, max_neighbors, 3),
-                                     dtype=torch.int8, device=device)
+                                     dtype=torch.int32, device=device)
 num_neighbors = torch.empty(n_atoms, dtype=torch.int32, device=device)
 
 # sort scratch: needed by the sorted atom-centric and pair-centric paths,

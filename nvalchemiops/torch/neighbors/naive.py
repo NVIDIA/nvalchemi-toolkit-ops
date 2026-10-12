@@ -65,6 +65,77 @@ from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_
 __all__ = ["naive_neighbor_list"]
 
 
+def _validate_caller_outputs(
+    positions: torch.Tensor,
+    pbc: torch.Tensor | None,
+    max_neighbors: int | None,
+    neighbor_matrix: torch.Tensor | None,
+    num_neighbors: torch.Tensor | None,
+    neighbor_matrix_shifts: torch.Tensor | None,
+) -> None:
+    """Validate caller-provided full-query output buffers before any launch.
+
+    The kernels write one row per atom by atom index, so an undersized or
+    mismatched buffer is an out-of-bounds device write rather than a Python
+    error. This checks shapes, dtypes, and devices only (no device reads).
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (num_atoms, 3)
+        Atomic positions; define the required row count and device.
+    pbc : torch.Tensor or None
+        Periodicity flags; the shift buffer is required only when set.
+    max_neighbors : int or None
+        Requested row capacity. A supplied matrix must be at least this wide.
+    neighbor_matrix : torch.Tensor or None
+        Optional caller-owned neighbor matrix, shape ``(num_atoms, width)``.
+    num_neighbors : torch.Tensor or None
+        Optional caller-owned counts, shape ``(num_atoms,)``.
+    neighbor_matrix_shifts : torch.Tensor or None
+        Optional caller-owned image shifts, shape ``(num_atoms, width, 3)``.
+
+    Raises
+    ------
+    ValueError
+        If a supplied buffer has the wrong rank, shape, dtype, or device.
+    """
+    num_rows = int(positions.shape[0])
+    width = max_neighbors
+    if neighbor_matrix is not None:
+        if neighbor_matrix.ndim != 2:
+            raise ValueError(
+                f"neighbor_matrix must be 2-D; got shape {tuple(neighbor_matrix.shape)}."
+            )
+        width = int(neighbor_matrix.shape[1])
+        if max_neighbors is not None and width < max_neighbors:
+            raise ValueError(
+                f"neighbor_matrix has {width} columns but max_neighbors="
+                f"{max_neighbors}; allocate at least that many."
+            )
+        _validate_partial_output(
+            "neighbor_matrix",
+            neighbor_matrix,
+            (num_rows, width),
+            torch.int32,
+            positions.device,
+        )
+    _validate_partial_output(
+        "num_neighbors",
+        num_neighbors,
+        (num_rows,),
+        torch.int32,
+        positions.device,
+    )
+    if pbc is not None and width is not None:
+        _validate_partial_output(
+            "neighbor_matrix_shifts",
+            neighbor_matrix_shifts,
+            (num_rows, width, 3),
+            torch.int32,
+            positions.device,
+        )
+
+
 @torch.library.custom_op(
     "nvalchemiops::_naive_neighbor_matrix_no_pbc",
     mutates_args=("neighbor_matrix", "num_neighbors"),
@@ -1803,6 +1874,15 @@ def naive_neighbor_list(
 
     if fill_value is None:
         fill_value = positions.shape[0]
+
+    _validate_caller_outputs(
+        positions,
+        pbc,
+        max_neighbors,
+        neighbor_matrix,
+        num_neighbors,
+        neighbor_matrix_shifts,
+    )
 
     if neighbor_matrix is None:
         neighbor_matrix = torch.full(

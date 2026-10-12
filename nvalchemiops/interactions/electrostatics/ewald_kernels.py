@@ -3528,7 +3528,10 @@ def _launch_ewald_real_forward_factory(
     if compute_virial and atomic_forces is None:
         raise ValueError("atomic_forces is required when compute_virial=True")
 
-    from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
+    from nvalchemiops.interactions.electrostatics._factory_common import (
+        _DerivState,
+        _resolve_core_scalar,
+    )
     from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
         alloc_ewald_real_sentinels,
         get_ewald_real_kernel,
@@ -3549,6 +3552,7 @@ def _launch_ewald_real_forward_factory(
         deriv_state=deriv_state,
         cell_grad=compute_virial,
         tiled=neighbor_input == "matrix",
+        core_scalar=_resolve_core_scalar(wp_dtype, device),
     )
 
     batch_arg = batch_id if batched else sentinels["batch_id"]

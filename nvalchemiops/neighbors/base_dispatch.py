@@ -16,6 +16,7 @@
 
 """Shared helpers for frontend neighbor-list auto dispatch."""
 
+import math
 import os
 from collections.abc import Iterable
 from functools import lru_cache
@@ -84,6 +85,13 @@ _EPS = 1.0e-30
 _INF = 3.0e30
 # Reference stencil the ``shell`` knob is normalised against (3x3x3).
 _SHELL_REFERENCE = 27.0
+# Cap on the per-axis stencil radius in the cost model. A cell whose face
+# distance is far below the cutoff gives a huge radius; the cost is already
+# prohibitive long before this cap, and it keeps every stencil product within
+# int64 (and the float-to-int radius conversion in range).
+_MAX_STENCIL_RADIUS = 524288.0
+# Saturation for the stencil offset count used in launch-size arithmetic.
+_MAX_STENCIL_OFFSETS = 16777216
 
 # Naive per-candidate scan and per-pair output write. The scan weight is on a
 # float32 basis; float64 is handled by _FP64_NAIVE_PENALTY below.
@@ -283,7 +291,9 @@ def fp64_naive_penalty(device: wp.Device) -> float:
     -----
     Overridden by ``NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY`` when set, which is
     the escape hatch for an architecture missing from
-    :data:`_FAST_FP64_ARCHS`.
+    :data:`_FAST_FP64_ARCHS`. A value that is not a finite positive number is
+    ignored, so a malformed override cannot remove float64 naive strategies
+    from the selector's ranking.
 
     See Also
     --------
@@ -292,9 +302,11 @@ def fp64_naive_penalty(device: wp.Device) -> float:
     raw = os.environ.get("NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY")
     if raw is not None:
         try:
-            return float(raw)
+            override = float(raw)
         except (TypeError, ValueError):
-            pass
+            override = None
+        if override is not None and math.isfinite(override) and override > 0.0:
+            return override
     arch = getattr(device, "arch", None)
     if getattr(device, "is_cuda", False) and arch is not None:
         if int(arch) in _FAST_FP64_ARCHS:
@@ -830,13 +842,22 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             wp.atomic_max(flags, 2, wp.int32(1))
 
         radius_x = wp.int32(
-            wp.ceil(cutoff * wp.float32(cells_per_dimension[0]) / face_distance_x)
+            wp.min(
+                wp.ceil(cutoff * wp.float32(cells_per_dimension[0]) / face_distance_x),
+                wp.float32(_MAX_STENCIL_RADIUS),
+            )
         )
         radius_y = wp.int32(
-            wp.ceil(cutoff * wp.float32(cells_per_dimension[1]) / face_distance_y)
+            wp.min(
+                wp.ceil(cutoff * wp.float32(cells_per_dimension[1]) / face_distance_y),
+                wp.float32(_MAX_STENCIL_RADIUS),
+            )
         )
         radius_z = wp.int32(
-            wp.ceil(cutoff * wp.float32(cells_per_dimension[2]) / face_distance_z)
+            wp.min(
+                wp.ceil(cutoff * wp.float32(cells_per_dimension[2]) / face_distance_z),
+                wp.float32(_MAX_STENCIL_RADIUS),
+            )
         )
         radius_x = max(radius_x, wp.int32(0))
         radius_y = max(radius_y, wp.int32(0))
@@ -845,11 +866,10 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         # Candidates per source atom = stencil cells * atoms per cell, both
         # taken from the grid that is actually built rather than from a fixed
         # stencil and an idealised cell count.
-        stencil_cells = wp.float32(
-            (wp.int32(2) * radius_x + wp.int32(1))
-            * (wp.int32(2) * radius_y + wp.int32(1))
-            * (wp.int32(2) * radius_z + wp.int32(1))
-        )
+        span_x = wp.int64(2) * wp.int64(radius_x) + wp.int64(1)
+        span_y = wp.int64(2) * wp.int64(radius_y) + wp.int64(1)
+        span_z = wp.int64(2) * wp.int64(radius_z) + wp.int64(1)
+        stencil_cells = wp.float32(span_x * span_y * span_z)
         cost_cells = wp.max(wp.float32(total_cells_i32), wp.float32(1.0))
         grid_work = (
             (shell / wp.float32(_SHELL_REFERENCE))
@@ -865,24 +885,19 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             + wp.float32(_CELL_ATOM_WRITE) * expected_pairs
         )
         n_outer = (
-            radius_x
-            * (wp.int32(2) * radius_y + wp.int32(1))
-            * (wp.int32(2) * radius_z + wp.int32(1))
-            + radius_y * (wp.int32(2) * radius_z + wp.int32(1))
-            + radius_z
+            wp.int64(radius_x) * span_y * span_z
+            + wp.int64(radius_y) * span_z
+            + wp.int64(radius_z)
         )
         if not half_fill:
-            n_outer = (wp.int32(2) * radius_x + wp.int32(1)) * (
-                wp.int32(2) * radius_y + wp.int32(1)
-            ) * (wp.int32(2) * radius_z + wp.int32(1)) - wp.int32(1)
+            n_outer = span_x * span_y * span_z - wp.int64(1)
+        n_outer = wp.min(n_outer, wp.int64(_MAX_STENCIL_OFFSETS))
         # Pair-centric launches one 64-thread block per (cell, neighbor-offset);
         # n_outer = stencil offsets (forward half only when half_fill).
         # pair_launch ~ total threads; pair_blocks ~ block count.
-        pair_launch = (
-            wp.int64(total_cells_i32) * wp.int64(n_outer + wp.int32(1)) * wp.int64(64)
-        )
+        pair_launch = wp.int64(total_cells_i32) * (n_outer + wp.int64(1)) * wp.int64(64)
         atom_blocks = wp.int64(max(n_atoms, wp.int32(1)) + wp.int32(63)) // wp.int64(64)
-        pair_blocks = wp.int64(total_cells_i32) * wp.int64(n_outer + wp.int32(1))
+        pair_blocks = wp.int64(total_cells_i32) * (n_outer + wp.int64(1))
         if (not has_cuda) or pair_blocks < atom_blocks:
             wp.atomic_max(flags, 7, wp.int32(1))
         pair_launch_effective = wp.min(pair_launch, max_launch_size)
