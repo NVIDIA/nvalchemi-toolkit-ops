@@ -113,6 +113,7 @@ from benchmarks.suite_utils import (
 
 # Official nvalchemiops public APIs used by the neighbor-list runner.
 from nvalchemiops.neighbors import estimate_max_neighbors
+from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 from nvalchemiops.torch.neighbors import (
     neighbor_list as torch_neighbor_list,
 )
@@ -974,6 +975,13 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
         # of the timed path while still measuring the full one-shot method.
         _validate_jax_cluster_tile_pbc(pbc, jax, jnp)
         cluster_tile_neighbor_list = jax_api["cluster_tile_neighbor_list"]
+        # The tile buffer shape must be static under ``jax.jit``, so size it
+        # here from the concrete cell instead of letting the API estimate it.
+        max_tiles_per_group = estimate_max_tiles_per_group(
+            int(positions.shape[0]),
+            float(cutoff),
+            abs(float(jnp.linalg.det(cell.reshape(-1, 3, 3)[0]))),
+        )
 
         def direct_nl_kernel(positions_arg, cell_arg):
             return cluster_tile_neighbor_list(
@@ -981,6 +989,7 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
                 cutoff=float(cutoff),
                 cell=cell_arg,
                 max_neighbors=int(maxnb),
+                max_tiles_per_group=max_tiles_per_group,
             )
 
         compiled_nl = jax.jit(direct_nl_kernel)
@@ -996,6 +1005,12 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
         # the existing one.
         _validate_jax_cluster_tile_pbc(pbc, jax, jnp)
         batch_cluster_tile_neighbor_list = jax_api["batch_cluster_tile_neighbor_list"]
+        # Static under ``jax.jit``: estimate once from the concrete cells.
+        from nvalchemiops.jax.neighbors import estimate_batch_max_tiles_per_group
+
+        max_tiles_per_group = estimate_batch_max_tiles_per_group(
+            batch_ptr, float(cutoff), cell
+        )
 
         def direct_nl_kernel(positions_arg):
             return batch_cluster_tile_neighbor_list(
@@ -1004,6 +1019,7 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
                 cell_batch=cell,
                 batch_ptr=batch_ptr,
                 max_neighbors=int(maxnb),
+                max_tiles_per_group=max_tiles_per_group,
             )
 
         compiled_nl = jax.jit(direct_nl_kernel)
