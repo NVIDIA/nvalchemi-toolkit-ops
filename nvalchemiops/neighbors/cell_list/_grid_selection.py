@@ -45,7 +45,7 @@ def _validated_cell_total(
     counts : wp.array, shape (num_systems,)
         Cell counts for each system.
     total : wp.array, shape (1,)
-        Output allocation size.
+        OUTPUT: Allocation size.
 
     Returns
     -------
@@ -54,9 +54,13 @@ def _validated_cell_total(
 
     Notes
     -----
-    Thread launch: One tiled block; lanes traverse strided system indices.
-    Modifies: ``total[0]`` receives the int64 sum, or zero if any count is
-    nonpositive. An empty input also produces zero.
+    - Thread launch: One tiled block; lanes traverse strided system indices.
+    - Modifies: ``total[0]`` receives the int64 sum, or zero if any count is
+      nonpositive. An empty input also produces zero.
+
+    See Also
+    --------
+    _get_pair_grid_kernel : Select the grids whose cell counts this reduces.
     """
     _, lane = wp.tid()
     partial = wp.int64(0)
@@ -122,11 +126,20 @@ def _get_grid_radius_kernel(dtype: type) -> wp.Kernel:
         radii : wp.array
             OUTPUT: Per-axis search radii, shape (num_systems,).
 
+        Returns
+        -------
+        None
+            This function modifies the input arrays in-place.
+
         Notes
         -----
-        Thread launch: One thread per system.
-        Modifies: Every entry of ``radii``. A nonperiodic single-cell axis
-        needs no neighboring-cell search.
+        - Thread launch: One thread per system.
+        - Modifies: Every entry of ``radii``. A nonperiodic single-cell axis
+          needs no neighboring-cell search.
+
+        See Also
+        --------
+        _get_pair_grid_kernel : Select the grids this kernel derives radii from.
         """
         system = wp.tid()
         inverse_transpose = wp.transpose(wp.inverse(cell[system]))
