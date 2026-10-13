@@ -27,7 +27,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from importlib.metadata import version
-from inspect import signature
+from inspect import signature, unwrap
 
 import dotenv
 from docutils import nodes
@@ -343,6 +343,49 @@ def set_multiversion_release(app, config):  # noqa: ARG001
     config.version = ".".join(config.release.split(".")[:2])
 
 
+def render_pme_signature_defaults(
+    app,
+    what,
+    name,
+    obj,
+    options,
+    signature_text: str | None,
+    return_annotation: str | None,
+) -> tuple[str, str | None] | None:
+    """Show inspected PME defaults in signatures that use shared constants."""
+    if signature_text is None or "_DEFAULT_PME_" not in signature_text:
+        return None
+    obj = unwrap(obj)
+    parameters = signature(obj).parameters
+    positional_parameters = [
+        parameter.name
+        for parameter in parameters.values()
+        if parameter.kind
+        in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    # Sphinx preserves source expressions in __signature__; read runtime defaults.
+    positional_defaults = getattr(obj, "__defaults__", None) or ()
+    defaults = dict(
+        zip(positional_parameters[-len(positional_defaults) :], positional_defaults)
+    )
+    defaults.update(getattr(obj, "__kwdefaults__", None) or {})
+    resolved_signature = signature_text
+    for token, parameter_name in (
+        ("_DEFAULT_PME_SPLINE_ORDER", "spline_order"),
+        ("_DEFAULT_PME_FFT_PADDING_FRACTION", "fft_padding_fraction"),
+    ):
+        pattern = rf"\b{token}\b"
+        if not re.search(pattern, signature_text):
+            continue
+        if parameter_name in defaults:
+            resolved_signature = re.sub(
+                pattern, repr(defaults[parameter_name]), resolved_signature
+            )
+    if resolved_signature == signature_text:
+        return None
+    return resolved_signature, return_annotation
+
+
 def set_figure_alt_text(app, doctree, docname):  # noqa: ARG001
     """Use figure captions when Sphinx would expose an image filename as alt text."""
     for figure in doctree.findall(nodes.figure):
@@ -369,6 +412,9 @@ def setup(app):
         isolate_gallery_examples()
     app.connect("config-inited", set_multiversion_release, priority=999)
     app.connect("builder-inited", generate_benchmark_plots)
+    app.connect(
+        "autodoc-process-signature", render_pme_signature_defaults, priority=999
+    )
     app.connect("doctree-resolved", set_figure_alt_text)
     if (source_root / "benchmarks" / "sphinxext.py").is_file():
         from docs.benchmarks.sphinxext import inline_neighborlist_svgs

@@ -24,7 +24,7 @@ import torch
 
 try:
     primitive_neighbor_list = getattr(import_module("vesin"), "NeighborList", None)
-    run_primitive_nl = True
+    run_primitive_nl = callable(primitive_neighbor_list)
 except ModuleNotFoundError:
     primitive_neighbor_list = None
     run_primitive_nl = False
@@ -380,7 +380,10 @@ def create_batch_systems(
     return positions_batch, cell_batch, pbc_batch, ptr_tensor
 
 
-@pytest.mark.skipif(not run_primitive_nl, reason="Consistency check needs `vesin`.")
+@pytest.mark.skipif(
+    not run_primitive_nl,
+    reason="Consistency check needs callable `vesin.NeighborList`.",
+)
 def brute_force_neighbors(
     positions: torch.Tensor, cell: torch.Tensor, pbc: torch.Tensor, cutoff: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -414,7 +417,7 @@ def brute_force_neighbors(
     if cell is not None:
         cell = cell.squeeze().cpu().numpy()
     else:
-        cell = np.eye(3)
+        cell = np.eye(3, dtype=positions.dtype)
     if pbc is not None:
         pbc = pbc.squeeze().cpu().numpy()
     else:

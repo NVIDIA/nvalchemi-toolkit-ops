@@ -6,9 +6,9 @@
 
 There are many (welcome) ways to contribute to ALCHEMI Toolkit-Ops:
 
-- All bug reports are welcome; to help maintainers, please fill out the prescribed
-the Github issues template with as much information as you can provide, and when
-possible, a minimum working example that reproduces the issue.
+- All bug reports are welcome; to help maintainers, please fill out the
+prescribed GitHub issue template with as much information as you can provide,
+and when possible, a minimum working example that reproduces the issue.
 - Feature requests; if you think of something that you would like as part of the
 public API, it might benefit others as well. Submit a feature request via Github
 issues.
@@ -77,7 +77,7 @@ to submitting a pull request with your bug fixes/features:
 3. Track changes in a new branch: if there is an issue attached to
 the work, prepend the issue number to your branch name, which should
 be something descriptive (e.g. `15-what-is-fixed`). Complementary to
-this would be to create a Git worktree to you to work on multiple
+this would be to create a Git worktree to work on multiple
 branches concurrently.
 4. Make your bug fixes/feature implementation; try and adhere to
 general best practices such as:
@@ -96,7 +96,7 @@ your changes should:
     analysis checks.
     - [ ] Unit tests have been added, and/or updated.
     - [ ] API documentation has been added, and/or updated. Ensure
-    sufficient changes maintain sufficient docstring coverage.
+    changes maintain sufficient docstring coverage.
 6. On your Github fork, submit a pull request. If you are unsure about
 any implementation details, mark your pull request as a draft and ask
 for maintainer feedback before going through a more 'formal' round of

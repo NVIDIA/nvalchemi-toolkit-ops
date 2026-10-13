@@ -1,70 +1,76 @@
 # NVIDIA ALCHEMI Toolkit-Ops
 
-GPU-accelerated computational kernels for molecular dynamics simulations and
-atomic-scale modeling. Built on NVIDIA Warp, this toolkit provides high-performance
-primitives for neighbor list construction, dispersion corrections, and other
-operations critical to atomistic workflows.
+GPU-accelerated primitives for atomistic simulations and atomic-scale modeling.
+
+**[Get started →](userguide/index.md#quick-start)**
 
 ## Key Capabilities
 
-- O(N) cell list algorithms for neighbor list construction
-- DFT-D3(BJ) dispersion corrections with environment-dependent C6 coefficients
-- Ewald, particle mesh Ewald (PME), and damped shifted force (DSF)
-  methods for electrostatic calculations
-- Batch processing for multiple systems with heterogeneous parameters
-- Native PyTorch tensor and JAX array support with `torch.compile` and `jax.jit` compatibility
-- Dense or sparse COO output formats for graph neural networks
+- **[Neighbor lists](userguide/components/neighborlist.md):** naive, cell-list,
+  and cluster-tile searches, with batching, selected-atom queries,
+  differentiable distances and vectors, and matrix or COO outputs.
+- **[Dispersion corrections](userguide/components/dispersion.md):** two-body
+  DFT-D3(BJ) with environment-dependent coefficients, including real-space
+  and particle-mesh Fourier implementations.
+- **[Electrostatics](userguide/components/electrostatics.md):** direct Coulomb,
+  Ewald, PME, and DSF calculations, with slab corrections and PyTorch multipole
+  electrostatics.
+- **[Molecular dynamics](userguide/components/dynamics.md):** velocity Verlet
+  and Langevin integration, thermostats, and constant-pressure integration.
+- **[Geometry optimization](userguide/components/dynamics.md#geometry-optimization):**
+  FIRE, FIRE2, and L-BFGS methods for atomic relaxation and supported variable-cell
+  calculations.
+- **[Segment operations](userguide/components/segment_ops.md):** reductions and
+  transformations of grouped data, including sums, means, dot products, and
+  matrix-vector products.
+- **Framework integration:** NVIDIA Warp kernels with PyTorch and JAX interfaces
+  for supported operations.
+- **[Repeated calculations](userguide/about/performance.md):**
+  batching, reusable setup and storage, and compilation or CUDA Graph execution
+  on supported routes.
 
-## Who Is This For?
+Backend, differentiation, and compilation support varies by operation. See the
+component guides for details.
 
-ML Researchers
-: Integrate high-performance neighbor lists and energy corrections into graph
-neural network pipelines.
+## Explore the toolkit
 
-Method Developers
-: Access low-level Warp kernels to build custom atomistic workflows.
-
-Computational Chemists
-: Add GPU-accelerated dispersion corrections to DFT calculations.
-
-[Get started →](userguide/about/install)
-
-## User Guide
+- [User Guide](userguide/index.md) — installation and component guides.
+- [Examples](examples/index.rst) — runnable examples of toolkit operations.
+- [Benchmarks](benchmarks/index.md) — performance results and methodology.
+- [API](modules/index.md) — function and class reference.
+- [Changelog](changes.md) — release history.
 
 ```{toctree}
 :maxdepth: 2
+:hidden:
 
 userguide/index
 ```
 
-## Examples
-
 ```{toctree}
 :maxdepth: 2
+:hidden:
 
 examples/index
 ```
 
-## Benchmarks
-
 ```{toctree}
 :maxdepth: 2
+:hidden:
 
 benchmarks/index
 ```
 
-## Change Log
-
 ```{toctree}
 :maxdepth: 1
+:hidden:
 
 changes
 ```
 
-## API
-
 ```{toctree}
 :maxdepth: 2
+:hidden:
 
 API <modules/index>
 ```

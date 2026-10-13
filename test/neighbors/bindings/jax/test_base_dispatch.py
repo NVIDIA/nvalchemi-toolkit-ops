@@ -116,7 +116,10 @@ class TestReportNeighborListCosts:
 
     def test_shell_env_override_shifts_naive_cell_boundary(self, monkeypatch):
         """Increasing shell cost can flip a sparse system back to naive."""
-        args = ([5000], [5.0e6])
+        # Free-boundary float32 reports (``_report`` passes an all-False pbc
+        # and a float32 cell), sized so cell_list is genuinely the cheapest
+        # strategy and the env override has something to flip.
+        args = ([50000], [5.0e5])
         assert _base_method(_report(*args, cutoff=5.0)) == "cell_list"
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_CELL_SHELL", "100000.0")
         assert _base_method(_report(*args, cutoff=5.0)) == "naive"
@@ -152,6 +155,18 @@ class TestReportNeighborListCosts:
                 2.0,
                 optional_outputs=["target_indices"],
             )
+
+    def test_target_indices_exclude_unsupported_pair_centric_method(self):
+        """Every reported JAX partial strategy is executable by the binding."""
+        targets = jnp.arange(256, dtype=jnp.int32)
+        report = _report(
+            [1024],
+            [8000.0],
+            cutoff=5.0,
+            target_indices=targets,
+        )
+
+        assert "cell_list_pair_centric" not in _names(report)
 
     def test_cpu_fallback_returns_sorted_finite_costs(self):
         """JAX report on host arrays returns a sorted finite cost list."""

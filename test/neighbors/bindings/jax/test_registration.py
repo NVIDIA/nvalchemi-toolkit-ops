@@ -138,8 +138,8 @@ class TestLazyJaxKernel:
             built_dtypes.append(wp_dtype)
             return "warp-kernel", ("out_a", "out_b")
 
-        def fake_register(kernel, outputs):
-            registration_calls.append((kernel, outputs))
+        def fake_register(kernel, outputs, *, block_dim=None):
+            registration_calls.append((kernel, outputs, block_dim))
             return "jax-kernel"
 
         monkeypatch.setattr(_registration, "_register_jax_kernel", fake_register)
@@ -154,7 +154,7 @@ class TestLazyJaxKernel:
         assert first == "jax-kernel"
         assert second is first
         assert built_dtypes == [wp.float32]
-        assert registration_calls == [("warp-kernel", ("out_a", "out_b"))]
+        assert registration_calls == [("warp-kernel", ("out_a", "out_b"), None)]
 
     def test_supports_float64_and_dtype_membership(self, monkeypatch) -> None:
         """Recognize supported dtypes and convert float64 before construction."""
@@ -167,7 +167,7 @@ class TestLazyJaxKernel:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: kernel,
+            lambda kernel, outputs, *, block_dim=None: kernel,
         )
         registrations = _registration._LazyJaxKernel(
             build,
@@ -223,7 +223,10 @@ class TestLazyJaxKernel:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append(outputs) or "jax",
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (outputs, block_dim)
+            )
+            or "jax",
         )
         registrations = _registration._LazyJaxKernel(
             lambda wp_dtype: ("warp", ("neighbor_matrix", "num_neighbors")),
@@ -231,7 +234,7 @@ class TestLazyJaxKernel:
         )
 
         assert registrations[jnp.float32] == "jax"
-        assert registration_calls == [("neighbor_matrix", "num_neighbors")]
+        assert registration_calls == [(("neighbor_matrix", "num_neighbors"), None)]
 
     def test_constant_cache_key_reuses_one_wrapper_across_dtypes(
         self, monkeypatch
@@ -241,7 +244,7 @@ class TestLazyJaxKernel:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: object(),
+            lambda kernel, outputs, *, block_dim=None: object(),
         )
         registrations = _registration._LazyJaxKernel(
             lambda wp_dtype: (built_dtypes.append(wp_dtype) or "warp", ("out",)),
@@ -269,7 +272,9 @@ class TestNaiveRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append((kernel, outputs))
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (kernel, outputs, block_dim)
+            )
             or "jax",
         )
         registrations = _registration._lazy_naive_kernel(
@@ -297,7 +302,7 @@ class TestNaiveRegistrationFactory:
             )
         ]
         assert registration_calls == [
-            ("warp", ("neighbor_matrix1", "num_neighbors1")),
+            ("warp", ("neighbor_matrix1", "num_neighbors1"), None),
         ]
 
     def test_single_cutoff_pbc_geometry_and_pair_fn(self, monkeypatch) -> None:
@@ -314,7 +319,9 @@ class TestNaiveRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append((kernel, outputs))
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (kernel, outputs, block_dim)
+            )
             or "jax",
         )
         registrations = _registration._lazy_naive_kernel(
@@ -355,6 +362,7 @@ class TestNaiveRegistrationFactory:
                     "pair_energies",
                     "pair_forces",
                 ),
+                None,
             )
         ]
 
@@ -371,7 +379,9 @@ class TestNaiveRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append((kernel, outputs))
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (kernel, outputs, block_dim)
+            )
             or "jax",
         )
         registrations = _registration._lazy_naive_kernel(
@@ -403,6 +413,7 @@ class TestNaiveRegistrationFactory:
                     "neighbor_matrix_shifts2",
                     "num_neighbors2",
                 ),
+                None,
             )
         ]
 
@@ -494,7 +505,9 @@ class TestCellListRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append((kernel, outputs))
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (kernel, outputs, block_dim)
+            )
             or "jax",
         )
 
@@ -529,15 +542,34 @@ class TestCellListRegistrationFactory:
             assert registration_calls[-1] == (
                 "cells-warp" if stage == "cells_per_system" else "warp",
                 outputs,
+                None,
             )
 
         assert getter_calls == [
-            (("construct_bin_size", wp.float32), {"batched": False}),
-            (("construct_bin_size", wp.float32), {"batched": True}),
-            (("count_atoms", wp.float32), {"batched": False}),
-            (("count_atoms", wp.float32), {"batched": True}),
-            (("bin_atoms", wp.float32), {"batched": False}),
-            (("bin_atoms", wp.float32), {"batched": True}),
+            (
+                ("construct_bin_size", wp.float32),
+                {"batched": False, "fixed_cell": False},
+            ),
+            (
+                ("construct_bin_size", wp.float32),
+                {"batched": True, "fixed_cell": False},
+            ),
+            (
+                ("count_atoms", wp.float32),
+                {"batched": False, "fixed_cell": False},
+            ),
+            (
+                ("count_atoms", wp.float32),
+                {"batched": True, "fixed_cell": False},
+            ),
+            (
+                ("bin_atoms", wp.float32),
+                {"batched": False, "fixed_cell": False},
+            ),
+            (
+                ("bin_atoms", wp.float32),
+                {"batched": True, "fixed_cell": False},
+            ),
         ]
 
     def test_gather_stage_routes_unbatched_and_batched_getters(
@@ -559,7 +591,7 @@ class TestCellListRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: "jax",
+            lambda kernel, outputs, *, block_dim=None: "jax",
         )
 
         unbatched = _registration._lazy_cell_list_build_kernel(
@@ -589,7 +621,7 @@ class TestCellListRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: object(),
+            lambda kernel, outputs, *, block_dim=None: object(),
         )
         registrations = _registration._lazy_cell_list_build_kernel(
             stage="cells_per_system",
@@ -611,7 +643,9 @@ class TestCellListRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append((kernel, outputs))
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (kernel, outputs, block_dim)
+            )
             or "jax",
         )
         pair_fn = object()
@@ -674,6 +708,7 @@ class TestCellListRegistrationFactory:
                     "pair_energies",
                     "pair_forces",
                 ),
+                None,
             ),
             (
                 "warp",
@@ -682,6 +717,7 @@ class TestCellListRegistrationFactory:
                     "neighbor_matrix_shifts",
                     "num_neighbors",
                 ),
+                None,
             ),
         ]
 
@@ -697,7 +733,9 @@ class TestCellListRegistrationFactory:
         monkeypatch.setattr(
             _registration,
             "_register_jax_kernel",
-            lambda kernel, outputs: registration_calls.append((kernel, outputs))
+            lambda kernel, outputs, *, block_dim=None: registration_calls.append(
+                (kernel, outputs, block_dim)
+            )
             or "jax",
         )
         registrations = _registration._lazy_cell_list_query_kernel(
@@ -731,6 +769,7 @@ class TestCellListRegistrationFactory:
                     "neighbor_matrix_shifts",
                     "num_neighbors",
                 ),
+                None,
             )
         ]
 
@@ -888,8 +927,8 @@ class TestClusterTileSemanticMaps:
                 def build_callable(*args, key=key):
                     callable_calls.append(key)
                     if key == "coo_segmented":
-                        return args[10], args[12], args[13], args[14]
-                    return args[9], args[10], args[11]
+                        return args[15], args[17], args[18], args[19]
+                    return args[14], args[15], args[16]
 
             else:
 
@@ -1291,6 +1330,7 @@ class TestGraphRegistrationFactories:
                 "dual_cutoff": False,
                 "geometry": True,
                 "pair_fn": pair_fn,
+                "fixed_cell": False,
             }
         ]
 
@@ -1323,6 +1363,7 @@ class TestGraphRegistrationFactories:
                 "tile_segmented": True,
                 "coo_segmented": True,
                 "selective": True,
+                "fixed_cell": False,
             }
         ]
 
@@ -1337,7 +1378,7 @@ class TestGraphRegistrationFactories:
         monkeypatch.setattr(
             _registration,
             "_preload_cluster_tile_build_kernel",
-            lambda: preload_calls.append("called"),
+            lambda *, fixed_cell: preload_calls.append(fixed_cell),
         )
 
         registration = _registration._cluster_tile_build_registration(
@@ -1348,7 +1389,7 @@ class TestGraphRegistrationFactories:
         )
         registration.preload()
 
-        assert preload_calls == ["called"]
+        assert preload_calls == [False]
 
     @pytest.mark.parametrize(
         "factory_name, kwargs",
@@ -1515,6 +1556,7 @@ class TestClusterTilePreload:
             "return_vectors": False,
             "return_distances": False,
             "pair_fn": None,
+            "fixed_cell": False,
         }
 
     def test_matrix_preload_uses_supplied_execution_device(self, monkeypatch) -> None:
@@ -1587,6 +1629,7 @@ class TestClusterTilePreload:
             "return_vectors": False,
             "return_distances": False,
             "pair_fn": None,
+            "fixed_cell": False,
         }
 
     def test_coo_preload_uses_matching_getter_and_segmented_build_module(
@@ -1599,7 +1642,9 @@ class TestClusterTilePreload:
         monkeypatch.setattr(
             preload,
             "_preload_cluster_tile_build_module",
-            lambda device_alias: side_effects.append(("build", device_alias)),
+            lambda device_alias, *, fixed_cell: side_effects.append(
+                ("build", device_alias, fixed_cell)
+            ),
         )
         monkeypatch.setattr(
             preload,
@@ -1620,13 +1665,14 @@ class TestClusterTilePreload:
             selective=True,
         )
 
-        assert side_effects[0] == ("build", "cuda:0")
+        assert side_effects[0] == ("build", "cuda:0", False)
         assert side_effects[1] == (
             "batch_getter",
             {
                 "tile_segmented": True,
                 "coo_segmented": True,
                 "selective": True,
+                "fixed_cell": False,
             },
         )
 
@@ -1659,6 +1705,7 @@ class TestClusterTilePreload:
             "tile_segmented": False,
             "coo_segmented": False,
             "selective": False,
+            "fixed_cell": False,
         }
 
     def test_build_preload_accepts_no_arguments(self, monkeypatch) -> None:
@@ -1668,13 +1715,15 @@ class TestClusterTilePreload:
         monkeypatch.setattr(
             preload,
             "_preload_cluster_tile_build_module",
-            lambda device_alias: module_calls.append(device_alias),
+            lambda device_alias, *, fixed_cell: module_calls.append(
+                (device_alias, fixed_cell)
+            ),
         )
         monkeypatch.setattr(preload, "_current_warp_device_alias", lambda: "cuda:0")
 
         preload._preload_cluster_tile_build_kernel()
 
-        assert module_calls == ["cuda:0"]
+        assert module_calls == [("cuda:0", False)]
 
     @pytest.mark.parametrize(
         "preload_name, kwargs",

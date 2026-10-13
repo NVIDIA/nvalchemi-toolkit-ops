@@ -60,6 +60,7 @@ from nvalchemiops.dynamics.utils import (
 # ==============================================================================
 
 DEVICES = ["cuda:0"]
+STRESS_TEST_DEVICES = ["cpu"] + (["cuda:0"] if wp.is_cuda_available() else [])
 
 DTYPE_CONFIGS = [
     pytest.param(wp.vec3f, wp.float32, wp.mat33f, np.float32, id="float32"),
@@ -2656,6 +2657,62 @@ class TestStressToCellForce:
         np.testing.assert_allclose(result[0, 1], 0.0, atol=1e-5)
         np.testing.assert_allclose(result[0, 2], 0.0, atol=1e-5)
         np.testing.assert_allclose(result[1, 2], 0.0, atol=1e-5)
+
+    @pytest.mark.parametrize("device", STRESS_TEST_DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,dtype_mat,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("keep_aligned", [False, True])
+    def test_stress_to_cell_force_matches_bond_energy_finite_difference(
+        self, device, dtype_vec, dtype_scalar, dtype_mat, np_dtype, keep_aligned
+    ):
+        """Cell forces match independent finite differences for a row-cell bond."""
+        cell_np = np.array(
+            [[3.2, 0.0, 0.0], [0.65, 2.8, 0.0], [-0.4, 0.55, 3.6]],
+            dtype=np_dtype,
+        )
+        fractional_bond = np.array([0.7, -0.45, 0.3], dtype=np_dtype)
+        cartesian_bond = fractional_bond @ cell_np
+        volume_np = abs(np.linalg.det(cell_np))
+        stress_np = np.outer(cartesian_bond, cartesian_bond) / volume_np
+
+        stress = make_cell(stress_np, dtype_mat, device)
+        cell = make_cell(cell_np, dtype_mat, device)
+        volume = wp.empty(1, dtype=dtype_scalar, device=device)
+        compute_cell_volume(cell, volume, device=device)
+        cell_force = wp.empty(1, dtype=dtype_mat, device=device)
+        stress_to_cell_force(
+            stress,
+            cell,
+            volume,
+            cell_force,
+            keep_aligned=keep_aligned,
+            device=device,
+        )
+        wp.synchronize_device(device)
+        result = cell_to_numpy(cell_force)
+
+        def energy(test_cell):
+            bond = fractional_bond @ test_cell
+            return 0.5 * np.dot(bond, bond)
+
+        epsilon = 2e-3 if np_dtype == np.float32 else 1e-6
+        atol = 3e-4 if np_dtype == np.float32 else 2e-8
+        for row in range(3):
+            for column in range(3):
+                if keep_aligned and row < column:
+                    assert result[row, column] == 0.0
+                    continue
+
+                delta = np.zeros((3, 3), dtype=np_dtype)
+                delta[row, column] = epsilon
+                energy_derivative = (
+                    energy(cell_np + delta) - energy(cell_np - delta)
+                ) / (2.0 * epsilon)
+                np.testing.assert_allclose(
+                    result[row, column],
+                    -energy_derivative,
+                    rtol=3e-4 if np_dtype == np.float32 else 2e-8,
+                    atol=atol,
+                )
 
 
 # ==============================================================================

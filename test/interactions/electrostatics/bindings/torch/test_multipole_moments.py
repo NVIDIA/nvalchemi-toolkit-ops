@@ -51,6 +51,63 @@ class TestInferLMax:
 
 
 class TestL2Converter:
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_converter_matches_matrix_reference_and_gradients(self, dtype):
+        """Cached matrix conversions match the former pseudoinverse results."""
+        rng = np.random.default_rng(5)
+        sqrt5 = np.sqrt(5.0)
+        sqrt15 = np.sqrt(15.0)
+        B = torch.tensor(
+            [
+                [0.0, 0.0, -sqrt5 / 2, 0.0, -sqrt15 / 2],
+                [0.0, 0.0, sqrt5, 0.0, 0.0],
+                [0.0, 0.0, -sqrt5 / 2, 0.0, sqrt15 / 2],
+                [0.0, sqrt15 / 2, 0.0, 0.0, 0.0],
+                [sqrt15 / 2, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, sqrt15 / 2, 0.0],
+            ],
+            dtype=dtype,
+        )
+        q6_idx = torch.tensor(((0, 3, 4), (3, 1, 5), (4, 5, 2)))
+        T = torch.linalg.pinv(B.to(torch.float64)).to(dtype)
+        rtol, atol = (1e-6, 1e-7) if dtype == torch.float32 else (1e-14, 1e-14)
+
+        feats = torch.tensor(
+            rng.standard_normal((12, 5)), dtype=dtype, requires_grad=True
+        )
+        actual_q = e3nn_to_cartesian_quadrupole(feats)
+        expected_q6 = feats @ B.t()
+        expected_q = expected_q6[:, q6_idx]
+        torch.testing.assert_close(actual_q, expected_q, rtol=rtol, atol=atol)
+        q_weights = torch.tensor(rng.standard_normal((12, 3, 3)), dtype=dtype)
+        (actual_grad,) = torch.autograd.grad((actual_q * q_weights).sum(), feats)
+        (expected_grad,) = torch.autograd.grad((expected_q * q_weights).sum(), feats)
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=rtol, atol=atol)
+
+        q_raw = torch.tensor(rng.standard_normal((12, 3, 3)), dtype=dtype)
+        q = (0.5 * (q_raw + q_raw.transpose(-1, -2))).requires_grad_()
+        actual_coeffs = cartesian_quadrupole_to_e3nn(q)
+        q_sym = 0.5 * (q + q.transpose(-1, -2))
+        expected_q6 = torch.stack(
+            [
+                q_sym[:, 0, 0],
+                q_sym[:, 1, 1],
+                q_sym[:, 2, 2],
+                q_sym[:, 0, 1],
+                q_sym[:, 0, 2],
+                q_sym[:, 1, 2],
+            ],
+            dim=-1,
+        )
+        expected_coeffs = expected_q6 @ T.t()
+        torch.testing.assert_close(actual_coeffs, expected_coeffs, rtol=rtol, atol=atol)
+        coeff_weights = torch.tensor(rng.standard_normal((12, 5)), dtype=dtype)
+        (actual_grad,) = torch.autograd.grad((actual_coeffs * coeff_weights).sum(), q)
+        (expected_grad,) = torch.autograd.grad(
+            (expected_coeffs * coeff_weights).sum(), q
+        )
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=rtol, atol=atol)
+
     def test_traceless_output(self):
         rng = np.random.default_rng(0)
         f = torch.tensor(rng.standard_normal((32, 5)))

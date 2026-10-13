@@ -51,6 +51,9 @@ import warp as wp
 from jax.custom_derivatives import SymbolicZero
 from warp import JaxCallableGraphMode, jax_callable
 
+from nvalchemiops.interactions.electrostatics._pme_mesh import (
+    _DEFAULT_PME_SPLINE_ORDER,
+)
 from nvalchemiops.interactions.electrostatics.pme_factory import get_pme_kernel
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
     _batch_pme_green_structure_factor_kernel_overload,
@@ -78,6 +81,7 @@ from nvalchemiops.jax.interactions.electrostatics.ewald import (
     ewald_real_space,
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+    generate_k_squared_pme,
     generate_k_vectors_pme,
 )
 from nvalchemiops.jax.interactions.electrostatics.parameters import (
@@ -336,7 +340,8 @@ def pme_fused_convolve(
         FFT of the charge mesh. Shape (Nx, Ny, Nz_rfft) for single system
         or (B, Nx, Ny, Nz_rfft) for batch.
     k_squared : float32 or float64
-        |k|^2 at each grid point. Same leading shape as mesh_fft.
+        |k|^2 at each grid point. Same leading shape as mesh_fft, or a
+        single shared grid when every system uses the same reciprocal cell.
     moduli_x, moduli_y, moduli_z : float32 or float64
         Per-axis B-spline modulus LUTs.
     alpha : float32 or float64
@@ -357,11 +362,11 @@ def pme_fused_convolve(
     # generate_k_vectors_pme squeezes the batch dim when B=1 — restore it
     # for the batch kernel which expects (B, nx, ny, nz_r).
     squeeze_output = False
-    if is_batch and k_squared.ndim == 3:
-        k_squared = k_squared[jnp.newaxis, ...]
     if is_batch and mesh_fft.ndim == 3:
         mesh_fft = mesh_fft[jnp.newaxis, ...]
         squeeze_output = True
+    if is_batch:
+        k_squared = jnp.broadcast_to(k_squared, mesh_fft.shape)
 
     # Reinterpret complex (N, ..., M) -> real (N, ..., M, 2) for the
     # vec2-typed warp kernel. jax.lax.bitcast_convert_type doesn't accept
@@ -419,7 +424,7 @@ def pme_green_structure_factor(
     mesh_dimensions: tuple[int, int, int],
     alpha: jax.Array,
     cell: jax.Array,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     r"""Compute Green's function and B-spline structure factor correction.
@@ -458,8 +463,8 @@ def pme_green_structure_factor(
         Unit cell matrices.
         - Single-system: shape (3, 3) or (1, 3, 3)
         - Batch: shape (B, 3, 3)
-    spline_order : int, default=4
-        B-spline interpolation order (typically 4 for cubic B-splines).
+    spline_order : int, default=5
+        B-spline interpolation order (5 for quartic B-splines by default).
     batch_idx : jax.Array | None, default=None
         If provided, dispatches to batch kernels.
 
@@ -1074,7 +1079,7 @@ def _pme_reciprocal_space_impl(
     alpha: jax.Array,
     mesh_dimensions: tuple[int, int, int] | None = None,
     mesh_spacing: float | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_squared: jax.Array | None = None,
@@ -1124,7 +1129,7 @@ def _pme_reciprocal_space_impl(
         FFT mesh dimensions (nx, ny, nz).
     mesh_spacing : float, optional
         Target mesh spacing. Used to compute mesh_dimensions if not provided.
-    spline_order : int, default=4
+    spline_order : int, default=5
         B-spline interpolation order (4 = cubic).
     batch_idx : jax.Array | None, default=None
         System index for each atom. When provided, atoms must be grouped by
@@ -1174,7 +1179,8 @@ def _pme_reciprocal_space_impl(
     input_dtype = normalize_float_dtype(positions.dtype)
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
-    reciprocal_metadata_is_supplied = k_vectors is not None and k_squared is not None
+    k_vectors_are_supplied = k_vectors is not None
+    k_squared_is_supplied = k_squared is not None
     volume_is_supplied = volume is not None
 
     # hybrid_forces: forward-only spline/FFT chain. We sever ∂/∂{positions,
@@ -1232,10 +1238,14 @@ def _pme_reciprocal_space_impl(
     # Determine mesh dimensions
     if mesh_dimensions is None:
         if mesh_spacing is not None:
-            mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+            mesh_dimensions = mesh_spacing_to_dimensions(
+                cell, mesh_spacing, spline_order=spline_order
+            )
         else:
             # Default estimation
-            mesh_dimensions = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
+            mesh_dimensions = estimate_pme_mesh_dimensions(
+                cell, alpha, accuracy=1e-6, spline_order=spline_order
+            )
 
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
 
@@ -1271,15 +1281,30 @@ def _pme_reciprocal_space_impl(
     # Step 3: Generate k-space grid and compute Green's function + structure factor.
     # When cell_inv_t is supplied, derive reciprocal_cell = 2π · cell_inv from
     # the cached transpose so generate_k_vectors_pme skips its own inv.
-    if k_vectors is None or k_squared is None:
+    if k_squared is None:
         reciprocal_cell = (2.0 * jnp.pi) * cell_inv
-        k_vectors, k_squared = generate_k_vectors_pme(
+        if compute_virial:
+            k_vectors, k_squared = generate_k_vectors_pme(
+                cell,
+                mesh_dimensions,
+                reciprocal_cell=reciprocal_cell,
+            )
+        else:
+            k_squared = generate_k_squared_pme(
+                cell,
+                mesh_dimensions,
+                reciprocal_cell=reciprocal_cell,
+            )
+    elif compute_virial and k_vectors is None:
+        reciprocal_cell = (2.0 * jnp.pi) * cell_inv
+        k_vectors, _generated_k_squared = generate_k_vectors_pme(
             cell,
             mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
         )
-    if hybrid_forces or reciprocal_metadata_is_supplied:
+    if k_vectors is not None and (hybrid_forces or k_vectors_are_supplied):
         k_vectors = jax.lax.stop_gradient(k_vectors)
+    if hybrid_forces or k_squared_is_supplied:
         k_squared = jax.lax.stop_gradient(k_squared)
 
     # Step 4: Fused Green's function + B-spline deconvolution + multiply in a
@@ -1737,9 +1762,13 @@ def _pme_reciprocal_energy_reference(
     is_batch = batch_idx is not None
     if mesh_dimensions is None:
         if mesh_spacing is None:
-            mesh_dimensions = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
+            mesh_dimensions = estimate_pme_mesh_dimensions(
+                cell, alpha, accuracy=1e-6, spline_order=spline_order
+            )
         else:
-            mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+            mesh_dimensions = mesh_spacing_to_dimensions(
+                cell, mesh_spacing, spline_order=spline_order
+            )
 
     cell_inv_t_ref = _reference_cell_inv_t(cell, cell_inv_t, dtype)
     cell_inv_ref = jnp.transpose(cell_inv_t_ref, (0, 2, 1))
@@ -1759,9 +1788,9 @@ def _pme_reciprocal_energy_reference(
         complex_dtype
     )
 
-    if k_vectors is None or k_squared is None:
+    if k_squared is None:
         reciprocal_cell = (2.0 * jnp.pi) * cell_inv_ref
-        _k_vectors, k_squared = generate_k_vectors_pme(
+        k_squared = generate_k_squared_pme(
             cell,
             mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
@@ -1945,7 +1974,9 @@ def _pme_reciprocal_hvp_state(
     if mesh_dimensions is None:
         if mesh_spacing is None:
             raise ValueError("mesh_dimensions must be resolved before PME HVP")
-        mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+        mesh_dimensions = mesh_spacing_to_dimensions(
+            cell, mesh_spacing, spline_order=spline_order
+        )
 
     dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
@@ -2545,6 +2576,13 @@ def _pme_reciprocal_energy_jvp_rule(
         if not _is_symbolic_zero(t_cell)
         else cell
     )
+    if not _is_symbolic_zero(t_cell):
+        # Cell tangents use the current reciprocal metric and assignment
+        # geometry. Fixed-cell position and charge tangents keep setup caches.
+        k_vectors = None
+        k_squared = None
+        volume = None
+        cell_inv_t = None
     _reference_out, tangent_out = jax.jvp(
         lambda p, q, c: _pme_reciprocal_energy_reference(
             p,
@@ -2586,7 +2624,7 @@ def pme_reciprocal_space(
     alpha: jax.Array,
     mesh_dimensions: tuple[int, int, int] | None = None,
     mesh_spacing: float | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_squared: jax.Array | None = None,
@@ -2630,17 +2668,21 @@ def pme_reciprocal_space(
         batch metadata are traced by ``jax.jit`` or other JAX transformations.
     mesh_spacing : float or None, default=None
         Target mesh spacing for eager-only mesh-size inference.
-    spline_order : int, default=4
+    spline_order : int, default=5
         B-spline interpolation order.
     batch_idx : jax.Array or None, default=None
         System index for each atom. When provided, atoms must be grouped by
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
         IDs ``0..B-1``.
     k_vectors, k_squared : jax.Array or None
-        Optional precomputed reciprocal grid values. These are setup constants
-        for the JAX custom-JVP path; tangents through them are ignored. When
-        supplied while differentiating with respect to ``cell``, they are
-        assumed to correspond to the current ``cell``.
+        Optional precomputed reciprocal grid values. ``k_squared`` may be
+        supplied without ``k_vectors``. For batches with identical cells,
+        ``k_squared`` may contain one shared three-dimensional grid.
+        If ``compute_virial=True`` and ``k_vectors`` is omitted, Cartesian
+        vectors are regenerated. These are
+        setup constants for the JAX custom-JVP path; tangents through them
+        are ignored. When supplied while differentiating with respect to
+        ``cell``, they are assumed to correspond to the current ``cell``.
     compute_forces, compute_charge_gradients, compute_virial : bool
         Direct-output flags. ``compute_forces=True`` remains supported for
         no-autograd MD/inference use; charge-gradient and virial direct outputs
@@ -2679,10 +2721,8 @@ def pme_reciprocal_space(
     Notes
     -----
     When ``cell`` or batch metadata are traced by ``jax.jit`` or other JAX
-    transformations, pass explicit ``mesh_dimensions``. If ``alpha`` would
-    otherwise be estimated, precompute and pass it explicitly as well.
-    ``mesh_spacing`` and accuracy-based parameter estimation depend on concrete
-    setup values.
+    transformations, pass explicit ``mesh_dimensions``. ``mesh_spacing`` and
+    component-only accuracy-based mesh sizing depend on concrete setup values.
 
     JAX PME higher-order support is limited to tested position and charge
     losses. Stress/cell/strain HVPs, alpha HVPs, and precomputed-metadata HVPs
@@ -2737,7 +2777,9 @@ def pme_reciprocal_space(
         )
         return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
     if mesh_dimensions is None and mesh_spacing is not None:
-        mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+        mesh_dimensions = mesh_spacing_to_dimensions(
+            cell, mesh_spacing, spline_order=spline_order
+        )
         mesh_spacing = None
     result = _pme_reciprocal_energy_jvp(
         positions,
@@ -2766,7 +2808,7 @@ def _particle_mesh_ewald_impl(
     alpha: float | jax.Array | None = None,
     mesh_spacing: float | None = None,
     mesh_dimensions: tuple[int, int, int] | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_squared: jax.Array | None = None,
@@ -2835,13 +2877,16 @@ def _particle_mesh_ewald_impl(
         Ewald splitting parameter controlling real/reciprocal space balance.
         - float: Same :math:`\alpha` for all systems
         - Array shape (B,): Per-system :math:`\alpha` values
-        - None: Automatically estimated using Kolafa-Perram formula
+        The public entry point resolves this value before calling the
+        implementation.
     mesh_spacing : float, optional
-        Target mesh spacing. Mesh dimensions computed as ceil(cell_length / mesh_spacing).
+        Target mesh spacing. Mesh dimensions are computed as
+        ``ceil(cell_length / mesh_spacing)`` when explicit dimensions are absent.
     mesh_dimensions : tuple[int, int, int], optional
-        Explicit FFT mesh dimensions (nx, ny, nz). Power-of-2 values recommended.
-    spline_order : int, default=4
-        B-spline interpolation order (4 = cubic B-splines, recommended).
+        Explicit FFT mesh dimensions (nx, ny, nz). This or ``mesh_spacing`` is
+        required by the full-PME implementation.
+    spline_order : int, default=5
+        B-spline interpolation order (5 = quartic B-splines, the PME default).
     batch_idx : jax.Array, shape (N,), dtype=int32, optional
         System index for each atom (0 to B-1). Determines execution mode:
         - None: Single-system optimized kernels
@@ -2874,7 +2919,8 @@ def _particle_mesh_ewald_impl(
         row-vector displacement recipe.
         Stress = -virial / volume.
     accuracy : float, default=1e-6
-        Target accuracy for automatic parameter estimation.
+        Retained for public API compatibility. Full-PME parameter selection is
+        performed by the public entry point before this implementation is called.
     pbc : jax.Array, shape (3,) or (B, 3), dtype=bool, optional
         Per-system periodic boundary conditions. Required when
         ``slab_correction=True``. True marks periodic directions and False
@@ -2896,19 +2942,13 @@ def _particle_mesh_ewald_impl(
 
     Notes
     -----
-    Automatic Parameter Estimation (when alpha is None):
-        Uses Kolafa-Perram formula for optimal :math:`\alpha` and mesh dimensions based on
-        requested accuracy.
-
     Energy-derived first-order gradients are supported. Higher-order PME
     reverse-mode higher-order position and charge losses use the private PME
     mesh HVP path.
 
-    When ``cell`` or batch metadata are traced by ``jax.jit`` or other JAX
-    transformations, pass explicit ``mesh_dimensions``. When ``alpha`` would be
-    estimated from traced inputs, precompute it outside the transformation and
-    pass it explicitly. ``mesh_spacing`` and accuracy-based mesh sizing depend
-    on concrete setup values.
+    The public entry point resolves alpha, mesh dimensions, and spline order
+    before calling this implementation. ``mesh_spacing`` conversion requires
+    concrete setup values outside JAX transformations.
 
     Examples
     --------
@@ -2920,11 +2960,11 @@ def _particle_mesh_ewald_impl(
         ...     neighbor_list=nl, neighbor_ptr=ptr, neighbor_shifts=shifts,
         ... )
 
-    With forces and automatic parameters:
+    With forces and explicit parameters:
 
         >>> energies, forces = particle_mesh_ewald(
-        ...     positions, charges, cell,
-        ...     mesh_spacing=1.0, accuracy=1e-5,
+        ...     positions, charges, cell, alpha=0.3,
+        ...     mesh_spacing=1.0,
         ...     neighbor_list=nl, neighbor_ptr=ptr, neighbor_shifts=shifts,
         ...     compute_forces=True,
         ... )
@@ -2932,7 +2972,8 @@ def _particle_mesh_ewald_impl(
     Batched systems:
 
         >>> energies = particle_mesh_ewald(
-        ...     positions, charges, cell,
+        ...     positions, charges, cell, alpha=0.3,
+        ...     mesh_dimensions=(32, 32, 32),
         ...     batch_idx=batch_idx,
         ...     neighbor_list=nl, neighbor_ptr=ptr, neighbor_shifts=shifts,
         ... )
@@ -2941,7 +2982,7 @@ def _particle_mesh_ewald_impl(
     --------
     pme_reciprocal_space : Reciprocal-space component only
     ewald_real_space : Real-space component
-    estimate_pme_parameters : Automatic parameter estimation
+    estimate_pme_parameters : PME parameter setup
     """
     num_atoms = positions.shape[0]
 
@@ -2959,15 +3000,6 @@ def _particle_mesh_ewald_impl(
         batch_idx=batch_idx,
     )
 
-    # Estimate parameters if not provided
-    if alpha is None:
-        params = estimate_pme_parameters(positions, cell, batch_idx, accuracy)
-        alpha = params.alpha
-        if mesh_dimensions is None and mesh_spacing is None:
-            # Convert to explicit tuple[int, int, int]
-            md = params.mesh_dimensions
-            mesh_dimensions = (int(md[0]), int(md[1]), int(md[2]))
-
     # Prepare alpha
     if isinstance(alpha, (int, float)):
         alpha = jnp.array([alpha] * num_systems, dtype=positions.dtype)
@@ -2980,9 +3012,15 @@ def _particle_mesh_ewald_impl(
     # Determine mesh dimensions
     if mesh_dimensions is None:
         if mesh_spacing is not None:
-            mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+            mesh_dimensions = mesh_spacing_to_dimensions(
+                cell, mesh_spacing, spline_order=spline_order
+            )
         else:
-            mesh_dimensions = estimate_pme_mesh_dimensions(cell, alpha, accuracy)
+            raise ValueError(
+                "full particle_mesh_ewald with explicit alpha requires "
+                "mesh_dimensions or mesh_spacing; use estimate_pme_parameters before "
+                "building the neighbor list for automatic parameter selection"
+            )
 
     charges_orig = charges
     need_charge_gradients = compute_charge_gradients or hybrid_forces
@@ -3128,25 +3166,45 @@ def _resolve_particle_mesh_ewald_parameters(
     alpha: float | jax.Array | None,
     mesh_spacing: float | None,
     mesh_dimensions: tuple[int, int, int] | None,
+    spline_order: int | None,
     batch_idx: jax.Array | None,
     accuracy: float,
-) -> tuple[jax.Array, jax.Array, tuple[int, int, int]]:
-    """Resolve PME ``cell``, ``alpha``, and mesh dimensions for custom rules."""
+) -> tuple[jax.Array, jax.Array, tuple[int, int, int], int]:
+    """Resolve one full-PME execution configuration before choosing an output path."""
+    cell_3d, num_systems = _prepare_cell(cell)
+    resolved_spline_order = (
+        _DEFAULT_PME_SPLINE_ORDER if spline_order is None else spline_order
+    )
+
+    if alpha is None:
+        # The heuristic reads the cell and the per-system atom counts. Traced
+        # positions or charges are fine here, so jax.grad over positions with
+        # accuracy-based parameters keeps working.
+        traced_inputs = (cell, batch_idx)
+        if any(_is_traced_array(value) for value in traced_inputs if value is not None):
+            raise ValueError(
+                "JAX PME requires explicit alpha and explicit mesh_dimensions "
+                "inside jax.jit, jax.grad, or other JAX transformations. Run "
+                "estimate_pme_parameters outside the transformation and before building "
+                "the neighbor list, then pass its alpha and mesh dimensions explicitly."
+            )
+        params = estimate_pme_parameters(
+            positions,
+            cell_3d,
+            batch_idx,
+            accuracy,
+            spline_order=resolved_spline_order,
+        )
+        alpha = params.alpha
+        if mesh_dimensions is None and mesh_spacing is None:
+            mesh_dimensions = tuple(int(value) for value in params.mesh_dimensions)
+
     _require_explicit_mesh_dimensions_in_tracing(
         mesh_dimensions=mesh_dimensions,
-        cell=cell,
+        cell=cell_3d,
         alpha=alpha,
         batch_idx=batch_idx,
     )
-    cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
-    num_systems = cell_3d.shape[0]
-
-    if alpha is None:
-        params = estimate_pme_parameters(positions, cell_3d, batch_idx, accuracy)
-        alpha = params.alpha
-        if mesh_dimensions is None and mesh_spacing is None:
-            md = params.mesh_dimensions
-            mesh_dimensions = (int(md[0]), int(md[1]), int(md[2]))
 
     if isinstance(alpha, (int, float)):
         alpha = jnp.array([alpha] * num_systems, dtype=positions.dtype)
@@ -3155,11 +3213,18 @@ def _resolve_particle_mesh_ewald_parameters(
 
     if mesh_dimensions is None:
         if mesh_spacing is not None:
-            mesh_dimensions = mesh_spacing_to_dimensions(cell_3d, mesh_spacing)
+            mesh_dimensions = mesh_spacing_to_dimensions(
+                cell_3d, mesh_spacing, spline_order=resolved_spline_order
+            )
         else:
-            mesh_dimensions = estimate_pme_mesh_dimensions(cell_3d, alpha, accuracy)
+            mesh_dimensions = estimate_pme_mesh_dimensions(
+                cell_3d,
+                alpha,
+                accuracy,
+                spline_order=resolved_spline_order,
+            )
 
-    return cell_3d, alpha, mesh_dimensions
+    return cell_3d, alpha, mesh_dimensions, resolved_spline_order
 
 
 def particle_mesh_ewald(
@@ -3169,7 +3234,7 @@ def particle_mesh_ewald(
     alpha: float | jax.Array | None = None,
     mesh_spacing: float | None = None,
     mesh_dimensions: tuple[int, int, int] | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_squared: jax.Array | None = None,
@@ -3218,19 +3283,26 @@ def particle_mesh_ewald(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrices with lattice vectors as rows.
     alpha : float, jax.Array, or None, default=None
-        Ewald splitting parameter. If ``None``, estimated automatically.
+        Ewald splitting parameter. If ``None``, alpha and the mesh dimensions
+        are estimated in the call from ``accuracy`` outside JAX
+        transformations. Pass ``params.alpha`` from ``estimate_pme_parameters``
+        to use prepared parameters.
     mesh_spacing : float or None, default=None
         Target mesh spacing used when ``mesh_dimensions`` is omitted.
     mesh_dimensions : tuple[int, int, int] or None, default=None
-        Explicit FFT mesh dimensions.
-    spline_order : int, default=4
-        B-spline interpolation order.
+        Explicit FFT mesh dimensions. When both mesh controls are omitted, the
+        mesh is estimated in the call from ``accuracy`` outside JAX
+        transformations. Pass ``params.mesh_dimensions`` to use prepared parameters.
+    spline_order : int, default=5
+        B-spline interpolation order. Implicit meshes provide assignment-order support.
     batch_idx : jax.Array or None, default=None
         System index for each atom. When provided, atoms must be grouped by
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
         IDs ``0..B-1``.
     k_vectors, k_squared : jax.Array or None
-        Precomputed PME reciprocal grid values.
+        Precomputed PME reciprocal grid values. ``k_squared`` may be supplied
+        without ``k_vectors``. If ``compute_virial=True`` and ``k_vectors`` is
+        omitted, Cartesian vectors are regenerated.
     neighbor_list, neighbor_ptr, neighbor_shifts : jax.Array or None
         CSR neighbor-list inputs for the real-space component.
     neighbor_matrix, neighbor_matrix_shifts : jax.Array or None
@@ -3241,7 +3313,8 @@ def particle_mesh_ewald(
         Deprecated direct-output flags. Compute energy and use JAX autodiff for
         differentiable forces, charge gradients, and strain virials.
     accuracy : float, default=1e-6
-        Target accuracy for automatic parameter estimation.
+        Target used by the in-call parameter estimators when ``alpha`` or the
+        mesh controls are omitted.
     hybrid_forces : bool, default=False
         Deprecated Torch-compatibility escape hatch for charge-gradient routing.
     pbc : jax.Array, optional
@@ -3278,11 +3351,18 @@ def particle_mesh_ewald(
 
     Notes
     -----
-    When ``cell``, ``alpha``, or batch metadata are traced by ``jax.jit`` or
-    other JAX transformations, pass explicit ``mesh_dimensions``.
-    ``mesh_spacing`` and accuracy-based mesh sizing depend on concrete mesh
-    setup values. If ``alpha`` would otherwise be estimated from traced inputs,
-    precompute it outside the transformation and pass it explicitly.
+    Call ``estimate_pme_parameters`` before building the neighbor list, build
+    that list with its ``real_space_cutoff``, then pass its ``alpha`` and
+    ``mesh_dimensions`` here. Use the same ``spline_order`` during setup and
+    execution. Reuse these values while the cell and atom counts remain fixed,
+    inside or outside ``jax.jit``.
+
+    When cell, alpha, or batch metadata are traced by a JAX transformation,
+    pass explicit mesh dimensions. When cell or batch metadata are traced and
+    alpha would be estimated, precompute alpha as well. Position and charge
+    derivatives can use implicit setup with concrete captured cell and batch
+    values.
+
     """
     _validate_energy_reduction(energy_reduction)
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
@@ -3292,8 +3372,8 @@ def particle_mesh_ewald(
             stacklevel=2,
         )
 
-    if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
-        result = _particle_mesh_ewald_impl(
+    cell_3d, alpha_arr, mesh_dims, resolved_spline_order = (
+        _resolve_particle_mesh_ewald_parameters(
             positions=positions,
             charges=charges,
             cell=cell,
@@ -3301,6 +3381,21 @@ def particle_mesh_ewald(
             mesh_spacing=mesh_spacing,
             mesh_dimensions=mesh_dimensions,
             spline_order=spline_order,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+        )
+    )
+    if mask_value is None:
+        mask_value = positions.shape[0]
+
+    if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
+        result = _particle_mesh_ewald_impl(
+            positions=positions,
+            charges=charges,
+            cell=cell_3d,
+            alpha=alpha_arr,
+            mesh_dimensions=mesh_dims,
+            spline_order=resolved_spline_order,
             batch_idx=batch_idx,
             k_vectors=k_vectors,
             k_squared=k_squared,
@@ -3323,20 +3418,7 @@ def particle_mesh_ewald(
             moduli_y=moduli_y,
             moduli_z=moduli_z,
         )
-        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
-
-    cell_3d, alpha_arr, mesh_dims = _resolve_particle_mesh_ewald_parameters(
-        positions=positions,
-        charges=charges,
-        cell=cell,
-        alpha=alpha,
-        mesh_spacing=mesh_spacing,
-        mesh_dimensions=mesh_dimensions,
-        batch_idx=batch_idx,
-        accuracy=accuracy,
-    )
-    if mask_value is None:
-        mask_value = positions.shape[0]
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell_3d)
 
     # Energy-only path: call the impl directly so the full energy is the sum of
     # real-space and reciprocal terms. Component custom derivative rules provide
@@ -3347,7 +3429,7 @@ def particle_mesh_ewald(
         cell=cell_3d,
         alpha=alpha_arr,
         mesh_dimensions=mesh_dims,
-        spline_order=spline_order,
+        spline_order=resolved_spline_order,
         batch_idx=batch_idx,
         k_vectors=k_vectors,
         k_squared=k_squared,

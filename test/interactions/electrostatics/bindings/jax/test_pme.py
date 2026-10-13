@@ -51,7 +51,11 @@ import pytest
 
 from nvalchemiops.jax.interactions.electrostatics.ewald import ewald_real_space
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+    generate_k_squared_pme,
     generate_k_vectors_pme,
+)
+from nvalchemiops.jax.interactions.electrostatics.parameters import (
+    estimate_pme_parameters,
 )
 from nvalchemiops.jax.interactions.electrostatics.pme import (
     particle_mesh_ewald,
@@ -153,6 +157,38 @@ def create_simple_system(dtype=jnp.float64, num_atoms=4, cell_size=10.0):
     )
 
     return positions, charges, cell
+
+
+@pytest.fixture(scope="module")
+def pme_parameter_case():
+    """Estimate order-five parameters with the minimum smooth mesh."""
+    positions = jnp.array(
+        [
+            [2.0, 2.0, 2.0],
+            [6.0, 2.0, 2.0],
+            [2.0, 6.0, 2.0],
+            [6.0, 6.0, 2.0],
+            [2.0, 2.0, 6.0],
+            [6.0, 2.0, 6.0],
+            [2.0, 6.0, 6.0],
+            [6.0, 6.0, 6.0],
+        ],
+        dtype=jnp.float64,
+    )
+    charges = jnp.array(
+        [1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0],
+        dtype=jnp.float64,
+    )
+    cell = jnp.array([20.0 * np.eye(3)], dtype=jnp.float64)
+    parameters = estimate_pme_parameters(
+        positions,
+        cell,
+        accuracy=1.0e-4,
+        real_space_cutoff=9.0,
+        spline_order=5,
+        fft_padding_fraction=0,
+    )
+    return positions, charges, cell, parameters
 
 
 def calculate_pme_reciprocal_energy_torchpme(
@@ -1632,31 +1668,104 @@ class TestParticleMeshEwald:
 
         assert jnp.allclose(grad_charges, direct_charge_grads, rtol=1e-5, atol=1e-7)
 
-    def test_full_pme_auto_estimate_alpha(self, device):
-        """Test full PME with automatic alpha estimation."""
-        positions, charges, cell = create_simple_system(num_atoms=5)
-
-        cutoff = 5.0
+    def test_full_pme_estimated_fields_match_explicit_values(
+        self, device, pme_parameter_case
+    ):
+        """Estimated order-five parameters drive eager and compiled output paths."""
+        positions, charges, cell, parameters = pme_parameter_case
+        cutoff = float(parameters.real_space_cutoff[0])
         pbc = jnp.array([[True, True, True]])
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions, cutoff, cell, pbc
         )
 
-        # Call without alpha - should auto-estimate
-        energies, forces = particle_mesh_ewald(
+        assert any(
+            dimension & (dimension - 1) != 0 for dimension in parameters.mesh_dimensions
+        )
+
+        resolved_alpha = jnp.asarray(parameters.alpha, dtype=positions.dtype)
+        resolved_energies = particle_mesh_ewald(
             positions=positions,
             charges=charges,
             cell=cell,
-            alpha=None,
+            alpha=resolved_alpha,
+            mesh_dimensions=parameters.mesh_dimensions,
+            spline_order=5,
             neighbor_matrix=neighbor_matrix,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
-            compute_forces=True,
+        )
+        explicit_energies = particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=float(parameters.alpha[0]),
+            mesh_dimensions=tuple(int(value) for value in parameters.mesh_dimensions),
+            spline_order=5,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
-        assert energies.shape == (5,)
-        assert forces.shape == (5, 3)
-        assert jnp.all(jnp.isfinite(energies))
-        assert jnp.all(jnp.isfinite(forces))
+        with pytest.warns(DeprecationWarning):
+            resolved_direct = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=resolved_alpha,
+                mesh_dimensions=parameters.mesh_dimensions,
+                spline_order=5,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+            )
+        with pytest.warns(DeprecationWarning):
+            explicit_direct = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=float(parameters.alpha[0]),
+                mesh_dimensions=tuple(
+                    int(value) for value in parameters.mesh_dimensions
+                ),
+                spline_order=5,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+            )
+
+        assert resolved_energies.shape == (8,)
+        assert jnp.all(jnp.isfinite(resolved_energies))
+        # Both calls launch the same kernels; float reduction order on the GPU
+        # can differ between launches, so compare at float64 rounding level.
+        assert jnp.allclose(
+            resolved_energies, explicit_energies, rtol=1e-12, atol=1e-14
+        )
+        assert jnp.allclose(
+            resolved_direct[0], explicit_direct[0], rtol=1e-12, atol=1e-14
+        )
+        assert jnp.allclose(
+            resolved_direct[1], explicit_direct[1], rtol=1e-12, atol=1e-14
+        )
+
+        @jax.jit
+        def transformed_explicit(pos):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=resolved_alpha,
+                mesh_dimensions=parameters.mesh_dimensions,
+                spline_order=5,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            )
+
+        transformed_energies = transformed_explicit(positions)
+        assert jnp.allclose(
+            transformed_energies,
+            explicit_energies,
+            rtol=1.0e-14,
+            atol=1.0e-15,
+        )
 
     def test_full_pme_mesh_spacing(self, device):
         """Test full PME with mesh_spacing parameter."""
@@ -1793,6 +1902,69 @@ class TestPrecomputedKVectors:
 
         assert jnp.allclose(energies1, energies2, rtol=1e-6)
         assert jnp.allclose(forces1, forces2, rtol=1e-6)
+
+    def test_k_squared_only_autograd_matches_full_metadata(self, device):
+        """Test the reduced-memory cache path for benchmark derivatives."""
+        positions, charges, cell = create_dipole_system()
+        mesh_dims = (16, 16, 16)
+        k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dims)
+        direct_k_squared = generate_k_squared_pme(cell, mesh_dims)
+
+        def energy_and_grads(vectors, squared):
+            def total_energy(pos, charge):
+                energies = pme_reciprocal_space(
+                    positions=pos,
+                    charges=charge,
+                    cell=cell,
+                    alpha=jnp.array([0.3]),
+                    mesh_dimensions=mesh_dims,
+                    k_vectors=vectors,
+                    k_squared=squared,
+                )
+                return jnp.sum(energies), energies
+
+            (_, energies), grads = jax.value_and_grad(
+                total_energy,
+                argnums=(0, 1),
+                has_aux=True,
+            )(positions, charges)
+            return energies, grads
+
+        expected_energy, expected_grads = energy_and_grads(k_vectors, k_squared)
+        actual_energy, actual_grads = energy_and_grads(None, direct_k_squared)
+
+        assert jnp.allclose(actual_energy, expected_energy)
+        assert jnp.allclose(actual_grads[0], expected_grads[0])
+        assert jnp.allclose(actual_grads[1], expected_grads[1])
+
+    def test_k_squared_only_regenerates_vectors_for_virial(self, device):
+        """Test that the virial path still obtains Cartesian vectors."""
+        positions, charges, cell = create_dipole_system()
+        mesh_dims = (16, 16, 16)
+        k_squared = generate_k_squared_pme(cell, mesh_dims)
+
+        with pytest.warns(DeprecationWarning):
+            expected = pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3]),
+                mesh_dimensions=mesh_dims,
+                compute_virial=True,
+            )
+        with pytest.warns(DeprecationWarning):
+            actual = pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3]),
+                mesh_dimensions=mesh_dims,
+                k_squared=k_squared,
+                compute_virial=True,
+            )
+
+        assert jnp.allclose(actual[0], expected[0])
+        assert jnp.allclose(actual[-1], expected[-1])
 
 
 ###########################################################################################
@@ -2214,75 +2386,86 @@ class TestPMEMeshDimensionErrors:
 
 
 ###########################################################################################
-########################### Auto-Estimation Tests #########################################
+########################### Full-PME Parameter Resolution Tests ###########################
 ###########################################################################################
 
 
-class TestParticleMeshEwaldAutoEstimation:
-    """Test particle_mesh_ewald auto-estimation paths.
+class TestParticleMeshEwaldParameterResolution:
+    """Test explicit parameter resolution for full JAX PME."""
 
-    Note: Basic alpha auto-estimation and mesh_spacing tests are in
-    TestParticleMeshEwald. This class covers additional estimation paths
-    not tested elsewhere.
-    """
-
-    def test_accuracy_based_mesh_estimation(self, device):
-        """Test accuracy-based mesh dimension estimation."""
+    def test_missing_alpha_estimates_alpha_and_mesh(self):
+        """The alpha-less call continues to estimate alpha and the mesh."""
         positions, charges, cell = create_simple_system(num_atoms=5)
-
-        cutoff = 5.0
         pbc = jnp.array([[True, True, True]])
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+            positions, 5.0, cell, pbc
         )
 
-        # Provide alpha but no mesh_dimensions or mesh_spacing
-        # Should use accuracy-based estimation
-        energies, forces = particle_mesh_ewald(
+        energies = particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+
+        assert energies.shape == (5,)
+        assert jnp.all(jnp.isfinite(energies))
+
+    def test_explicit_alpha_estimates_mesh_when_no_control_is_supplied(self):
+        """An explicit alpha still estimates the mesh when no control is supplied."""
+        positions, charges, cell = create_simple_system(num_atoms=5)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, 5.0, cell, pbc
+        )
+
+        energies = particle_mesh_ewald(
             positions=positions,
             charges=charges,
             cell=cell,
             alpha=0.3,
-            mesh_dimensions=None,
-            mesh_spacing=None,
             neighbor_matrix=neighbor_matrix,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
-            compute_forces=True,
-            accuracy=1e-4,
         )
 
         assert energies.shape == (5,)
-        assert forces.shape == (5, 3)
         assert jnp.all(jnp.isfinite(energies))
-        assert jnp.all(jnp.isfinite(forces))
 
-    def test_auto_mesh_from_alpha_estimation(self, device):
-        """Test mesh_dimensions auto-derived when alpha is auto-estimated."""
-        positions, charges, cell = create_simple_system(num_atoms=5)
-
-        cutoff = 5.0
+    def test_default_spline_order_resolves_to_five(self, device):
+        """Omitting the order uses the shared order-five PME default."""
+        positions = jnp.array([[2.1, 2.2, 2.3], [11.1, 11.2, 11.3]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array([20.0 * np.eye(3)], dtype=jnp.float64)
         pbc = jnp.array([[True, True, True]])
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+            positions, 5.0, cell, pbc
         )
+        kwargs = {
+            "positions": positions,
+            "charges": charges,
+            "cell": cell,
+            "alpha": 0.3,
+            "mesh_dimensions": (16, 16, 16),
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "compute_forces": True,
+        }
 
-        # alpha=None triggers estimate_pme_parameters which sets alpha AND mesh_dimensions
-        energies, forces = particle_mesh_ewald(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            alpha=None,  # Triggers auto-estimation
-            mesh_dimensions=None,  # Will be set from params
-            mesh_spacing=None,
-            neighbor_matrix=neighbor_matrix,
-            neighbor_matrix_shifts=neighbor_matrix_shifts,
-            compute_forces=True,
-        )
+        # Energy-only gather sums stencil entries with atomics. Disjoint spread
+        # stencils and the fused per-atom energy/force gather make this exact
+        # default-resolution comparison deterministic.
+        with pytest.warns(DeprecationWarning):
+            jax.block_until_ready(particle_mesh_ewald(**kwargs))
+        with pytest.warns(DeprecationWarning):
+            default_result = jax.block_until_ready(particle_mesh_ewald(**kwargs))
+        with pytest.warns(DeprecationWarning):
+            explicit_result = jax.block_until_ready(
+                particle_mesh_ewald(**kwargs, spline_order=5)
+            )
 
-        assert energies.shape == (5,)
-        assert forces.shape == (5, 3)
-        assert jnp.all(jnp.isfinite(energies))
-        assert jnp.all(jnp.isfinite(forces))
+        for actual, expected in zip(default_result, explicit_result, strict=True):
+            assert jnp.array_equal(actual, expected)
 
 
 ###########################################################################################
@@ -2986,8 +3169,8 @@ class TestPMEJIT:
         with pytest.raises(ValueError, match="explicit mesh_dimensions"):
             jitted_full_pme(positions, cell)
 
-    def test_jit_full_pme_requires_explicit_mesh_dimensions_for_auto_mesh(self):
-        """JIT full PME rejects accuracy-based mesh sizing with explicit alpha."""
+    def test_jit_full_pme_requires_explicit_mesh_dimensions(self):
+        """JIT full PME rejects explicit alpha without an explicit mesh."""
         positions, charges, cell = create_simple_system(num_atoms=4)
         pbc = jnp.array([[True, True, True]])
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
@@ -3008,8 +3191,8 @@ class TestPMEJIT:
         with pytest.raises(ValueError, match="explicit mesh_dimensions"):
             jitted_full_pme(positions, cell)
 
-    def test_jit_full_pme_requires_explicit_mesh_dimensions_for_auto_estimation(self):
-        """JIT full PME rejects accuracy-based mesh inference clearly."""
+    def test_jit_full_pme_requires_explicit_alpha_and_mesh(self):
+        """JIT full PME points missing setup to the eager checked planner."""
         positions, charges, cell = create_simple_system(num_atoms=4)
         pbc = jnp.array([[True, True, True]])
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
@@ -3034,8 +3217,8 @@ class TestPMEJIT:
         assert "explicit alpha" in message
         assert "explicit mesh_dimensions" in message
 
-    def test_jit_full_pme_requires_explicit_alpha_for_auto_estimation(self):
-        """JIT full PME rejects alpha auto-estimation even with explicit mesh."""
+    def test_jit_full_pme_requires_explicit_alpha_with_explicit_mesh(self):
+        """JIT full PME rejects a missing alpha even with an explicit mesh."""
         positions, charges, cell = create_simple_system(num_atoms=4)
         pbc = jnp.array([[True, True, True]])
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(

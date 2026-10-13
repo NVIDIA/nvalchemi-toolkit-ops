@@ -17,6 +17,7 @@
 
 import inspect
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 import torch
@@ -25,6 +26,39 @@ import nvalchemiops.torch.interactions.electrostatics as electrostatics
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _compiled_direct_output_deprecation_signal,
 )
+from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+    generate_k_squared_pme,
+)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        name
+        for name in electrostatics.__all__
+        if callable(getattr(electrostatics, name))
+        and "spline_order"
+        in inspect.signature(getattr(electrostatics, name)).parameters
+        and inspect.signature(getattr(electrostatics, name))
+        .parameters["spline_order"]
+        .default
+        is not inspect.Parameter.empty
+    ],
+)
+def test_public_pme_defaults_use_order_five(name: str) -> None:
+    """Setup, execution, and cache APIs share the validated PME default."""
+    assert (
+        inspect.signature(getattr(electrostatics, name))
+        .parameters["spline_order"]
+        .default
+        == 5
+    )
+
+
+def test_top_level_exports_k_squared_pme_generator() -> None:
+    """The memory-saving reciprocal-grid helper is available at the public level."""
+    assert electrostatics.generate_k_squared_pme is generate_k_squared_pme
+    assert "generate_k_squared_pme" in electrostatics.__all__
 
 
 def test_pme_positional_slots_preserve_031_order() -> None:
@@ -47,7 +81,10 @@ def test_pme_positional_slots_preserve_031_order() -> None:
         "volume",
     ]
 
-    full_params = list(inspect.signature(electrostatics.particle_mesh_ewald).parameters)
+    full_signature = inspect.signature(electrostatics.particle_mesh_ewald)
+    assert full_signature.parameters["spline_order"].default == 5
+    assert get_type_hints(electrostatics.particle_mesh_ewald)["spline_order"] is int
+    full_params = list(full_signature.parameters)
     assert full_params[
         full_params.index("k_squared") + 1 : full_params.index("cell_inv_t")
     ] == [
@@ -65,6 +102,9 @@ def test_pme_positional_slots_preserve_031_order() -> None:
         "pbc",
         "slab_correction",
     ]
+    assert (
+        full_signature.parameters["cell_inv_t"].kind is inspect.Parameter.KEYWORD_ONLY
+    )
 
 
 def test_ewald_miller_bounds_is_keyword_only_after_legacy_slots() -> None:

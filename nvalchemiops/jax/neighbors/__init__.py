@@ -103,6 +103,12 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
+from nvalchemiops.jax.neighbors.prepared_neighbor_list import (
+    NeighborListState,
+    _execute_prepared_neighbor_list,
+    check_neighbor_list_state,
+    prepare_neighbor_list,
+)
 
 # Rebuild detection
 from nvalchemiops.jax.neighbors.rebuild_detection import (
@@ -120,11 +126,12 @@ from nvalchemiops.neighbors.base_dispatch import (
     neighbor_list_strategy_run_args,
 )
 from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
+from nvalchemiops.neighbors.cell_list._grid_selection import _validate_grid_policy
 
 
 def neighbor_list(
     positions: jax.Array,
-    cutoff: float,
+    cutoff: float | None = None,
     cell: jax.Array | None = None,
     pbc: jax.Array | None = None,
     batch_idx: jax.Array | None = None,
@@ -135,15 +142,19 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
+    *,
+    grid_policy: str = "configured",
+    state: NeighborListState | None = None,
     **kwargs: Any,
 ):
-    """Compute an eager neighbor list using the appropriate method.
+    """Compute an eager neighbor list or execute a prepared route.
 
-    This convenience entry point may select an algorithm, inspect host values,
-    and allocate buffers. It is therefore intentionally an eager API, not a
-    supported ``jax.jit`` boundary. For compiled execution, select a method
-    outside ``jax.jit`` and call its method-specific public function with fixed
-    capacities and, where useful, reusable buffers.
+    Without ``state``, this convenience entry point may select an algorithm,
+    inspect host values, and allocate buffers. That dispatcher is intentionally
+    eager and is not a supported ``jax.jit`` boundary. With a state returned by
+    :func:`prepare_neighbor_list`, it executes the resolved route and returns
+    ``(results, next_state)``. Method-specific functions with explicit buffers
+    and capacities remain the lower-overhead compiled interface.
 
     Parameters
     ----------
@@ -152,9 +163,10 @@ def neighbor_list(
         Each row represents one atom's (x, y, z) position.
         Unwrapped (box-crossing) coordinates are supported when PBC is used;
         the kernel wraps positions internally.
-    cutoff : float
+    cutoff : float, optional
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
+        May be omitted when ``state`` is supplied.
     cell : jax.Array, shape (3, 3) or (num_systems, 3, 3), optional
         Cell matrix defining the simulation box.
     pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool, optional
@@ -203,6 +215,21 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
+    grid_policy : {"configured", "adaptive"}, default "configured"
+        Grid-sizing policy for supported pair-centric cell-list paths.
+        ``"adaptive"`` opts into geometry/population-based grid selection;
+        ``"configured"`` derives cells per axis from cell dimensions and the
+        cutoff, then applies the configured per-axis minimum and available cell
+        capacity. Other neighbor methods retain their grid behavior. JAX
+        adaptive selection is eager-only.
+    state : NeighborListState, optional
+        State returned by :func:`prepare_neighbor_list`. Its fixed
+        configuration takes precedence. Prepared execution accepts positions,
+        an applicable current cell, selective ``rebuild_flags``, and current
+        ``pair_params`` as runtime inputs and returns ``(results, next_state)``.
+        A ``NeighborListState`` uses configured grid sizing. Adaptive
+        ``grid_policy`` is available only for eager calls without a
+        ``NeighborListState``.
     **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
@@ -265,8 +292,19 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
+            with PBC for full-row launch sizing. Every compact partial path,
+            including geometry and pair-output paths, ignores this bound.
             Can be provided to avoid CUDA synchronization.
+        target_indices : jax.Array, optional
+            Select central atoms for a compact partial neighbor list. Repeated
+            and empty valid targets are supported. Topology-only naive partial
+            calls may use CUDA ``method="naive_tile"`` explicitly.
+            ``method="naive"`` lets the direct naive family choose its strategy
+            automatically; ``method=None`` uses calibrated method selection.
+            Explicit tile rejects CPU. Distances, vectors, and pair-function
+            outputs are scalar-only and reject explicit tile. Eager calls reject
+            out-of-bounds indices; under ``jax.jit`` callers must prevalidate
+            them.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
             positions (and cell). Matrix layout is
@@ -345,8 +383,8 @@ def neighbor_list(
               for partial lists. Row ``r`` contains neighbors for atom ``r`` or
               ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
@@ -392,7 +430,19 @@ def neighbor_list(
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
     batch_cluster_tile_neighbor_list : Batched cluster-pair tile algorithm
+    prepare_neighbor_list : Prepare managed repeated execution
+    check_neighbor_list_state : Report sticky prepared-state failures
     """
+    _validate_grid_policy(grid_policy)
+    if state is not None:
+        if grid_policy == "adaptive":
+            raise ValueError(
+                "grid_policy='adaptive' is not supported with NeighborListState; "
+                "NeighborListState uses configured grid sizing"
+            )
+        return _execute_prepared_neighbor_list(positions, cell, state, kwargs=kwargs)
+    if cutoff is None:
+        raise ValueError("cutoff is required when state is not provided")
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
     if cutoff2 is not None:
@@ -531,6 +581,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
@@ -572,6 +623,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 strategy=selected_cell_strategy,
+                grid_policy=grid_policy,
                 atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
@@ -652,6 +704,9 @@ def neighbor_list(
 __all__ = [
     # High-level API
     "neighbor_list",
+    "NeighborListState",
+    "prepare_neighbor_list",
+    "check_neighbor_list_state",
     "estimate_neighbor_list_costs",
     "suggest_neighbor_list_method",
     # Unbatched neighbor list

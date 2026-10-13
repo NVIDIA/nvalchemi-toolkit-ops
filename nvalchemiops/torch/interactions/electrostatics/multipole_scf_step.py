@@ -837,7 +837,7 @@ def multipole_ewald_scf_step_energy(
 
     Cache requirements
     ------------------
-    ``cache`` must have been built with ``alpha`` (non-None):
+    ``cache`` must have been built with ``alpha`` (non-None)::
 
         cache = prepare_multipole_scf_cache(
             cell, sigma=sigma, alpha=alpha, k_cutoff=kcut

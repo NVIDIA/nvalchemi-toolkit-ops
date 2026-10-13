@@ -31,6 +31,7 @@ import torch
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     _generate_miller_indices,
     generate_ewald_miller_indices,
+    generate_k_squared_pme,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     k_vectors_from_miller_indices,
@@ -368,6 +369,207 @@ class TestKVectorsPME:
         assert k_squared_safe.shape == (16, 16, 9)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("batch_size", [1, 3])
+    def test_direct_k_squared_matches_vector_path(self, device, batch_size):
+        """Test separate squared components against Cartesian vectors."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        base = torch.tensor(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        cells = torch.stack([base * (1.0 + 0.1 * i) for i in range(batch_size)])
+        mesh_dims = (8, 10, 12)
+
+        _, expected = generate_k_vectors_pme(cells, mesh_dims)
+        actual = generate_k_squared_pme(cells, mesh_dims)
+
+        torch.testing.assert_close(actual, expected)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        ("dtype", "skew"),
+        [
+            (torch.float32, 1000.0),
+            (torch.float32, 10000.0),
+            (torch.float64, 10000.0),
+            (torch.float64, 1000000.0),
+        ],
+    )
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize("precomputed", [False, True])
+    def test_k_squared_preserves_small_skew_cell_modes(
+        self, device, dtype, skew, batched, precomputed
+    ):
+        """Small reciprocal modes survive cancellation in skew cells."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        cell = torch.tensor(
+            [[1.0, -skew, 0.0], [0.0, skew, 0.0], [0.0, 0.0, 1.0]],
+            dtype=dtype,
+            device=device,
+        )
+        if batched:
+            cell = torch.stack((cell, torch.diag(cell.new_tensor([8.0, 9.0, 10.0]))))
+        reciprocal_cell = (
+            2.0 * torch.pi * torch.linalg.inv(cell) if precomputed else None
+        )
+        _, expected = generate_k_vectors_pme(cell, (4, 4, 4), reciprocal_cell)
+        actual = generate_k_squared_pme(cell, (4, 4, 4), reciprocal_cell)
+
+        assert actual.shape == expected.shape
+        assert actual.dtype == dtype
+        rtol = 1e-6 if dtype == torch.float32 else 1e-12
+        nonzero = expected > 1e-12
+        torch.testing.assert_close(
+            actual[nonzero], expected[nonzero], rtol=rtol, atol=0.0
+        )
+        torch.testing.assert_close(
+            actual[..., 1, 3, 0], expected[..., 1, 3, 0], rtol=rtol, atol=0.0
+        )
+        assert torch.all(actual[..., 0, 0, 0] == actual.new_tensor(1e-12))
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize("precomputed", [False, True])
+    def test_k_squared_skew_cell_gradients_match_vector_path(
+        self, device, batched, precomputed
+    ):
+        """The small-mode cell derivative matches the Cartesian vector path."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        cell = torch.tensor(
+            [[1.0, -1000.0, 0.0], [0.0, 1000.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        if batched:
+            cell = torch.stack((cell, cell * 1.1))
+        cell.requires_grad_()
+
+        def loss(value, generator):
+            reciprocal_cell = (
+                2.0 * torch.pi * torch.linalg.inv(value) if precomputed else None
+            )
+            result = generator(value, (4, 4, 4), reciprocal_cell)
+            squared = result[1] if isinstance(result, tuple) else result
+            return squared[..., 1, 3, 0].sum()
+
+        expected = torch.autograd.grad(loss(cell, generate_k_vectors_pme), cell)[0]
+        actual = torch.autograd.grad(loss(cell, generate_k_squared_pme), cell)[0]
+
+        assert torch.isfinite(actual).all()
+        torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        "generator", [generate_k_vectors_pme, generate_k_squared_pme]
+    )
+    @pytest.mark.parametrize("argument", ["cell", "reciprocal_cell"])
+    @pytest.mark.parametrize(
+        "shape", [(2, 2), (3, 4), (4, 3), (1, 2, 2), (3,), (1, 1, 3, 3)]
+    )
+    def test_pme_cell_shapes_are_validated(self, device, generator, argument, shape):
+        """Both PME generators reject malformed direct and reciprocal cells."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        cell = torch.eye(3, dtype=torch.float64, device=device)
+        malformed = torch.zeros(shape, dtype=cell.dtype, device=device)
+        kwargs = {"cell": cell, "reciprocal_cell": None}
+        kwargs[argument] = malformed
+
+        with pytest.raises(ValueError, match=f"^{argument} must have shape"):
+            generator(mesh_dimensions=(4, 4, 4), **kwargs)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_vector_path_accepts_single_precomputed_reciprocal_cell(self, device):
+        """A documented 2-D reciprocal cell matches both implicit paths."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        cell = torch.tensor(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        mesh_dims = (8, 10, 12)
+
+        expected = generate_k_vectors_pme(cell, mesh_dims)
+        reciprocal_cell = 2.0 * torch.pi * torch.linalg.inv(cell)
+        actual = generate_k_vectors_pme(
+            cell,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cell,
+        )
+        expected_squared = generate_k_squared_pme(cell, mesh_dims)
+        actual_squared = generate_k_squared_pme(
+            cell,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cell,
+        )
+
+        torch.testing.assert_close(actual[0], expected[0])
+        torch.testing.assert_close(actual[1], expected[1])
+        torch.testing.assert_close(actual_squared, expected_squared)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_precomputed_reciprocal_cell_accepts_matching_batch(self, device):
+        """Matching batched reciprocal cells preserve both PME grid paths."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        base = torch.tensor(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        cells = torch.stack((base, base * 1.1))
+        mesh_dims = (8, 10, 12)
+        reciprocal_cells = 2.0 * torch.pi * torch.linalg.inv(cells)
+
+        expected_vectors, expected_squared = generate_k_vectors_pme(cells, mesh_dims)
+        actual_vectors, actual_squared = generate_k_vectors_pme(
+            cells,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cells,
+        )
+        direct_squared = generate_k_squared_pme(
+            cells,
+            mesh_dims,
+            reciprocal_cell=reciprocal_cells,
+        )
+
+        assert actual_vectors.shape[0] == 2
+        torch.testing.assert_close(actual_vectors, expected_vectors)
+        torch.testing.assert_close(actual_squared, expected_squared)
+        torch.testing.assert_close(direct_squared, expected_squared)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        "generator",
+        (generate_k_vectors_pme, generate_k_squared_pme),
+    )
+    def test_precomputed_reciprocal_cell_rejects_mismatched_batch(
+        self, device, generator
+    ):
+        """A single reciprocal cell cannot describe a multi-cell batch."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        base = torch.tensor(
+            [[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        cells = torch.stack((base, base * 1.1))
+        reciprocal_cell = 2.0 * torch.pi * torch.linalg.inv(base)
+
+        with pytest.raises(ValueError, match="batch dimension must match"):
+            generator(cells, (8, 10, 12), reciprocal_cell=reciprocal_cell)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_k_squared_positive(self, device):
         """Test that k_squared_safe is always positive (avoids division by zero)."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -512,6 +714,27 @@ class TestKVectorGradients:
 
         assert cell.grad is not None
         assert torch.isfinite(cell.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_direct_k_squared_cell_gradient_matches_vector_path(self, device):
+        """Test separate squared-component gradients against the vector path."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        cell = torch.tensor(
+            [[[10.0, 0.7, 0.2], [0.0, 12.0, 0.4], [0.0, 0.0, 14.0]]],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        mesh_dims = (8, 10, 12)
+
+        _, vector_k_squared = generate_k_vectors_pme(cell, mesh_dims)
+        expected = torch.autograd.grad(vector_k_squared.sum(), cell)[0]
+        direct_k_squared = generate_k_squared_pme(cell, mesh_dims)
+        actual = torch.autograd.grad(direct_k_squared.sum(), cell)[0]
+
+        torch.testing.assert_close(actual, expected)
 
 
 if __name__ == "__main__":

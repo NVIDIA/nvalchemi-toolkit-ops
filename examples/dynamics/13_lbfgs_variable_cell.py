@@ -192,7 +192,7 @@ state = lbfgs_prepare_state(
 
 # %%
 # Prepare the Variable-Cell Chart
-# ------------------------------
+# -------------------------------
 #
 # One call. Hand it the ordinary ``atom_ptr`` you already have and the aligned
 # cells, and it derives the packed topology, captures the reference cell that

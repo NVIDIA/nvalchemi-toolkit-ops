@@ -12,14 +12,12 @@ and we encourage users to benchmark on their own systems of interest.
 ```
 
 ```{note}
-Every PME and Ewald row measures the same complete differentiable workload:
+Every measured PME and Ewald row uses the same complete differentiable workload:
 evaluate energy, then derive forces (``-dE/dR``) and charge gradients
 (``dE/dq``) through framework autodiff. The reportable default times this full
-workload once; real/reciprocal component profiling is opt-in. Missing plotted
-points are retained as ``success=False`` CSV rows, typically with
-``error_type=OutOfMemoryError`` or ``SkippedAfterOOM``. Strict-accuracy PME
-rows that exceed XLA autotuning or cuFFT planning capacity use
-``error_type=JaxRuntimeError``.
+workload once; real/reciprocal component profiling is opt-in. Failed points
+are retained as ``success=False`` CSV rows with their failure status. The JAX
+tab below describes the completed Ewald collection and its capacity limits.
 ```
 
 ## How to Read These Charts
@@ -190,6 +188,14 @@ Memory
 
 :::{tab-item} JAX
 
+```{note}
+All 148 planned JAX Ewald cases were attempted: 135 measured, 13 reported
+``OutOfMemoryError``. No unmeasured points remain. All OOM cases contain
+131,072 total atoms: 12 failed during neighbor-list setup and one during the
+Ewald timing call. JAX memory is unavailable because this suite records memory
+through the Torch CUDA allocator, which does not measure JAX allocations.
+```
+
 `````{tab-set}
 
 ````{tab-item} CsCl
@@ -325,12 +331,11 @@ both forces and charge gradients. CSV metadata records
 ``compute_charge_gradients`` are both ``True``. There is no separate
 energy-plus-forces row.
 
-PME rows also record ``pme_cache_mode=full_static``. Both backends precompute
-fixed-cell volume, inverse-cell, reciprocal-vector, and spline-modulus metadata
-outside the timed region, matching the public API's steady-state fixed-cell
-workflow. System construction, parameter estimation, neighbor-list setup, and
-this static PME metadata preparation are therefore excluded from per-call
-timings.
+PME rows record ``pme_cache_mode=k_squared_only`` or
+``shared_cell_k_squared`` for repeated cells. Both backends precompute fixed-cell
+volume, inverse-cell, squared reciprocal lengths, and spline moduli outside the
+timed region. System construction, parameter selection, neighbor-list setup,
+and fixed-cell metadata preparation are excluded from per-call timings.
 
 The workload and configured accuracy are aligned, but the timing harnesses are
 not identical: Torch uses CUDA events around the high-level call, while JAX
@@ -491,9 +496,9 @@ framework or allocator overheads are equivalent.
 | Accuracies | $10^{-4}$ / $10^{-6}$ |
 | Methods | PME, Ewald summation |
 | System Type | CsCl supercells (programmatic), NH₃ (PDB) |
-| Neighbor List | `batch_cell_list` setup for all configurations, built outside the timed electrostatics region; JAX requests the direct atom-centric strategy |
+| Neighbor List | `batch_cell_list` with direct atom-centric construction, built outside the timed electrostatics region |
 | Warmup Iterations | 3 |
-| Timing Iterations | 10 |
+| Timing Iterations | Five groups of 10 calls; arithmetic mean across groups |
 | Component Profiling | Disabled for reportable runs |
 | Precision | `float64` |
 
@@ -504,19 +509,33 @@ diagnostic fields are NaN and their timing methods are `not_measured`.
 
 ### Ewald/PME Parameters
 
-Parameters are automatically estimated using accuracy-based parameter estimation:
+PME uses the public parameter estimator before constructing the neighbor list.
+The benchmark configuration caps the real-space cutoff at 9 Å and fixes the
+B-spline order at 5. Each case resolves its alpha and mesh from the cell and
+requested accuracy. Torch and JAX share the accuracy-based mesh rounding rule:
+each axis first rounds upward to the least 2/3/5/7-smooth dimension that covers
+the spline support. The selector then tries to snap to the grid: it prefers
+power-of-two dimensions when the complete mesh adds at most 25% more points,
+otherwise tries smooth dimensions divisible by four within the same budget,
+then keeps the smallest smooth mesh. Public sizing APIs expose
+`fft_padding_fraction=0.25`; `0` keeps the smallest smooth mesh. This setup uses
+integer arithmetic and requires no runtime calibration or FFT planning.
+
+CSV rows record the resolved parameters, input content hashes, source, and
+timing settings. Torch allocator peaks are measured separately. Direct Ewald
+retains its independent accuracy-based estimator.
 
 | Parameter | Description |
 | --------- | ----------- |
-| `alpha` | Ewald splitting parameter (auto-estimated) |
+| `alpha` | Ewald splitting parameter |
 | `k_cutoff` | Reciprocal-space cutoff for Ewald (auto-estimated) |
-| `real_space_cutoff` | Real-space cutoff distance (auto-estimated) |
-| `mesh_dimensions` | PME mesh grid size (auto-estimated) |
-| `spline_order` | B-spline interpolation order (4) |
+| `real_space_cutoff` | Estimated PME cutoff capped by configuration, or estimated direct-Ewald cutoff |
+| `mesh_dimensions` | PME mesh dimensions selected from the accuracy-based sizing formula and FFT snap preferences |
+| `spline_order` | Configured PME B-spline order (5 in the reportable suite) |
 
 ## Running Your Own Benchmarks
 
-Run from the repository root. The reportable, merge-gate surface is
+Run from the repository root. The reportable benchmark runner is
 ``benchmark_electrostatics_suite.py`` with ``benchmark_config.yaml``. The YAML
 already enables PME and Ewald; pass ``--methods pme`` or ``--methods ewald``
 to benchmark only one.
@@ -546,7 +565,7 @@ python -m benchmarks.interactions.electrostatics.benchmark_electrostatics_suite 
 The ``benchmark_electrostatics.py`` extended runner is separate from the
 reportable suite. It covers slab-corrected Ewald/PME, DSF, optional reference
 backends, and multipoles, and writes a different GPU/dtype-specific CSV schema. It is not
-invoked by ``benchmarks.benchmark_suite`` or by the reportable merge gate, and
+invoked by ``benchmarks.benchmark_suite`` or by the reportable runner, and
 its outputs are not inputs to the ``el-*.csv`` plots on this page.
 
 This runner uses optional helpers imported through ``benchmarks.utils`` and
@@ -554,12 +573,30 @@ This runner uses optional helpers imported through ``benchmarks.utils`` and
 ``pymatgen``, ``rdkit``, and ``loguru``, with ``make docs-install-benchmarks``
 or directly from ``benchmarks/benchmark-requires.txt``.
 
-The shipped optional configurations are distinct protocols:
+The shipped optional configurations are distinct protocols (the shared
+``benchmark_config_`` prefix is omitted in the table):
 
-| Configuration | Backends and methods | Warmups / timings | Precision | Default measured work |
-| ------------- | -------------------- | ----------------- | --------- | --------------------- |
-| ``benchmark_config_extended.yaml`` | Toolkit-Ops Torch/JAX and optional ``torchpme`` for Ewald/PME; Toolkit-Ops Torch and ``torch_dsf`` for DSF | 5 / 10 | ``float32`` | Full, real, and reciprocal components; forces and virial enabled; 12 Å real-space cutoff |
-| ``benchmark_config_multipole.yaml`` | Torch multipole Ewald and PME, ``l_max=1`` | 3 / 10 | ``float64`` | Compiled reciprocal component; forces enabled, virial disabled |
+```{list-table}
+:header-rows: 1
+:widths: 20 30 12 12 26
+
+* - Configuration
+  - Backends and methods
+  - Warmups / timings
+  - Precision
+  - Default work
+* - ``extended.yaml``
+  - Toolkit-Ops Torch/JAX and optional ``torchpme`` for Ewald/PME;
+    Toolkit-Ops Torch and ``torch_dsf`` for DSF
+  - 5 / 10
+  - ``float32``
+  - Full, real, and reciprocal components; forces and virial; 12 Å real-space cutoff
+* - ``multipole.yaml``
+  - Torch multipole Ewald and PME, ``l_max=1``
+  - 3 / 10
+  - ``float64``
+  - Compiled reciprocal component; forces only
+```
 
 These settings describe the optional CSVs only. They must not be compared as
 if they were rows from the reportable energy/forces/charge-gradient protocol.

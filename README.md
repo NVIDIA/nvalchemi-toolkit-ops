@@ -18,15 +18,14 @@ kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 - **Neighbor lists**
   - Naive, cell-list, and tiled cluster-pair methods
   - Matrix and COO formats
-  - Automatic method selection
-  - Custom pair functions
+  - Automatic method selection and custom pair functions
 - **Molecular dynamics**
   - NVE, NVT, NPT, and NPH ensembles
   - Langevin, Nosé-Hoover Chain, and velocity-rescaling thermostats
-- **Geometry optimization with FIRE, FIRE2, and L-BFGS**, supporting coordinate and
+- **Geometry optimization with FIRE2 and L-BFGS**, supporting coordinate and
   lattice relaxation
 - **Interatomic interactions**
-  - DFT-D3(BJ) dispersion
+  - Standard and periodic Fourier DFT-D3(BJ) dispersion
   - DSF, Ewald, and PME electrostatics
   - Ewald and PME for charges and multipoles (Warp/PyTorch)
 - **Differentiable electrostatics for PyTorch training**, with automatic
@@ -221,15 +220,6 @@ uv pip install nvalchemi-toolkit-ops \
 
 See the [installation guide](https://nvidia.github.io/nvalchemi-toolkit-ops/userguide/about/install.html#cuda-13-installation)
 for details.
-
-## Roadmap
-
-Features planned for the next release:
-
-- PME dispersion
-- Faster short-range calculations for small systems
-- Performance improvements for neighbor lists and multipole
-  electrostatics
 
 ## Contributions & Disclaimers
 

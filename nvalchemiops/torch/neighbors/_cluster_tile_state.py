@@ -20,9 +20,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import torch
+import warp as wp
 
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    prepare_cluster_tile_geometry as wp_prepare_cluster_tile_geometry,
+)
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
+from nvalchemiops.torch.neighbors._fixed_cell import _FixedCellGeometry
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
     _batch_cluster_tile_neighbor_list_impl,
@@ -38,16 +44,16 @@ from nvalchemiops.torch.neighbors.cluster_tile import (
 )
 
 __all__ = [
-    "ClusterTileState",
-    "prepare_cluster_tile",
+    "_ClusterTileStorage",
+    "_prepare_cluster_tile_storage",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class ClusterTileState:
+class _ClusterTileStorage:
     """Fixed configuration and reusable storage for cluster-tile execution.
 
-    Create a state with :func:`prepare_cluster_tile`. Configuration attributes
+    Create a state with :func:`_prepare_cluster_tile_storage`. Configuration attributes
     cannot be reassigned. ``neighbor_vectors`` and ``neighbor_distances`` are
     borrowed, non-differentiable snapshot buffers that a later execution may
     overwrite. When matrix geometry requires autograd, execution returns fresh
@@ -74,6 +80,7 @@ class ClusterTileState:
     fill_value: int
     return_vectors: bool
     return_distances: bool
+    pair_fn: object | None
     max_tiles_per_group: int
     selective: bool
     _batch_ptr: torch.Tensor | None = field(repr=False)
@@ -83,6 +90,11 @@ class ClusterTileState:
     _topology: tuple[torch.Tensor, ...] = field(repr=False)
     _neighbor_vectors: torch.Tensor | None = field(repr=False)
     _neighbor_distances: torch.Tensor | None = field(repr=False)
+    _pair_energies: torch.Tensor | None = field(repr=False)
+    _pair_forces: torch.Tensor | None = field(repr=False)
+    _inv_cell: torch.Tensor = field(repr=False)
+    fixed_cell: bool
+    _fixed_cell_geometry: _FixedCellGeometry | None = field(repr=False)
     _selective_state: tuple[torch.Tensor, ...] = field(repr=False)
 
     @property
@@ -176,7 +188,8 @@ def _allocate_matrix_topology(
     return (*primary, *allocate_one()) if dual_cutoff else primary
 
 
-def prepare_cluster_tile(
+@scoped_torch_warp_stream
+def _prepare_cluster_tile_storage(
     positions: torch.Tensor,
     cutoff: float,
     cell: torch.Tensor,
@@ -190,8 +203,10 @@ def prepare_cluster_tile(
     cutoff2: float | None = None,
     return_vectors: bool = False,
     return_distances: bool = False,
+    pair_fn: object | None = None,
     max_tiles_per_group: int | None = None,
-) -> ClusterTileState:
+    fixed_cell: bool = False,
+) -> _ClusterTileStorage:
     """Allocate reusable storage for a fixed cluster-tile configuration.
 
     Parameters
@@ -231,7 +246,7 @@ def prepare_cluster_tile(
 
     Returns
     -------
-    ClusterTileState
+    _ClusterTileStorage
         Frozen configuration with private reusable topology and scratch.
 
     Notes
@@ -261,8 +276,8 @@ def prepare_cluster_tile(
         raise ValueError(
             "cutoff2 cannot be combined with return_vectors or return_distances"
         )
-    if selective and format != "matrix":
-        raise ValueError("selective prepared execution supports matrix output only")
+    if selective and format == "tile":
+        raise ValueError("selective prepared execution does not support tile output")
     if selective and (return_vectors or return_distances):
         raise ValueError("selective prepared execution does not support geometry")
     if format == "tile" and (return_vectors or return_distances):
@@ -334,11 +349,32 @@ def prepare_cluster_tile(
     elif format == "coo":
         if max_pairs is None:
             max_pairs = num_atoms * max_neighbors
+        pair_offsets = None
+        pair_counts = None
+        if protected_batch_ptr is not None:
+            _, _, _, pair_offsets = estimate_batch_cluster_tile_segments(
+                protected_batch_ptr,
+                max_neighbors,
+                max_tiles_per_group=max_tiles_per_group,
+            )
+            max_pairs = int(pair_offsets[-1].item())
+            pair_counts = torch.zeros(
+                protected_batch_ptr.numel() - 1,
+                dtype=torch.int32,
+                device=positions.device,
+            )
+        elif selective:
+            pair_offsets = torch.tensor(
+                [0, max_pairs], dtype=torch.int32, device=positions.device
+            )
+            pair_counts = torch.zeros(1, dtype=torch.int32, device=positions.device)
         topology = (
             torch.empty((2, max_pairs), dtype=torch.int32, device=positions.device),
             torch.empty((max_pairs, 3), dtype=torch.int32, device=positions.device),
             torch.zeros(1, dtype=torch.int32, device=positions.device),
         )
+        if pair_offsets is not None and pair_counts is not None:
+            topology = (*topology, pair_offsets, pair_counts)
 
     geometry_shape = (
         (num_atoms, max_neighbors) if format == "matrix" else (max_pairs or 0,)
@@ -355,29 +391,115 @@ def prepare_cluster_tile(
         if return_distances
         else None
     )
+    pair_shape = geometry_shape
+    pair_energies = (
+        torch.empty(pair_shape, dtype=positions.dtype, device=positions.device)
+        if pair_fn is not None
+        else None
+    )
+    pair_forces = (
+        torch.empty((*pair_shape, 3), dtype=positions.dtype, device=positions.device)
+        if pair_fn is not None
+        else None
+    )
+    inv_cell = (
+        torch.empty_like(cell)
+        if protected_batch_ptr is not None
+        else torch.empty((3, 3), dtype=positions.dtype, device=positions.device)
+    )
+    fixed_cell_geometry = None
+    if fixed_cell:
+        cell_mat = cell[0] if protected_batch_ptr is None and cell.ndim == 3 else cell
+        inv_cell_mat, info = torch.linalg.inv_ex(cell_mat.detach(), check_errors=False)
+        torch._assert_async((info == 0).all(), "cell matrix must be non-singular")
+        inv_cell.copy_(inv_cell_mat.detach())
+        cell_batch = (
+            cell_mat.detach().unsqueeze(0) if cell_mat.ndim == 2 else cell_mat.detach()
+        )
+        inv_cell_batch = inv_cell.reshape(-1, 3, 3)
+        qr = torch.empty(
+            (cell_batch.shape[0], 15), dtype=torch.float32, device=positions.device
+        )
+        axis_aligned = torch.empty(
+            cell_batch.shape[0], dtype=torch.bool, device=positions.device
+        )
+        fractional_rounding_certified = torch.empty_like(axis_aligned)
+        qr_height_certified = torch.empty_like(axis_aligned)
+        bbox_cutoff_bounds = torch.empty(
+            (cell_batch.shape[0], 3), dtype=torch.float32, device=positions.device
+        )
+        wp_prepare_cluster_tile_geometry(
+            cell=wp.from_torch(
+                cell_batch.contiguous(),
+                dtype=wp.mat33f,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            inv_cell=wp.from_torch(
+                inv_cell_batch.contiguous(),
+                dtype=wp.mat33f,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            outer_cutoff_sq=float(build_cutoff * build_cutoff),
+            qr=wp.from_torch(
+                qr, dtype=wp.float32, requires_grad=False, return_ctype=True
+            ),
+            axis_aligned=wp.from_torch(
+                axis_aligned, dtype=wp.bool, requires_grad=False, return_ctype=True
+            ),
+            fractional_rounding_certified=wp.from_torch(
+                fractional_rounding_certified,
+                dtype=wp.bool,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            qr_height_certified=wp.from_torch(
+                qr_height_certified,
+                dtype=wp.bool,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            bbox_cutoff_bounds=wp.from_torch(
+                bbox_cutoff_bounds,
+                dtype=wp.float32,
+                requires_grad=False,
+                return_ctype=True,
+            ),
+            device=str(positions.device),
+        )
+        fixed_cell_geometry = _FixedCellGeometry(
+            inv_cell=inv_cell.reshape(-1, 3, 3),
+            cell=cell_batch.contiguous(),
+            qr=qr,
+            axis_aligned=axis_aligned,
+            fractional_rounding_certified=fractional_rounding_certified,
+            qr_height_certified=qr_height_certified,
+            bbox_cutoff_bounds=bbox_cutoff_bounds,
+        )
     selective_state: tuple[torch.Tensor, ...] = ()
+    if protected_batch_ptr is not None and (selective or format == "coo"):
+        _, tile_offsets, _, _ = estimate_batch_cluster_tile_segments(
+            protected_batch_ptr,
+            max_neighbors,
+            max_tiles_per_group=max_tiles_per_group,
+        )
+        if int(tile_offsets[-1].item()) > scratch[16].numel():
+            raise RuntimeError("prepared tile segments exceed scratch capacity")
+        tile_counts = torch.zeros(
+            protected_batch_ptr.numel() - 1,
+            dtype=torch.int32,
+            device=positions.device,
+        )
+        selective_state = (tile_offsets, tile_counts)
     if selective:
         initialized = torch.zeros(
             (protected_batch_ptr.numel() - 1 if protected_batch_ptr is not None else 1),
             dtype=torch.bool,
             device=positions.device,
         )
-        selective_state = (initialized,)
-        if protected_batch_ptr is not None:
-            _, tile_offsets, _, _ = estimate_batch_cluster_tile_segments(
-                protected_batch_ptr,
-                max_neighbors,
-                max_tiles_per_group=max_tiles_per_group,
-            )
-            if int(tile_offsets[-1].item()) > scratch[16].numel():
-                raise RuntimeError("prepared tile segments exceed scratch capacity")
-            tile_counts = torch.zeros(
-                protected_batch_ptr.numel() - 1,
-                dtype=torch.int32,
-                device=positions.device,
-            )
-            selective_state = (initialized, tile_offsets, tile_counts)
-    return ClusterTileState(
+        selective_state = (initialized, *selective_state)
+    return _ClusterTileStorage(
         format=format,
         is_batched=protected_batch_ptr is not None,
         num_atoms=num_atoms,
@@ -395,6 +517,7 @@ def prepare_cluster_tile(
         fill_value=fill_value,
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
+        pair_fn=pair_fn,
         max_tiles_per_group=max_tiles_per_group,
         selective=selective,
         _batch_ptr=protected_batch_ptr,
@@ -404,16 +527,23 @@ def prepare_cluster_tile(
         _topology=topology,
         _neighbor_vectors=neighbor_vectors,
         _neighbor_distances=neighbor_distances,
+        _pair_energies=pair_energies,
+        _pair_forces=pair_forces,
+        _inv_cell=inv_cell,
+        fixed_cell=fixed_cell,
+        _fixed_cell_geometry=fixed_cell_geometry,
         _selective_state=selective_state,
     )
 
 
-def _execute_prepared_cluster_tile(
+def _execute_cluster_tile_storage(
     positions: torch.Tensor,
     cell: torch.Tensor,
-    state: ClusterTileState,
+    state: _ClusterTileStorage,
     *,
     rebuild_flags: torch.Tensor | None = None,
+    pair_params: torch.Tensor | None = None,
+    _live_cell: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Execute a previously prepared cluster-tile configuration.
 
@@ -423,8 +553,8 @@ def _execute_prepared_cluster_tile(
         Coordinates with the prepared shape, dtype, and device.
     cell : torch.Tensor
         Cell with the prepared shape, dtype, and device.
-    state : ClusterTileState
-        State returned by :func:`prepare_cluster_tile`. Capture it as a closure
+    state : _ClusterTileStorage
+        State returned by :func:`_prepare_cluster_tile_storage`. Capture it as a closure
         constant rather than passing it as a compiled graph input.
     rebuild_flags : torch.Tensor, optional
         Boolean flags of shape ``(num_systems,)``. Required by selective states
@@ -463,8 +593,8 @@ def _execute_prepared_cluster_tile(
     when every flag is false. Capture covers forward matrix topology, not
     geometry or backward execution.
     """
-    if not isinstance(state, ClusterTileState):
-        raise TypeError("state must be a ClusterTileState")
+    if not isinstance(state, _ClusterTileStorage):
+        raise TypeError("state must be a _ClusterTileStorage")
     if positions.shape != (state.num_atoms, 3):
         raise ValueError("positions shape does not match prepared state")
     if positions.dtype != state.dtype:
@@ -477,10 +607,15 @@ def _execute_prepared_cluster_tile(
         raise TypeError("cell dtype does not match prepared state")
     if cell.device != state.device:
         raise ValueError("cell device does not match prepared state")
+    if state.fixed_cell and state._fixed_cell_geometry is not None:
+        if state._fixed_cell_geometry.cell is None:
+            raise RuntimeError("prepared cluster geometry cache is missing its cell")
+        _live_cell = _live_cell if _live_cell is not None else cell
+        cell = state._fixed_cell_geometry.cell
     if rebuild_flags is not None and not state.selective:
-        raise ValueError("rebuild_flags requires a selective ClusterTileState")
+        raise ValueError("rebuild_flags requires a selective _ClusterTileStorage")
     if state.selective and rebuild_flags is None:
-        raise ValueError("selective ClusterTileState requires rebuild_flags")
+        raise ValueError("selective _ClusterTileStorage requires rebuild_flags")
     is_compiling = torch.compiler.is_compiling()
     if not is_compiling:
         with torch.cuda.device(state.device):
@@ -507,7 +642,7 @@ def _execute_prepared_cluster_tile(
         if is_compiling:
             torch._assert_async(
                 may_preserve.all(),
-                "selective ClusterTileState cannot preserve uninitialized systems",
+                "selective _ClusterTileStorage cannot preserve uninitialized systems",
             )
         else:
             summary = torch.where(
@@ -518,9 +653,16 @@ def _execute_prepared_cluster_tile(
             eager_rebuild_count = int(summary.item())
             if eager_rebuild_count < 0:
                 raise ValueError(
-                    "selective ClusterTileState cannot preserve uninitialized systems"
+                    "selective _ClusterTileStorage cannot preserve uninitialized systems"
                 )
             if eager_rebuild_count == 0:
+                if state.format == "coo":
+                    return (
+                        state._topology[0],
+                        state._topology[3],
+                        state._topology[4],
+                        state._topology[1],
+                    )
                 return state._topology
             initialized.copy_(torch.where(rebuild_flags, False, initialized))
 
@@ -545,6 +687,8 @@ def _execute_prepared_cluster_tile(
             "neighbor_list_shifts": topology[1],
             "pair_counter": topology[2],
         }
+        if state.selective or state.is_batched:
+            coo_kwargs.update(pair_offsets=topology[3], pair_counts=topology[4])
 
     if state.is_batched:
         (
@@ -583,6 +727,11 @@ def _execute_prepared_cluster_tile(
             return_distances=state.return_distances,
             neighbor_vectors=state.neighbor_vectors,
             neighbor_distances=state.neighbor_distances,
+            pair_fn=state.pair_fn,
+            pair_params=pair_params,
+            pair_energies=state._pair_energies,
+            pair_forces=state._pair_forces,
+            inv_cell_batch=state._inv_cell,
             max_tiles_per_group=state.max_tiles_per_group,
             sorted_atom_index=sorted_atom_index,
             sort_inv=sort_inv,
@@ -605,8 +754,19 @@ def _execute_prepared_cluster_tile(
             tile_system=tile_system,
             rebuild_flags=rebuild_flags,
             eager_rebuild_count=eager_rebuild_count,
-            tile_offsets=(state._selective_state[1] if state.selective else None),
-            tile_counts=(state._selective_state[2] if state.selective else None),
+            tile_offsets=(
+                state._selective_state[1 if state.selective else 0]
+                if state.selective or state.format == "coo"
+                else None
+            ),
+            tile_counts=(
+                state._selective_state[2 if state.selective else 1]
+                if state.selective or state.format == "coo"
+                else None
+            ),
+            force_compute_inv_cell=not state.fixed_cell,
+            _fixed_cell_geometry=state._fixed_cell_geometry,
+            _live_cell=_live_cell,
             **matrix_kwargs,
             **coo_kwargs,
         )
@@ -647,6 +807,11 @@ def _execute_prepared_cluster_tile(
         return_distances=state.return_distances,
         neighbor_vectors=state.neighbor_vectors,
         neighbor_distances=state.neighbor_distances,
+        pair_fn=state.pair_fn,
+        pair_params=pair_params,
+        pair_energies=state._pair_energies,
+        pair_forces=state._pair_forces,
+        inv_cell=state._inv_cell,
         max_tiles_per_group=state.max_tiles_per_group,
         sorted_atom_index=sorted_atom_index,
         morton_codes=morton_codes,
@@ -664,6 +829,9 @@ def _execute_prepared_cluster_tile(
         tile_col_group=tile_col_group,
         rebuild_flags=rebuild_flags,
         eager_rebuild_count=eager_rebuild_count,
+        force_compute_inv_cell=not state.fixed_cell,
+        _fixed_cell_geometry=state._fixed_cell_geometry,
+        _live_cell=_live_cell,
         **matrix_kwargs,
         **coo_kwargs,
     )

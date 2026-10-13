@@ -23,11 +23,34 @@ TWOPI = 2.0 * PI
 
 __all__ = [
     "generate_ewald_miller_indices",
+    "generate_k_squared_pme",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
     "generate_miller_indices",
     "k_vectors_from_miller_indices",
 ]
+
+
+def _prepare_reciprocal_cell_pme(
+    cell: jax.Array,
+    reciprocal_cell: jax.Array | None,
+) -> jax.Array:
+    """Return a batched reciprocal cell that matches ``cell``."""
+    if cell.ndim not in (2, 3) or cell.shape[-2:] != (3, 3):
+        raise ValueError("cell must have shape (3, 3) or (B, 3, 3)")
+    cell_3d = cell if cell.ndim == 3 else jnp.expand_dims(cell, 0)
+    if reciprocal_cell is None:
+        return TWOPI * jnp.linalg.inv(cell_3d)
+    if reciprocal_cell.ndim not in (2, 3) or reciprocal_cell.shape[-2:] != (3, 3):
+        raise ValueError("reciprocal_cell must have shape (3, 3) or (B, 3, 3)")
+    if reciprocal_cell.ndim == 2:
+        reciprocal_cell = jnp.expand_dims(reciprocal_cell, 0)
+    if reciprocal_cell.shape[0] != cell_3d.shape[0]:
+        raise ValueError(
+            "reciprocal_cell batch dimension must match cell batch dimension "
+            f"({reciprocal_cell.shape[0]} != {cell_3d.shape[0]})"
+        )
+    return reciprocal_cell
 
 
 def _prepare_k_cutoff(
@@ -319,7 +342,8 @@ def generate_k_vectors_pme(
         are optimal for FFT performance.
     reciprocal_cell : jax.Array, optional
         Precomputed reciprocal cell matrix (:math:`2\\pi \\cdot \\text{cell}^{-1}`). If provided,
-        skips the inverse computation. Shape (3, 3) or (B, 3, 3).
+        skips the inverse computation. Shape (3, 3) for one system or
+        (B, 3, 3) with the same batch size as ``cell``.
 
     Returns
     -------
@@ -361,12 +385,8 @@ def generate_k_vectors_pme(
     """
     dtype = cell.dtype
 
-    # Ensure cell has batch dimension
-    cell_3d = cell if cell.ndim == 3 else jnp.expand_dims(cell, 0)
-
     # Compute reciprocal lattice vectors (2*pi times reciprocal of direct lattice)
-    if reciprocal_cell is None:
-        reciprocal_cell = TWOPI * jnp.linalg.inv(cell_3d)
+    reciprocal_cell = _prepare_reciprocal_cell_pme(cell, reciprocal_cell)
 
     # Generate all combinations of Miller indices
     mesh_grid_x, mesh_grid_y, mesh_grid_z = mesh_dimensions
@@ -397,3 +417,72 @@ def generate_k_vectors_pme(
     k_squared_safe = jnp.where(k_squared > 1e-12, k_squared, jnp.array(1e-12))
 
     return k_vectors, k_squared_safe
+
+
+def generate_k_squared_pme(
+    cell: jax.Array,
+    mesh_dimensions: tuple[int, int, int],
+    reciprocal_cell: jax.Array | None = None,
+) -> jax.Array:
+    """Generate squared PME reciprocal-grid magnitudes without k-vectors.
+
+    This is the memory-efficient metadata path for PME calls that do not
+    request a reciprocal-space virial. It sums squared Cartesian components
+    separately and avoids materializing the Cartesian vector grid, whose final
+    axis is three times larger than the returned scalar grid.
+
+    Parameters
+    ----------
+    cell : jax.Array
+        Unit cell matrix with lattice vectors as rows. Shape ``(3, 3)`` for a
+        single system or ``(B, 3, 3)`` for a batch.
+    mesh_dimensions : tuple[int, int, int]
+        PME mesh dimensions ``(nx, ny, nz)``.
+    reciprocal_cell : jax.Array, optional
+        Precomputed reciprocal cell matrix ``2*pi*cell**-1``. Shape ``(3, 3)``
+        for one system or ``(B, 3, 3)`` with the same batch size as ``cell``.
+
+    Returns
+    -------
+    jax.Array
+        Safe squared magnitudes with shape ``(nx, ny, nz//2+1)`` for one
+        system or ``(B, nx, ny, nz//2+1)`` for a batch. The zero mode is set
+        to ``1e-12``.
+
+    See Also
+    --------
+    generate_k_vectors_pme : Generate both Cartesian vectors and magnitudes.
+    """
+    reciprocal_cell = _prepare_reciprocal_cell_pme(cell, reciprocal_cell)
+
+    nx, ny, nz = mesh_dimensions
+    kx = jnp.fft.fftfreq(nx, d=1.0, dtype=cell.dtype) * nx
+    ky = jnp.fft.fftfreq(ny, d=1.0, dtype=cell.dtype) * ny
+    kz = jnp.fft.rfftfreq(nz, d=1.0, dtype=cell.dtype) * nz
+
+    kx = kx[None, :, None, None]
+    ky = ky[None, None, :, None]
+    kz = kz[None, None, None, :]
+    # Form each Cartesian component before squaring to preserve small modes
+    # when large reciprocal contributions cancel in skew cells.
+    k_squared = None
+    for component in range(3):
+        k_component = (
+            reciprocal_cell[:, component, 0, None, None, None] * kx
+            + reciprocal_cell[:, component, 1, None, None, None] * ky
+            + reciprocal_cell[:, component, 2, None, None, None] * kz
+        )
+        component_squared = jnp.square(k_component)
+        k_squared = (
+            component_squared if k_squared is None else k_squared + component_squared
+        )
+    k_squared_safe = jnp.where(
+        k_squared > 1e-12,
+        k_squared,
+        jnp.asarray(1e-12, dtype=cell.dtype),
+    )
+    return (
+        jnp.squeeze(k_squared_safe, axis=0)
+        if k_squared_safe.shape[0] == 1
+        else k_squared_safe
+    )

@@ -24,6 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import warp as wp
 
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
@@ -35,19 +36,68 @@ pytestmark = requires_gpu
 naive_module = import_module("nvalchemiops.jax.neighbors.naive")
 
 
-def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
-    """Zero cutoff never retains a caller-provided count buffer."""
+@wp.func
+def _partial_pair_fn(
+    r_ij: wp.vec3f,
+    distance: wp.float32,
+    pair_params: wp.array2d(dtype=wp.float32),
+    i: int,
+    j: int,
+):
+    """Return a small pair output for partial-tile rejection coverage."""
+    return pair_params[i, 0] + pair_params[j, 0] + distance, -r_ij
+
+
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+@pytest.mark.parametrize("target_mode", ["full", "partial", "empty"])
+def test_nonpositive_cutoff_rejected_before_buffer_mutation(cutoff, target_mode):
+    """Nonpositive cutoffs fail before fixed COO buffers are consumed."""
     positions = jnp.zeros((2, 3), dtype=jnp.float32)
-    _list, _ptr, counts, metadata_valid = naive_neighbor_list(
+    target_indices = None
+    num_rows = positions.shape[0]
+    if target_mode == "partial":
+        target_indices = jnp.array([1], dtype=jnp.int32)
+        num_rows = target_indices.shape[0]
+    elif target_mode == "empty":
+        target_indices = jnp.empty((0,), dtype=jnp.int32)
+        num_rows = 0
+    matrix = jnp.full((num_rows, 1), 5, dtype=jnp.int32)
+    counts = jnp.full(num_rows, 7, dtype=jnp.int32)
+
+    with pytest.raises(ValueError, match="cutoff must be positive"):
+        naive_neighbor_list(
+            positions,
+            cutoff,
+            max_neighbors=1,
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            return_neighbor_list=True,
+            coo_capacity=2,
+            target_indices=target_indices,
+        )
+
+    np.testing.assert_array_equal(matrix, 5)
+    np.testing.assert_array_equal(counts, 7)
+
+
+def test_empty_partial_fixed_coo_preserves_static_contract():
+    """Empty compact rows retain fixed COO shapes and diagnostics."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    neighbor_list, neighbor_ptr, counts, metadata_valid = naive_neighbor_list(
         positions,
-        0.0,
-        max_neighbors=1,
-        num_neighbors=jnp.full(2, 7, dtype=jnp.int32),
+        1.0,
+        max_neighbors=4,
+        target_indices=jnp.empty((0,), dtype=jnp.int32),
+        strategy="scalar",
         return_neighbor_list=True,
-        coo_capacity=2,
+        coo_capacity=3,
     )
 
-    np.testing.assert_array_equal(counts, jnp.zeros(2, dtype=jnp.int32))
+    assert neighbor_list.shape == (2, 3)
+    assert neighbor_ptr.shape == (1,)
+    assert counts.shape == (0,)
+    np.testing.assert_array_equal(neighbor_list, 2)
+    np.testing.assert_array_equal(neighbor_ptr, 0)
     assert bool(metadata_valid)
 
 
@@ -72,8 +122,122 @@ def test_fixed_coo_retained_selective_rows_keep_aligned_raw_counts():
     assert bool(metadata_valid)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "buffer_name",
+    [
+        "inv_cell_buffer",
+        "positions_wrapped_buffer",
+        "per_atom_cell_offsets_buffer",
+    ],
+)
+@pytest.mark.parametrize("mismatch", ["shape", "dtype"])
+def test_wrapped_partial_tile_validates_supplied_scratch(buffer_name, mismatch):
+    """Wrapped compact tile rejects malformed caller scratch before launch."""
+    device = jax.devices("gpu")[0]
+    positions = jax.device_put(
+        jnp.array([[0.1, 0.1, 0.1], [0.6, 0.1, 0.1]], dtype=jnp.float32),
+        device,
+    )
+    cell = jax.device_put(jnp.eye(3, dtype=jnp.float32)[None] * 4.0, device)
+    pbc = jax.device_put(jnp.ones((1, 3), dtype=jnp.bool_), device)
+    targets = jax.device_put(jnp.array([0], dtype=jnp.int32), device)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+    expected_shape, expected_dtype = {
+        "inv_cell_buffer": ((1, 3, 3), jnp.float32),
+        "positions_wrapped_buffer": ((2, 3), jnp.float32),
+        "per_atom_cell_offsets_buffer": ((2, 3), jnp.int32),
+    }[buffer_name]
+    bad_shape = expected_shape[:-1] + (expected_shape[-1] + 1,)
+    scratch = jnp.zeros(
+        bad_shape if mismatch == "shape" else expected_shape,
+        dtype=(jnp.bool_ if mismatch == "dtype" else expected_dtype),
+    )
+
+    with pytest.raises(ValueError, match=buffer_name):
+        naive_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            target_indices=targets,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=int(max_shifts),
+            strategy="tile",
+            **{buffer_name: scratch},
+        )
+
+
 class TestNaiveNeighborList:
     """Test naive_neighbor_list function."""
+
+    @pytest.mark.parametrize(
+        ("dtype", "num_atoms", "expected_strategy"),
+        [
+            (jnp.float32, 1023, "scalar"),
+            (jnp.float32, 1024, "tile"),
+            (jnp.float64, 255, "scalar"),
+            (jnp.float64, 256, "tile"),
+        ],
+    )
+    def test_target_indices_auto_routes_eager_cuda(
+        self,
+        monkeypatch,
+        dtype,
+        num_atoms,
+        expected_strategy,
+    ):
+        """Concrete CUDA partial auto uses the shared dtype threshold."""
+        seen = []
+        device = jax.local_devices(backend="gpu")[0]
+
+        def fake_forward(positions, _cell, **kwargs):
+            """Record resolved routing without launching a Warp kernel."""
+            seen.append(kwargs["strategy"])
+            num_rows = int(kwargs["target_indices"].shape[0])
+            max_neighbors = kwargs["max_neighbors"]
+            neighbor_matrix = jnp.full(
+                (num_rows, max_neighbors),
+                kwargs["fill_value"],
+                dtype=jnp.int32,
+            )
+            num_neighbors = jnp.zeros((num_rows,), dtype=jnp.int32)
+            shifts = jnp.empty((0, 3), dtype=jnp.int32)
+            distances = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+            vectors = jnp.zeros(
+                (num_rows, max_neighbors, 3),
+                dtype=positions.dtype,
+            )
+            return naive_module._NeighborForwardOutput(
+                distances=distances,
+                vectors=vectors,
+                extra_outputs=(neighbor_matrix, num_neighbors, shifts),
+                i_idx=neighbor_matrix,
+                j_idx=neighbor_matrix,
+                shifts=jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32),
+                batch_idx=None,
+                active_mask=jnp.zeros((num_rows, max_neighbors), dtype=jnp.bool_),
+                matrix_shape=(num_rows, max_neighbors),
+            )
+
+        monkeypatch.setattr(naive_module, "_naive_pair_outputs_forward", fake_forward)
+        positions = jax.device_put(jnp.zeros((num_atoms, 3), dtype=dtype), device)
+        targets = jax.device_put(
+            jnp.array([num_atoms - 1, 0], dtype=jnp.int32),
+            device,
+        )
+
+        naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=4,
+            target_indices=targets,
+            strategy="auto",
+        )
+
+        assert seen == [expected_strategy]
 
     def test_single_atom_no_neighbors(self):
         """Test with single atom (should have no neighbors)."""
@@ -299,7 +463,7 @@ class TestNaiveNeighborList:
             )
 
     def test_target_indices_coo_uses_compact_source_rows(self):
-        """COO source rows are compact target rows, not original atom ids."""
+        """COO central rows are compact row ids, not original atom ids."""
         positions = jnp.array(
             [
                 [0.0, 0.0, 0.0],
@@ -325,6 +489,58 @@ class TestNaiveNeighborList:
             (0, 3),
             (1, 1),
         }
+
+    def test_empty_target_indices_pbc_matrix_uses_compact_buffers(self):
+        """Empty compact PBC targets return validated zero-row matrix outputs."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        targets = jnp.empty((0,), dtype=jnp.int32)
+        neighbor_matrix = jnp.full((0, 4), 99, dtype=jnp.int32)
+        num_neighbors = jnp.full((0,), 99, dtype=jnp.int32)
+        shifts = jnp.full((0, 4, 3), 99, dtype=jnp.int32)
+
+        matrix, counts, matrix_shifts = naive_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            target_indices=targets,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+            neighbor_matrix_shifts=shifts,
+        )
+
+        assert matrix.shape == (0, 4)
+        assert counts.shape == (0,)
+        assert matrix_shifts.shape == (0, 4, 3)
+
+    def test_empty_target_indices_pbc_coo_has_compact_pointer(self):
+        """Empty compact PBC targets return an empty COO list and one pointer."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+
+        neighbor_list, neighbor_ptr, neighbor_shifts = naive_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            target_indices=jnp.empty((0,), dtype=jnp.int32),
+            return_neighbor_list=True,
+        )
+
+        assert neighbor_list.shape == (2, 0)
+        assert neighbor_ptr.shape == (1,)
+        assert neighbor_shifts.shape == (0, 3)
+        np.testing.assert_array_equal(np.asarray(neighbor_ptr), [0])
 
     def test_target_indices_jit_uses_compact_user_buffers(self):
         """target_indices works under jax.jit with compact caller buffers."""
@@ -365,6 +581,36 @@ class TestNaiveNeighborList:
                 np.sort(np.asarray(partial_nm[row, :count])),
                 np.sort(np.asarray(full_nm[atom, : int(full_nn[atom])])),
             )
+
+    @pytest.mark.parametrize(
+        "targets", [jnp.array([-1], dtype=jnp.int32), jnp.array([3], dtype=jnp.int32)]
+    )
+    def test_target_indices_eager_bounds_are_rejected(self, targets):
+        """Concrete compact targets must name atoms in the input array."""
+        positions = jnp.zeros((3, 3), dtype=jnp.float32)
+        with pytest.raises(ValueError, match="in-bounds atom indices"):
+            naive_neighbor_list(positions, 1.0, target_indices=targets)
+
+    def test_target_indices_jit_invalid_rows_are_memory_safe(self):
+        """Traced invalid compact targets return empty rows through native guards."""
+        positions = jnp.zeros((3, 3), dtype=jnp.float32)
+
+        @jax.jit
+        def _run(targets):
+            return naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=2,
+                target_indices=targets,
+                strategy="scalar",
+            )
+
+        _, valid_counts = _run(jnp.array([0, 2], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(valid_counts), [2, 2])
+
+        matrix, counts = _run(jnp.array([-1, 3], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(counts), [0, 0])
+        np.testing.assert_array_equal(np.asarray(matrix), 3)
 
     def test_target_indices_jit_pbc_uses_precomputed_shift_metadata(self):
         """PBC target_indices JIT path uses caller-provided shift metadata."""
@@ -423,17 +669,191 @@ class TestNaiveNeighborList:
                 target_indices=jnp.array([2, 0], dtype=jnp.int32),
             )
 
-    def test_target_indices_rejects_tile_strategy(self):
-        """Explicit tiled naive mode does not support partial rows."""
-        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
-        with pytest.raises(NotImplementedError, match="target_indices"):
+    def test_target_indices_tile_rejects_geometry_buffers(self):
+        """Tiled partial rows reject supplied geometry buffers."""
+        positions = jnp.arange(72, dtype=jnp.float32).reshape(24, 3) * 0.05
+        target_indices = jnp.array([17, 2, 11], dtype=jnp.int32)
+        with pytest.raises(NotImplementedError, match="pair-output"):
             naive_neighbor_list(
                 positions,
-                1.0,
-                max_neighbors=4,
-                target_indices=jnp.array([0], dtype=jnp.int32),
+                0.5,
+                max_neighbors=16,
+                target_indices=target_indices,
+                neighbor_vectors=jnp.zeros((3, 16, 3), dtype=jnp.float32),
                 strategy="tile",
             )
+
+        with pytest.raises(NotImplementedError, match="pair-output"):
+            naive_neighbor_list(
+                positions,
+                0.5,
+                max_neighbors=16,
+                target_indices=target_indices,
+                pair_fn=_partial_pair_fn,
+                pair_params=jnp.ones((24, 1), dtype=jnp.float32),
+                strategy="tile",
+            )
+
+    def test_target_indices_tile_no_pbc_matches_scalar(self):
+        """Explicit tiled partial rows match scalar topology without PBC."""
+        positions = jnp.arange(72, dtype=jnp.float32).reshape(24, 3) * 0.05
+        target_indices = jnp.array([17, 2, 11], dtype=jnp.int32)
+
+        scalar_nm, scalar_nn = naive_neighbor_list(
+            positions,
+            0.5,
+            max_neighbors=16,
+            target_indices=target_indices,
+            strategy="scalar",
+        )
+        tile_nm, tile_nn = naive_neighbor_list(
+            positions,
+            0.5,
+            max_neighbors=16,
+            target_indices=target_indices,
+            strategy="tile",
+        )
+
+        np.testing.assert_array_equal(np.asarray(tile_nn), np.asarray(scalar_nn))
+        for row, count in enumerate(np.asarray(scalar_nn)):
+            np.testing.assert_array_equal(
+                np.sort(np.asarray(tile_nm[row, :count])),
+                np.sort(np.asarray(scalar_nm[row, :count])),
+            )
+
+    def test_target_indices_tile_coo_no_pbc_matches_scalar(self):
+        """Tiled topology-only partial rows support COO conversion."""
+        positions = jnp.arange(72, dtype=jnp.float32).reshape(24, 3) * 0.05
+        target_indices = jnp.array([17, 2, 11], dtype=jnp.int32)
+
+        scalar_list, scalar_ptr = naive_neighbor_list(
+            positions,
+            0.5,
+            max_neighbors=16,
+            target_indices=target_indices,
+            strategy="scalar",
+            return_neighbor_list=True,
+        )
+        tile_list, tile_ptr = naive_neighbor_list(
+            positions,
+            0.5,
+            max_neighbors=16,
+            target_indices=target_indices,
+            strategy="tile",
+            return_neighbor_list=True,
+        )
+
+        np.testing.assert_array_equal(np.asarray(tile_ptr), np.asarray(scalar_ptr))
+        assert sorted(map(tuple, np.asarray(tile_list).T.tolist())) == sorted(
+            map(tuple, np.asarray(scalar_list).T.tolist())
+        )
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_target_indices_tile_pbc_jit_matches_scalar(self, dtype):
+        """JIT-compiled tiled partial rows match scalar PBC topology and shifts."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0], [5.0, 0.0, 0.0]],
+            dtype=dtype,
+        )
+        cell = jnp.eye(3, dtype=dtype)[None, :, :] * 10.0
+        pbc = jnp.array([[True, True, True]])
+        target_indices = jnp.array([0, 2], dtype=jnp.int32)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+
+        def _run(strategy):
+            return jax.jit(
+                lambda pos: naive_neighbor_list(
+                    pos,
+                    1.0,
+                    cell=cell,
+                    pbc=pbc,
+                    max_neighbors=8,
+                    shift_range_per_dimension=shift_range,
+                    num_shifts_per_system=num_shifts,
+                    max_shifts_per_system=max_shifts,
+                    target_indices=target_indices,
+                    strategy=strategy,
+                )
+            )(positions)
+
+        scalar_nm, scalar_nn, scalar_shifts = _run("scalar")
+        tile_nm, tile_nn, tile_shifts = _run("tile")
+
+        @jax.jit
+        def _run_with_scratch(pos, inverse, wrapped, offsets):
+            return naive_neighbor_list(
+                pos,
+                1.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                target_indices=target_indices,
+                inv_cell_buffer=inverse,
+                positions_wrapped_buffer=wrapped,
+                per_atom_cell_offsets_buffer=offsets,
+                strategy="tile",
+            )
+
+        tile_scratch_outputs = _run_with_scratch(
+            positions,
+            jnp.full((1, 3, 3), 99.0, dtype=dtype),
+            jnp.empty_like(positions),
+            jnp.empty((positions.shape[0], 3), dtype=jnp.int32),
+        )
+
+        np.testing.assert_array_equal(np.asarray(tile_nn), np.asarray(scalar_nn))
+        for row, count in enumerate(np.asarray(scalar_nn)):
+            scalar_pairs = sorted(
+                zip(
+                    np.asarray(scalar_nm[row, :count]).tolist(),
+                    np.asarray(scalar_shifts[row, :count]).tolist(),
+                    strict=True,
+                )
+            )
+            tile_pairs = sorted(
+                zip(
+                    np.asarray(tile_nm[row, :count]).tolist(),
+                    np.asarray(tile_shifts[row, :count]).tolist(),
+                    strict=True,
+                )
+            )
+            assert tile_pairs == scalar_pairs
+            scratch_pairs = sorted(
+                zip(
+                    np.asarray(tile_scratch_outputs[0][row, :count]).tolist(),
+                    np.asarray(tile_scratch_outputs[2][row, :count]).tolist(),
+                    strict=True,
+                )
+            )
+            assert scratch_pairs == scalar_pairs
+
+    def test_target_indices_scalar_pbc_wraps_positions_like_tile(self):
+        """Partial scalar PBC preserves tiled topology for unwrapped coordinates."""
+        positions = jnp.array(
+            [[20.2, 0.0, 0.0], [0.3, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
+        pbc = jnp.array([[True, True, True]])
+        target_indices = jnp.array([0], dtype=jnp.int32)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+        common_kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors": 4,
+            "target_indices": target_indices,
+            "shift_range_per_dimension": shift_range,
+            "num_shifts_per_system": num_shifts,
+            "max_shifts_per_system": max_shifts,
+        }
+
+        scalar = naive_neighbor_list(positions, 1.0, strategy="scalar", **common_kwargs)
+        tiled = naive_neighbor_list(positions, 1.0, strategy="tile", **common_kwargs)
+
+        _assert_partial_topology_equal(scalar, tiled)
 
     def test_with_pbc(self):
         """Test with periodic boundary conditions."""
@@ -487,34 +907,43 @@ class TestNaiveEdgeCases:
                 coo_capacity=coo_capacity,
             )
 
-    def test_zero_cutoff_returns_no_neighbors(self):
-        """Zero cutoff should find zero neighbors."""
-        # 4 atoms in a cluster
-        positions = jnp.array(
-            [
-                [0.0, 0.0, 0.0],
-                [0.5, 0.0, 0.0],
-                [0.0, 0.5, 0.0],
-                [0.0, 0.0, 0.5],
-            ],
-            dtype=jnp.float32,
-        )
-
-        neighbor_matrix, num_neighbors = naive_neighbor_list(
-            positions, cutoff=0.0, max_neighbors=10
-        )
-        assert jnp.all(num_neighbors == 0)
-
-    def test_zero_cutoff_with_pbc(self):
-        """Zero cutoff with PBC should find zero neighbors."""
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    @pytest.mark.parametrize("periodic", [False, True])
+    def test_nonpositive_cutoff_rejected(self, cutoff, periodic):
+        """Single-system calls reject nonpositive cutoffs with and without PBC."""
         positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
-        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 10.0
-        pbc = jnp.array([[True, True, True]])
+        kwargs = {}
+        if periodic:
+            kwargs.update(
+                cell=jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0,
+                pbc=jnp.ones((1, 3), dtype=jnp.bool_),
+            )
 
-        nm, nn, shifts = naive_neighbor_list(
-            positions, cutoff=0.0, cell=cell, pbc=pbc, max_neighbors=10
-        )
-        assert jnp.all(nn == 0)
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            naive_neighbor_list(positions, cutoff=cutoff, max_neighbors=2, **kwargs)
+
+    @pytest.mark.parametrize("cutoff", [0.0, -1.0])
+    def test_nonpositive_cutoff_rejected_under_jit(self, cutoff):
+        """Jitted single calls reject constant nonpositive cutoffs during tracing."""
+        positions = jnp.zeros((2, 3), dtype=jnp.float32)
+        matrix = jnp.full((2, 1), 5, dtype=jnp.int32)
+        counts = jnp.full((2,), 7, dtype=jnp.int32)
+
+        @jax.jit
+        def run(pos, neighbor_matrix, num_neighbors):
+            return naive_neighbor_list(
+                pos,
+                cutoff,
+                max_neighbors=1,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        with pytest.raises(ValueError, match="cutoff must be positive"):
+            run(positions, matrix, counts)
+
+        np.testing.assert_array_equal(matrix, 5)
+        np.testing.assert_array_equal(counts, 7)
 
     def test_large_cutoff_finds_all_pairs(self):
         """Large cutoff should find all possible neighbors (N-1 per atom)."""
@@ -905,6 +1334,24 @@ class TestNaiveNeighborListJIT:
 class TestNaiveSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for naive_neighbor_list JAX binding."""
 
+    def test_partial_rebuild_flags_are_rejected(self, dtype):
+        """Compact rows cannot be combined with selective rebuild flags."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=dtype,
+        )
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=jnp.array([0], dtype=jnp.int32),
+                rebuild_flags=jnp.ones((1,), dtype=jnp.bool_),
+            )
+
     def test_no_rebuild_preserves_data(self, dtype):
         """Flag=False: neighbor data should remain unchanged."""
         positions = jnp.array(
@@ -1027,6 +1474,38 @@ def _assert_arrays_equal(lhs, rhs) -> None:
         assert jnp.array_equal(left, right)
 
 
+def _assert_partial_topology_equal(lhs, rhs) -> None:
+    """Compare compact topology without assuming atomic-append ordering."""
+    assert len(lhs) == len(rhs)
+    lhs_host = tuple(np.asarray(array) for array in lhs)
+    rhs_host = tuple(np.asarray(array) for array in rhs)
+    np.testing.assert_array_equal(lhs_host[1], rhs_host[1])
+    has_shifts = len(lhs_host) == 3
+    for row, count_value in enumerate(lhs_host[1]):
+        count = int(count_value)
+        assert count <= lhs_host[0].shape[1]
+        lhs_neighbors = lhs_host[0][row, :count].tolist()
+        rhs_neighbors = rhs_host[0][row, :count].tolist()
+        if has_shifts:
+            lhs_pairs = sorted(
+                zip(
+                    lhs_neighbors,
+                    lhs_host[2][row, :count].tolist(),
+                    strict=True,
+                )
+            )
+            rhs_pairs = sorted(
+                zip(
+                    rhs_neighbors,
+                    rhs_host[2][row, :count].tolist(),
+                    strict=True,
+                )
+            )
+            assert lhs_pairs == rhs_pairs
+        else:
+            assert sorted(lhs_neighbors) == sorted(rhs_neighbors)
+
+
 def _make_naive_inputs(dtype, *, pbc_enabled: bool, wrap_positions: bool):
     """Create a small but nontrivial naive neighbor-list test system."""
     if pbc_enabled and wrap_positions:
@@ -1103,6 +1582,32 @@ def _make_naive_stale_inputs(
 
 class TestNaiveGraphMode:
     """Graph-mode coverage for JAX naive neighbor lists."""
+
+    def test_partial_graph_mode_is_rejected(self):
+        """Partial rows are not supported by Warp graph mode."""
+        positions, cutoff, _, _, max_neighbors = _make_naive_inputs(
+            jnp.float32,
+            pbc_enabled=False,
+            wrap_positions=True,
+        )
+        targets = jnp.array([0, 2], dtype=jnp.int32)
+        with pytest.raises(
+            ValueError,
+            match="graph_mode='warp' does not support target_indices",
+        ):
+            naive_neighbor_list(
+                positions,
+                cutoff,
+                target_indices=targets,
+                neighbor_matrix=jnp.full(
+                    (2, max_neighbors),
+                    positions.shape[0],
+                    dtype=jnp.int32,
+                ),
+                num_neighbors=jnp.zeros((2,), dtype=jnp.int32),
+                strategy="scalar",
+                graph_mode="warp",
+            )
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     @pytest.mark.parametrize(
@@ -1226,13 +1731,10 @@ class TestNaiveGraphMode:
     def test_wrapped_warp_replay_stable_pointers(self):
         """Donation contract from the docstring example should produce stable results.
 
-        Functional smoke test: jit-compile the wrapped warp step exactly like the
-        docstring example (donating the returned buffers, capturing ``inv_cell`` /
-        ``positions_wrapped`` / ``per_atom_cell_offsets`` in the closure so their
-        buffer pointers stay stable across calls), run it 5 times, and assert each
-        call's outputs match a fresh ``graph_mode="none"`` reference. This guards
-        the contract that lets Warp's graph cache hit on the wrapped path; we
-        deliberately avoid timing assertions because perf tests are flaky.
+        JIT-compile the wrapped step like the example: donate returned buffers
+        and capture the canonical scratch buffers in the closure for stable
+        pointers. Compare each of five calls with fresh ``graph_mode="none"``
+        output. Avoid timing assertions because performance tests are flaky.
         """
         dtype = jnp.float32
         positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
@@ -1242,9 +1744,9 @@ class TestNaiveGraphMode:
         )
         n_atoms = positions.shape[0]
         fill_value = n_atoms
-        inv_cell = jnp.linalg.inv(cell)
-        positions_wrapped = jnp.zeros((n_atoms, 3), dtype=dtype)
-        per_atom_cell_offsets = jnp.zeros((n_atoms, 3), dtype=jnp.int32)
+        inv_cell_buffer = jnp.linalg.inv(cell)
+        positions_wrapped_buffer = jnp.zeros((n_atoms, 3), dtype=dtype)
+        per_atom_cell_offsets_buffer = jnp.zeros((n_atoms, 3), dtype=jnp.int32)
         shift_range, num_shifts_per_system, max_shifts_per_system = (
             compute_naive_num_shifts(cell, cutoff, pbc)
         )
@@ -1259,9 +1761,9 @@ class TestNaiveGraphMode:
                 neighbor_matrix=neighbor_matrix,
                 num_neighbors=num_neighbors,
                 neighbor_matrix_shifts=shifts,
-                inv_cell=inv_cell,
-                positions_wrapped=positions_wrapped,
-                per_atom_cell_offsets=per_atom_cell_offsets,
+                inv_cell_buffer=inv_cell_buffer,
+                positions_wrapped_buffer=positions_wrapped_buffer,
+                per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
                 shift_range_per_dimension=shift_range,
                 num_shifts_per_system=num_shifts_per_system,
                 max_shifts_per_system=max_shifts_per_system,

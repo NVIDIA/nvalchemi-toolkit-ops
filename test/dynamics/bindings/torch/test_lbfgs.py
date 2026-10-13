@@ -664,6 +664,95 @@ class TestLBFGSTorchErrors:
             )
 
 
+class TestLBFGSTorchCellPreparation:
+    """The setup boundary validates only the scalar alignment result."""
+
+    @staticmethod
+    def _prepare(cell, **kwargs):
+        """Build a two-atoms-per-system cell state on CPU."""
+        atom_ptr = torch.arange(cell.shape[0] + 1, dtype=torch.int32) * 2
+        return lbfgs_prepare_cell_state(
+            atom_ptr, cell, dtype=cell.dtype, device="cpu", **kwargs
+        )
+
+    @pytest.mark.parametrize(
+        ("dtype", "default_atol"),
+        [(torch.float32, 1e-4), (torch.float64, 1e-8)],
+    )
+    @pytest.mark.parametrize(
+        ("factor", "accepted"),
+        [(0.0, True), (0.5, True), (1.0, True), (1.5, False)],
+    )
+    def test_setup_uses_cell_dtype_default_and_inclusive_boundary(
+        self, dtype, default_atol, factor, accepted
+    ):
+        """The dtype default accepts zero, below and at tolerance only."""
+        cell = torch.eye(3, dtype=dtype).unsqueeze(0)
+        cell[0, 0, 1] = default_atol * factor
+        if accepted:
+            state = self._prepare(cell)
+            torch.testing.assert_close(state.ref_cell, cell)
+        else:
+            with pytest.raises(ValueError, match="cell must be aligned"):
+                self._prepare(cell)
+
+    @pytest.mark.parametrize(
+        ("dtype", "default_atol"),
+        [(torch.float32, 1e-4), (torch.float64, 1e-8)],
+    )
+    def test_setup_rejects_one_bad_member(self, dtype, default_atol):
+        """Every member must satisfy the tolerance independently."""
+        cell = torch.eye(3, dtype=dtype).repeat(2, 1, 1)
+        cell[1, 0, 2] = 2 * default_atol
+        with pytest.raises(ValueError, match="cell must be aligned"):
+            self._prepare(cell)
+
+    @pytest.mark.parametrize(
+        ("alignment_atol", "accepted"), [(1e-3, True), (1e-6, False)]
+    )
+    def test_setup_override(self, alignment_atol, accepted):
+        """An explicit tolerance replaces the dtype default."""
+        cell = torch.eye(3, dtype=torch.float64).unsqueeze(0)
+        cell[0, 0, 1] = 5e-5
+        if accepted:
+            self._prepare(cell, alignment_atol=alignment_atol)
+        else:
+            with pytest.raises(ValueError, match="cell must be aligned"):
+                self._prepare(cell, alignment_atol=alignment_atol)
+
+    @pytest.mark.parametrize("alignment_atol", [-1.0, float("nan"), float("inf")])
+    def test_setup_rejects_invalid_override(self, alignment_atol):
+        """Overrides must be finite and non-negative."""
+        cell = torch.eye(3, dtype=torch.float64).unsqueeze(0)
+        with pytest.raises(
+            ValueError, match="alignment_atol must be finite and non-negative"
+        ):
+            self._prepare(cell, alignment_atol=alignment_atol)
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf")])
+    def test_setup_rejects_nonfinite_upper_triangle(self, bad_value):
+        """Nonfinite entries in the checked triangle are rejected."""
+        cell = torch.eye(3, dtype=torch.float64).unsqueeze(0)
+        cell[0, 0, 1] = bad_value
+        with pytest.raises(ValueError, match="cell must be aligned"):
+            self._prepare(cell)
+
+    def test_compiled_alignment_check_rejects_invalid_input(self):
+        """The compiled assertion survives graph capture and rejects at runtime."""
+        from nvalchemiops.torch.lbfgs import _lbfgs_check_cell_alignment
+
+        compiled = torch.compile(
+            _lbfgs_check_cell_alignment, backend="inductor", fullgraph=True
+        )
+        cell = torch.eye(3, dtype=torch.float64).unsqueeze(0)
+        assert compiled(cell) is None
+
+        unaligned = cell.clone()
+        unaligned[0, 0, 1] = 1.0
+        with pytest.raises(RuntimeError, match="cell must be aligned"):
+            compiled(unaligned)
+
+
 class TestLBFGSTorchCoordCell:
     """The variable-cell binding."""
 

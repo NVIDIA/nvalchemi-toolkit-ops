@@ -14,17 +14,18 @@
 # limitations under the License.
 
 r"""
-GTO-GTO Self-Overlap Constants (Host-Side Scaffolding)
-======================================================
+GTO-GTO Self-Overlap Constants
+==============================
 
 Binding-layer helper that precomputes the per-:math:`(L, \sigma_{\text{receive}})`
 constants appearing in self-interaction subtraction for both the multipole
 Ewald/PME energy and the atom-centered electrostatic feature pipelines.
 
-This module is CPU-only host-side scaffolding: it runs once at module-construction
-time to produce a small ``(N_sigma, L+1)`` table that is subsequently shipped to
-the GPU as a Warp constant array. The downstream hot kernels that consume the
-table live in :mod:`nvalchemiops.math`.
+This binding-layer helper evaluates the overlap quadrature with PyTorch tensor
+operations and returns a CPU ``float64`` table. Static angular-momentum,
+normalization, and width metadata can be used while tracing direct explicit-k
+energy calls. The downstream Warp kernels that consume the table live in
+:mod:`nvalchemiops.math`.
 
 For a density-basis GTO centered on atom :math:`i` with width :math:`\sigma_s` and
 multipole coefficient :math:`Q_{L,m}^i`, and a receiver-basis GTO with width
@@ -105,11 +106,16 @@ def _overlap_radial_integral(
     sigma_receive: float,
     grid_size: int,
     r_max_factor: float,
-) -> float:
+) -> torch.Tensor:
     r"""Trapezoidal evaluation of the radial overlap integral :math:`I_L`.
 
     Grid: linear from ``1e-4`` to ``r_max_factor * max(sigma_s, sigma_r)`` with
     ``grid_size`` samples — same discretization as the customer reference.
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar integral as a CPU ``float64`` tensor.
     """
     r_max = r_max_factor * max(sigma_receive, sigma_source)
     grid = torch.linspace(1e-4, r_max, grid_size, dtype=torch.float64)
@@ -119,7 +125,7 @@ def _overlap_radial_integral(
         * torch.exp(-0.5 * grid * grid / (sigma_source * sigma_source))
         * F_total
     )
-    return float(torch.trapezoid(integrand, x=grid))
+    return torch.trapezoid(integrand, x=grid)
 
 
 def compute_overlap_constants(
@@ -168,6 +174,14 @@ def compute_overlap_constants(
     ValueError
         On non-positive ``sigma_source``, non-positive entries in
         ``sigmas_receive``, empty ``sigmas_receive``, or negative ``max_L``.
+
+    Notes
+    -----
+    Angular momentum, normalization modes, and Gaussian widths are scalar
+    metadata. Tensor-valued receiver widths are converted to host values during
+    input validation and are intended for eager preparation. The quadrature
+    itself remains in tensor form and can be symbolically traced when this
+    metadata is static.
     """
     if max_L < 0:
         raise ValueError(f"max_L must be non-negative, got {max_L}")
@@ -248,7 +262,7 @@ def flatten_to_reference_layout(
         base = n_sigma * L * L
         width = 2 * L + 1
         for i_sigma in range(n_sigma):
-            val = float(constants[i_sigma, L])
+            val = constants[i_sigma, L]
             for m in range(width):
                 flat[base + m + i_sigma * width] = val
     return flat

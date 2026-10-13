@@ -59,7 +59,6 @@ required by the kernels.
 
 .. autoclass:: nvalchemiops.torch.interactions.dispersion.FourierD3Parameters
     :members:
-    :undoc-members:
 
 :class:`FourierD3Setup` is a different kind of object: an optional cache of cell- and
 mesh-derived quantities, saving a matrix inversion and the spline moduli per call. It is not
@@ -69,7 +68,6 @@ with the PME and multipole caches.
 
 .. autoclass:: nvalchemiops.torch.interactions.dispersion.FourierD3Setup
     :members:
-    :undoc-members:
 
 Internal Custom Operators
 -------------------------

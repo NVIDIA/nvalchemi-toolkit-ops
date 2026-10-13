@@ -22,11 +22,12 @@ on random systems. We'll cover:
 
 1. cell_list: O(N) algorithm using spatial cell lists (best for large systems)
 2. naive_neighbor_list: O(N²) algorithm (best for small systems)
-3. neighbor_list: Unified wrapper with automatic method selection (RECOMMENDED)
+3. neighbor_list: Unified state-free wrapper with automatic method selection
 4. Comparison between algorithms
 5. Neighbor matrix vs neighbor list (COO) formats
-6. build_cell_list + query_cell_list: Lower-level API with caching
-7. return_distances / return_vectors: differentiable per-pair geometry (autograd)
+6. prepare_neighbor_list: Reusable state for repeated Torch execution
+7. build_cell_list + query_cell_list: Lower-level API with caching
+8. return_distances / return_vectors: differentiable per-pair geometry (autograd)
 
 The neighbor list construction efficiently finds all atom pairs within a cutoff distance,
 which is essential for molecular simulations and materials science calculations.
@@ -36,7 +37,11 @@ import time
 
 import torch
 
-from nvalchemiops.torch.neighbors import estimate_neighbor_list_costs, neighbor_list
+from nvalchemiops.torch.neighbors import (
+    estimate_neighbor_list_costs,
+    neighbor_list,
+    prepare_neighbor_list,
+)
 from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list,
     cell_list,
@@ -272,14 +277,14 @@ print(
 )
 
 # %%
-# Method 3: Unified neighbor_list Wrapper (Recommended)
-# =====================================================
+# Method 3: Unified State-Free neighbor_list Wrapper
+# ==================================================
 # The neighbor_list() wrapper provides a unified API and can choose a method
 # from geometry-derived cost estimates. The same estimate can be printed once
 # and reused by passing the selected method as ``method=...``.
 
 print("\n" + "=" * 70)
-print("METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)")
+print("METHOD 3: UNIFIED STATE-FREE neighbor_list() WRAPPER")
 print("=" * 70)
 
 print("\n--- Cost-Model Method Dispatch ---")
@@ -353,16 +358,51 @@ print("\n--- Benefits of the Wrapper ---")
 print("✓ Unified API for all neighbor list methods")
 print("✓ Cost-model dispatch based on geometry and requested outputs")
 print("✓ Easy to switch between methods for testing")
-print("✓ Consistent return values across all methods")
+print("✓ Familiar result formats; the tuple follows the selected route")
 print("✓ Pass-through of method-specific kwargs")
 
 # %%
-# Method 4: Low-level Cell List API with Caching
+# Method 4: Prepared State for Repeated Torch Execution
+# =====================================================
+# Prepared state is the recommended high-level Torch workflow when fixed metadata
+# and capacities are reused. The ordinary result tuple is unchanged, while the
+# state owns reusable route buffers and exposes the latest result by name.
+
+print("\n" + "=" * 70)
+print("METHOD 4: PREPARED STATE")
+print("=" * 70)
+
+prepared_state = prepare_neighbor_list(
+    small_positions,
+    cutoff,
+    cell=small_cell,
+    pbc=pbc,
+    method="naive",
+    strategy="scalar",
+    max_neighbors=128,
+)
+prepared_result = neighbor_list(small_positions, state=prepared_state)
+prepared_matrix, prepared_counts, prepared_shifts = prepared_result
+
+print(f"Resolved method: {prepared_state.method}")
+print(f"Resolved strategy: {prepared_state.strategy}")
+print(f"Initialized: {bool(prepared_state.initialized.all())}")
+print(f"Prepared pair count: {int(prepared_counts.sum())}")
+print(
+    f"Named result matches tuple: {prepared_state.neighbor_matrix is prepared_matrix}"
+)
+
+# With ``method=None`` and ``strategy="auto"``, Torch resolves its ordinary
+# selector once during preparation. Inspect the properties above to see the
+# result. Explicit choices pin the implementation and raise when unsupported.
+
+# %%
+# Method 5: Low-level Cell List API with Caching
 # ==============================================
 # For advanced users: separate build and query phases for efficient caching
 
 print("\n" + "=" * 70)
-print("METHOD 4: LOW-LEVEL CELL LIST API (BUILD + QUERY)")
+print("METHOD 5: LOW-LEVEL CELL LIST API (BUILD + QUERY)")
 print("=" * 70)
 
 # This approach is useful when you want to:

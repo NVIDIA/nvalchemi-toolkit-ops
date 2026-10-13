@@ -383,6 +383,97 @@ class TestLBFGSJaxErrors:
             )
 
 
+class TestLBFGSJaxCellPreparation:
+    """The eager and compiled reference-cell setup contracts."""
+
+    @staticmethod
+    def _prepare(cell, **kwargs):
+        """Build a two-atoms-per-system cell state."""
+        atom_ptr = np.arange(cell.shape[0] + 1, dtype=np.int32) * 2
+        return lbfgs_prepare_cell_state(atom_ptr, cell, dtype=cell.dtype, **kwargs)
+
+    @pytest.mark.parametrize(
+        ("dtype", "default_atol"),
+        [(jnp.float32, 1e-4), (jnp.float64, 1e-8)],
+    )
+    @pytest.mark.parametrize(
+        ("factor", "accepted"),
+        [(0.0, True), (0.5, True), (1.0, True), (1.5, False)],
+    )
+    def test_setup_uses_cell_dtype_default_and_inclusive_boundary(
+        self, dtype, default_atol, factor, accepted
+    ):
+        """The dtype default accepts zero, below and at tolerance only."""
+        values = np.eye(3, dtype=np.dtype(dtype))[None]
+        values[0, 0, 1] = default_atol * factor
+        cell = jnp.asarray(values, dtype=dtype)
+        if accepted:
+            state = self._prepare(cell)
+            np.testing.assert_array_equal(np.asarray(state.ref_cell), np.asarray(cell))
+        else:
+            with pytest.raises(ValueError, match="cell must be aligned"):
+                self._prepare(cell)
+
+    @pytest.mark.parametrize(
+        ("dtype", "default_atol"),
+        [(jnp.float32, 1e-4), (jnp.float64, 1e-8)],
+    )
+    def test_setup_rejects_one_bad_member(self, dtype, default_atol):
+        """Every member must satisfy the tolerance independently."""
+        cell = jnp.asarray(np.tile(np.eye(3), (2, 1, 1)), dtype=dtype)
+        cell = cell.at[1, 0, 2].set(2 * default_atol)
+        with pytest.raises(ValueError, match="cell must be aligned"):
+            self._prepare(cell)
+
+    @pytest.mark.parametrize(
+        ("alignment_atol", "accepted"), [(1e-3, True), (1e-6, False)]
+    )
+    def test_setup_override(self, alignment_atol, accepted):
+        """An explicit tolerance replaces the dtype default."""
+        cell = jnp.asarray(np.eye(3)[None])
+        cell = cell.at[0, 0, 1].set(5e-5)
+        if accepted:
+            self._prepare(cell, alignment_atol=alignment_atol)
+        else:
+            with pytest.raises(ValueError, match="cell must be aligned"):
+                self._prepare(cell, alignment_atol=alignment_atol)
+
+    @pytest.mark.parametrize("alignment_atol", [-1.0, float("nan"), float("inf")])
+    def test_setup_rejects_invalid_override(self, alignment_atol):
+        """Overrides must be finite and non-negative."""
+        cell = jnp.asarray(np.eye(3)[None])
+        with pytest.raises(
+            ValueError, match="alignment_atol must be finite and non-negative"
+        ):
+            self._prepare(cell, alignment_atol=alignment_atol)
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf")])
+    def test_setup_rejects_nonfinite_upper_triangle(self, bad_value):
+        """Nonfinite entries in the checked triangle are rejected."""
+        cell = jnp.asarray(np.eye(3)[None])
+        cell = cell.at[0, 0, 1].set(bad_value)
+        with pytest.raises(ValueError, match="cell must be aligned"):
+            self._prepare(cell)
+
+    def test_jitted_reference_setup_rejects_invalid_input(self):
+        """The same jitted reference helper rejects an invalid runtime cell."""
+        from nvalchemiops.jax.lbfgs import _lbfgs_set_reference_cell
+
+        compiled = jax.jit(_lbfgs_set_reference_cell)
+        cell = jnp.asarray(np.eye(3)[None])
+        ref_cell, ref_cell_inv = compiled(cell)
+        ref_cell.block_until_ready()
+        ref_cell_inv.block_until_ready()
+        jax.effects_barrier()
+
+        unaligned = cell.at[0, 0, 1].set(1.0)
+        with pytest.raises(RuntimeError, match="cell must be aligned"):
+            ref_cell, ref_cell_inv = compiled(unaligned)
+            ref_cell.block_until_ready()
+            ref_cell_inv.block_until_ready()
+            jax.effects_barrier()
+
+
 @pytest.mark.parametrize("_gpu", [pytest.param(None, marks=requires_gpu)])
 class TestLBFGSJaxCoordCell:
     """The variable-cell binding."""

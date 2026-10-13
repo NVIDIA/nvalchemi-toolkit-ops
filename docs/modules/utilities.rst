@@ -10,6 +10,9 @@ Mathematical Utilities
     :show-inheritance:
 
 .. autofunction:: nvalchemiops.math.wpdivmod
+.. autofunction:: nvalchemiops.math.wp_erfc_input_precision
+.. autofunction:: nvalchemiops.math.wp_erfc_f32_fast
+.. autofunction:: nvalchemiops.math.wp_erfc
 
 Type Conversion Utilities
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

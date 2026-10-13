@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import math
 
 import torch
 import warp as wp
@@ -123,6 +124,11 @@ __all__ = [
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
 _TORCH_TO_WP_MAT = {torch.float32: wp.mat33f, torch.float64: wp.mat33d}
 _TORCH_TO_WP_SCALAR = {torch.float32: wp.float32, torch.float64: wp.float64}
+_CELL_ALIGNMENT_ERROR = (
+    "cell must be aligned: entries strictly above the diagonal must be zero. "
+    "Call nvalchemiops.dynamics.utils.cell_filter.align_cell once before "
+    "reference-cell setup."
+)
 
 #: Every tensor the coordinate step writes to. Derived from the shared buffer
 #: order so the two cannot drift apart.
@@ -305,12 +311,13 @@ def lbfgs_prepare_cell_state(
     cell_force_scale: float = 1.0,
     dtype: torch.dtype = torch.float64,
     device=None,
+    alignment_atol: float | None = None,
 ) -> LBFGSCellState:
     """Build a complete, ready-to-step variable-cell chart from atom topology.
 
-    One call: give it the ordinary ``atom_ptr`` and the aligned cells, and it
+    One call: give it the ordinary ``atom_ptr`` and aligned cells, and it
     derives the packed topology, captures the reference chart and computes
-    ``kappa``. Nothing needs repairing before the first step.
+    ``kappa``. Alignment is checked before the reference cell is captured.
 
     Ragged batches are unaffected -- ``atom_ptr`` already carries each
     system's atom count, so nothing here assumes an even split.
@@ -327,6 +334,9 @@ def lbfgs_prepare_cell_state(
         Coordinate precision.
     device : optional
         Defaults to ``atom_ptr.device``.
+    alignment_atol : float, optional
+        Absolute tolerance for entries strictly above the cell diagonal.
+        Defaults to ``1e-4`` for float32 cells and ``1e-8`` for float64 cells.
 
     Returns
     -------
@@ -405,7 +415,12 @@ def lbfgs_prepare_cell_state(
         packed,
     )
     n_particles = torch.tensor(counts, **i32)
-    _lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
+    _lbfgs_set_reference_cell(
+        cell,
+        state.ref_cell,
+        state.ref_cell_inv,
+        alignment_atol=alignment_atol,
+    )
     _lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
     return state
 
@@ -641,8 +656,44 @@ if _cell_params[5 + _n_opt : 5 + _n_opt + len(_CELL_BUFFERS)] != _CELL_BUFFERS:
     raise RuntimeError("_CELL_BUFFERS and the cell operator have diverged")
 
 
+def _lbfgs_check_cell_alignment(
+    cell: torch.Tensor, alignment_atol: float | None = None
+) -> None:
+    """Check upper-triangle cell entries before reference-cell capture."""
+    if cell.ndim != 3 or cell.shape[-2:] != (3, 3):
+        raise ValueError(
+            f"cell must have shape (num_systems, 3, 3); got {tuple(cell.shape)}"
+        )
+    if cell.dtype not in _TORCH_TO_WP_MAT:
+        raise ValueError(f"cell must be float32 or float64; got {cell.dtype}")
+    if alignment_atol is None:
+        alignment_atol = 1e-4 if cell.dtype == torch.float32 else 1e-8
+    else:
+        try:
+            alignment_atol = float(alignment_atol)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"alignment_atol must be finite and non-negative; got {alignment_atol!r}"
+            ) from exc
+        if not math.isfinite(alignment_atol) or alignment_atol < 0.0:
+            raise ValueError(
+                f"alignment_atol must be finite and non-negative; got {alignment_atol}"
+            )
+
+    max_upper = torch.triu(cell, diagonal=1).abs().amax(dim=(-2, -1))
+    aligned = torch.all(max_upper <= alignment_atol)
+    if torch.compiler.is_compiling():
+        torch._assert_async(aligned, _CELL_ALIGNMENT_ERROR)
+    elif not bool(aligned.item()):
+        raise ValueError(_CELL_ALIGNMENT_ERROR)
+
+
 def _lbfgs_set_reference_cell(
-    cell: torch.Tensor, ref_cell: torch.Tensor, ref_cell_inv: torch.Tensor
+    cell: torch.Tensor,
+    ref_cell: torch.Tensor,
+    ref_cell_inv: torch.Tensor,
+    *,
+    alignment_atol: float | None = None,
 ) -> None:
     """Capture the reference cell that defines the variable-cell chart.
 
@@ -657,10 +708,15 @@ def _lbfgs_set_reference_cell(
     Parameters
     ----------
     cell : torch.Tensor, shape (num_systems, 3, 3)
-        Current cell, lattice vectors as columns.
+        Current cell, lattice vectors as columns. Alignment is checked before
+        capturing the reference cell.
     ref_cell, ref_cell_inv : torch.Tensor, shape (num_systems, 3, 3)
         OUTPUT. Caller-owned buffers for the reference cell and its inverse.
+    alignment_atol : float, optional
+        Absolute tolerance for entries strictly above the cell diagonal.
+        Defaults to ``1e-4`` for float32 cells and ``1e-8`` for float64 cells.
     """
+    _lbfgs_check_cell_alignment(cell, alignment_atol)
     mat = _TORCH_TO_WP_MAT[cell.dtype]
     # Bind Warp to PyTorch's current stream, as the step operators do. Without
     # it the launch sits on Warp's own stream and, on a non-default Torch

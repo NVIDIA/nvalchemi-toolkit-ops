@@ -1184,9 +1184,12 @@ def _multipole_rho_gather_t_backward(ctx, g_cot: torch.Tensor):
     double-backwards automatically — no explicit second-order routine.
     """
     grad_rho, positions, source_phi_hat, k_vectors, volume = ctx.saved_tensors
-    cg_q = g_cot[:, 0].contiguous()
+    # ``g`` is float64 by construction, so the cotangent is too; the moment and
+    # position kernels pick their precision from the moment dtype, so bring the
+    # cotangent back to the coordinate dtype to keep all three consistent.
+    cg_q = g_cot[:, 0].to(positions.dtype).contiguous()
     # e3nn -> Cartesian for the dipole channel: (μ_x, μ_y, μ_z) = lm(3, 1, 2).
-    cg_dip = g_cot[:, [3, 1, 2]].contiguous()
+    cg_dip = g_cot[:, [3, 1, 2]].to(positions.dtype).contiguous()
     # cos/sin are detached constants (the position 2nd-order is carried by the
     # position-grad kernel), mirroring ``_multipole_rho_backward``.
     cosines, sines = torch.ops.nvalchemiops.multipole_structure_factor(
@@ -1292,7 +1295,9 @@ def _multipole_rho_q_gather_t_backward(ctx, g_cot: torch.Tensor):
     double-backwards automatically.
     """
     grad_rho, positions, source_coeff2, k_vectors, volume = ctx.saved_tensors
-    cg_q = g_cot.contiguous()
+    # Cotangent of the float64 ``g_Q``; match the coordinate dtype (see the
+    # dipole-path backward above).
+    cg_q = g_cot.to(positions.dtype).contiguous()
     cosines, sines = torch.ops.nvalchemiops.multipole_structure_factor(
         positions.detach(), k_vectors.detach()
     )

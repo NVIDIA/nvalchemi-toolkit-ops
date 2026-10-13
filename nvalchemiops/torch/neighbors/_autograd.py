@@ -123,6 +123,12 @@ def _flatten_active_pairs(
     shifts_flat : (P, 3) int
     batch_idx_flat : (P,) long or None
     active_mask : (K, M) bool
+
+    Notes
+    -----
+    Eager calls retain only active pairs. Compiled calls retain the full
+    matrix capacity, with safe neighbor indices and zero shifts for inactive
+    slots; backward masks their gradient contributions.
     """
     K, M = neighbor_matrix.shape
     col_idx = torch.arange(M, device=neighbor_matrix.device, dtype=torch.int32)
@@ -136,9 +142,20 @@ def _flatten_active_pairs(
         )
     i_idx_2d = row_to_atom_i.unsqueeze(-1).expand(-1, M)
 
-    i_idx_flat = i_idx_2d[active_mask].contiguous()
-    j_idx_flat = neighbor_matrix[active_mask].contiguous()
-    shifts_flat = shifts[active_mask].contiguous()
+    if torch.compiler.is_compiling():
+        # Keep the saved autograd inputs at the matrix's fixed capacity while
+        # tracing fullgraph calls.  Boolean indexing here creates an
+        # unbacked, data-dependent pair dimension that is not a public output
+        # and therefore cannot be represented by Dynamo's custom-Function
+        # boundary.  Inactive entries use safe indices and zero shifts; the
+        # backward masks their contributions using ``active_mask``.
+        i_idx_flat = i_idx_2d.reshape(-1)
+        j_idx_flat = torch.where(active_mask, neighbor_matrix, 0).reshape(-1)
+        shifts_flat = torch.where(active_mask.unsqueeze(-1), shifts, 0).reshape(-1, 3)
+    else:
+        i_idx_flat = i_idx_2d[active_mask]
+        j_idx_flat = neighbor_matrix[active_mask]
+        shifts_flat = shifts[active_mask]
 
     batch_idx_flat: torch.Tensor | None = None
     if batch_idx is not None:
@@ -286,6 +303,7 @@ class _NeighborDistanceVectorFn(torch.autograd.Function):
         ctx.matrix_shape = out.matrix_shape
         ctx.cell_shape = tuple(cell.shape) if cell is not None else None
         ctx.n_extra = len(out.extra_outputs)
+        ctx.static_flatten = torch.compiler.is_compiling()
         return (out.distances, out.vectors, *out.extra_outputs)
 
     @staticmethod
@@ -326,12 +344,27 @@ class _NeighborDistanceVectorFn(torch.autograd.Function):
 
         # Flatten upstream grads to (P,) and (P, 3).
         if ctx.matrix_shape is not None:
-            grad_d_flat = (
-                grad_distances[active_mask] if grad_distances is not None else None
-            )
-            grad_r_flat = (
-                grad_vectors[active_mask] if grad_vectors is not None else None
-            )
+            if ctx.static_flatten:
+                active_flat = active_mask.reshape(-1)
+                grad_d_flat = (
+                    torch.where(active_flat, grad_distances.reshape(-1), 0)
+                    if grad_distances is not None
+                    else None
+                )
+                grad_r_flat = (
+                    torch.where(
+                        active_flat.unsqueeze(-1), grad_vectors.reshape(-1, 3), 0
+                    )
+                    if grad_vectors is not None
+                    else None
+                )
+            else:
+                grad_d_flat = (
+                    grad_distances[active_mask] if grad_distances is not None else None
+                )
+                grad_r_flat = (
+                    grad_vectors[active_mask] if grad_vectors is not None else None
+                )
         else:
             grad_d_flat = grad_distances if grad_distances is not None else None
             grad_r_flat = grad_vectors if grad_vectors is not None else None

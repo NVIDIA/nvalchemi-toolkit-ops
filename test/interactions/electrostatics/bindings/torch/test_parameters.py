@@ -306,16 +306,21 @@ class TestEstimatePMEMeshDimensions:
         assert all(isinstance(d, int) for d in dims)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
-    def test_power_of_two_dimensions(self, device):
-        """Test that all dimensions are powers of 2."""
+    def test_fft_friendly_dimensions(self, device):
+        """The estimated mesh meets the raw bound using supported FFT factors."""
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
         alpha = torch.tensor([0.3], device=device)
 
         dims = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
 
         for d in dims:
-            # Check if power of 2: d & (d - 1) == 0
-            assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
+            assert d >= 4
+            remaining = d
+            for prime in (2, 3, 5, 7):
+                while remaining % prime == 0:
+                    remaining //= prime
+            assert remaining == 1
+            assert d >= math.ceil(2.0 * 0.3 * 20.0 / (3.0 * 1e-6**0.2))
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_larger_alpha_more_points(self, device):
@@ -353,7 +358,7 @@ class TestEstimatePMEMeshDimensions:
 
         dims = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
 
-        # Longer dimension should have more points (or equal if rounded to same power of 2)
+        # Longer dimensions require at least as many mesh points.
         assert dims[0] <= dims[1] <= dims[2]
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
@@ -496,21 +501,24 @@ class TestEstimatePMEParameters:
         )
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
-    def test_mesh_dimensions_are_power_of_two(self, device):
-        """Test that mesh dimensions are powers of 2."""
+    def test_mesh_dimensions_are_fft_friendly(self, device):
+        """The parameter estimate returns dimensions with supported FFT factors."""
         positions = torch.randn(100, 3, device=device)
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
 
         params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
 
-        for d in params.mesh_dimensions:
-            assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
+        for dimension in params.mesh_dimensions:
+            assert dimension >= 4
+            remaining = dimension
+            for prime in (2, 3, 5, 7):
+                while remaining % prime == 0:
+                    remaining //= prime
+            assert remaining == 1
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_pme_alpha_matches_ewald_closed_form(self, device):
-        """Default PME estimator uses the same Essmann/Kolafa-Perram
-        closed-form as the Ewald estimator (both derive rc and α from
-        a single length scale η)."""
+        """PME and Ewald use the same Kolafa-Perram cutoff and alpha."""
         positions = torch.randn(100, 3, device=device)
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
 
@@ -523,14 +531,32 @@ class TestEstimatePMEParameters:
         assert torch.allclose(pme_params.alpha, ewald_params.alpha)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
-    def test_pme_cutoff_in_sane_range(self, device):
-        """Cost-optimal PME rc should land in the 4–20 Å band for typical systems."""
-        positions = torch.randn(500, 3, device=device)
-        cell = torch.eye(3, device=device).unsqueeze(0) * 25.0
+    def test_pme_parameters_scale_with_length_units(self, device):
+        """Automatic parameters are unchanged by a consistent length conversion."""
+        positions = torch.randn(500, 3, dtype=torch.float64, device=device)
+        cell = torch.eye(3, dtype=torch.float64, device=device).unsqueeze(0) * 25.0
+        scale = 0.1
 
-        params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
-        rc = float(params.real_space_cutoff[0].item())
-        assert 4.0 <= rc <= 20.0, f"rc={rc} outside sane band"
+        base = estimate_pme_parameters(positions, cell, accuracy=1e-6)
+        scaled = estimate_pme_parameters(
+            positions * scale,
+            cell * scale,
+            accuracy=1e-6,
+        )
+
+        assert scaled.mesh_dimensions == base.mesh_dimensions
+        assert torch.allclose(
+            scaled.real_space_cutoff,
+            base.real_space_cutoff * scale,
+            rtol=1e-12,
+            atol=0.0,
+        )
+        assert torch.allclose(
+            scaled.alpha,
+            base.alpha / scale,
+            rtol=1e-12,
+            atol=0.0,
+        )
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_pme_user_supplied_cutoff_respected(self, device):
@@ -554,6 +580,11 @@ class TestEstimatePMEParameters:
             params.alpha,
             torch.tensor([expected_alpha], dtype=positions.dtype, device=device),
             rtol=1e-5,
+        )
+        assert params.mesh_dimensions == estimate_pme_mesh_dimensions(
+            cell,
+            params.alpha,
+            accuracy=1e-6,
         )
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
@@ -599,6 +630,30 @@ class TestMeshSpacingToDimensions:
     """Tests for mesh_spacing_to_dimensions function."""
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize(
+        "spacing_kind", ["integer", "scalar_tensor_integer", "scalar_tensor_float"]
+    )
+    def test_scalar_spacing_matches_float(self, device, batched, spacing_kind):
+        """Scalar spacing representations preserve every cell's sizing target."""
+        cell = torch.diag(
+            torch.tensor([31.0, 41.0, 55.0], dtype=torch.float64, device=device)
+        )
+        if batched:
+            cell = torch.stack((cell, cell * 1.5))
+        if spacing_kind == "integer":
+            spacing = 2
+        elif spacing_kind == "scalar_tensor_integer":
+            spacing = torch.tensor(2, device=device)
+        else:
+            spacing = torch.tensor(2.0, dtype=cell.dtype, device=device)
+
+        expected = mesh_spacing_to_dimensions(cell, 2.0)
+        actual = mesh_spacing_to_dimensions(cell, spacing)
+
+        assert actual == expected
+
+    @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_returns_tensor(self, device):
         """Test that function returns a tensor."""
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
@@ -610,16 +665,13 @@ class TestMeshSpacingToDimensions:
         assert all(isinstance(d, int) for d in dims)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
-    def test_power_of_two_dimensions(self, device):
-        """Test that all dimensions are powers of 2."""
+    def test_fft_friendly_dimensions(self, device):
+        """The spacing request resolves to the smallest supported dimensions."""
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
 
         dims = mesh_spacing_to_dimensions(cell, mesh_spacing=0.5)
 
-        for d_val in dims:
-            assert d_val > 0 and (d_val & (d_val - 1)) == 0, (
-                f"{d_val} is not a power of 2"
-            )
+        assert dims == (40, 40, 40)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_smaller_spacing_more_points(self, device):
@@ -656,6 +708,7 @@ class TestMeshSpacingToDimensions:
 
         assert len(dims) == 3
         assert isinstance(dims, tuple)
+        assert dims == (64, 64, 64)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_tensor_spacing_2d(self, device):
@@ -670,6 +723,7 @@ class TestMeshSpacingToDimensions:
 
         assert len(dims) == 3
         assert isinstance(dims, tuple)
+        assert dims == (56, 60, 80)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_invalid_spacing_shape_raises(self, device):
@@ -753,9 +807,10 @@ class TestIntegration:
         params = estimate_pme_parameters(positions, cell, accuracy=1e-4)
 
         # Create a simple neighbor list
+        real_space_cutoff = float(params.real_space_cutoff[0].item())
         neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
             positions,
-            5.0,
+            real_space_cutoff,
             cell=cell,
             pbc=torch.tensor([True, True, True], dtype=torch.bool, device=device),
             return_neighbor_list=True,
@@ -775,6 +830,7 @@ class TestIntegration:
         )
 
         assert energies.shape == (20,)
+        assert torch.all(torch.isfinite(energies))
 
 
 # ---------------------------------------------------------------------------

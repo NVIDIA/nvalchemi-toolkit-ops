@@ -775,6 +775,31 @@ class TestSplineGather:
 class TestSplineGatherGradient:
     """Test B-spline force computation."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_gather_gradient_cuda_graph_without_precomputed_cell_inverse(self):
+        """Gather-gradient remains capturable when it computes the cell inverse."""
+        device = torch.device("cuda")
+        positions = torch.tensor(
+            [[2.0, 3.0, 4.0], [5.0, 6.0, 7.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell = torch.eye(3, dtype=torch.float64, device=device) * 10.0
+        mesh = torch.randn((8, 8, 8), dtype=torch.float64, device=device)
+
+        expected = spline_gather_gradient(positions, charges, mesh, cell)
+        spline_gather_gradient(positions, charges, mesh, cell)
+        torch.cuda.synchronize()
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            captured = spline_gather_gradient(positions, charges, mesh, cell)
+        graph.replay()
+        torch.cuda.synchronize()
+
+        torch.testing.assert_close(captured, expected)
+
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_gather_gradient_uniform_zero(self, device):
         """Test that uniform potential gives zero forces."""
@@ -1344,6 +1369,36 @@ class TestBatchSplineGatherVec3:
 
 class TestBatchSplineGatherGradient:
     """Test batch B-spline force computation."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_batch_gather_gradient_cuda_graph_without_precomputed_cell_inverse(self):
+        """Batched gather-gradient handles capture-time inverse validation."""
+        device = torch.device("cuda")
+        positions = torch.tensor(
+            [[2.0, 3.0, 4.0], [5.0, 6.0, 7.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        batch_idx = torch.tensor([0, 1], dtype=torch.int32, device=device)
+        cell = torch.eye(3, dtype=torch.float64, device=device).repeat(2, 1, 1) * 10.0
+        mesh = torch.randn((2, 8, 8, 8), dtype=torch.float64, device=device)
+
+        expected = spline_gather_gradient(
+            positions, charges, mesh, cell, batch_idx=batch_idx
+        )
+        spline_gather_gradient(positions, charges, mesh, cell, batch_idx=batch_idx)
+        torch.cuda.synchronize()
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            captured = spline_gather_gradient(
+                positions, charges, mesh, cell, batch_idx=batch_idx
+            )
+        graph.replay()
+        torch.cuda.synchronize()
+
+        torch.testing.assert_close(captured, expected)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_batch_gather_gradient_uniform_zero(self, device):

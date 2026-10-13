@@ -137,6 +137,13 @@ well.
 The public surface is the two states, the preparation helpers, one step per
 call, and the variable-cell setup below.
 
+The module documentation states the full calling convention, the dtype and
+shape contract, and the variable-cell contract:
+
+.. automodule:: nvalchemiops.dynamics.optimizers.lbfgs
+    :no-members:
+    :no-inherited-members:
+
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
    :members:
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state
@@ -150,11 +157,11 @@ call, and the variable-cell setup below.
    check it with :meth:`LBFGSState.validate`.
 
 Variable-cell relaxation maps positions and cell into a single packed
-coordinate vector, so the two-loop recursion couples them automatically. Build
-``ext_atom_ptr`` and ``ext_batch_idx`` with
-:func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr` and
-:func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
-batches as well as uniform ones.
+coordinate vector, so the two-loop recursion couples them automatically.
+:func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_cell_state`
+derives the packed topology (``ext_atom_ptr`` and ``ext_batch_idx``) from the
+ordinary ``atom_ptr`` and the aligned cells; ragged batches work the same way
+uniform ones do.
 
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState
    :members:
@@ -166,8 +173,16 @@ FIRE2
 
 Improved FIRE optimizer with adaptive damping and velocity mixing.
 
+.. automodule:: nvalchemiops.dynamics.optimizers.fire2
+    :no-members:
+    :no-inherited-members:
+
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire2.fire2_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire2.fire2_update
+
+
+
+
 
 Thermostat Utilities
 --------------------

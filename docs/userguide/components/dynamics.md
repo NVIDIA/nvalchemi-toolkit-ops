@@ -138,7 +138,72 @@ print(f"Target: {temperature.numpy()[0]}, Actual: {T_out.numpy()[0]}")
 
 :::
 
+:::{tab-item} FIRE2 Optimization
+:sync: fire2
+
+```python
+import warp as wp
+from nvalchemiops.dynamics.optimizers import fire2_step
+
+# One system of num_atoms atoms (FIRE2 requires batch_idx)
+positions = wp.array(pos_np, dtype=wp.vec3d, device="cuda:0")
+velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device="cuda:0")
+forces = wp.zeros(num_atoms, dtype=wp.vec3d, device="cuda:0")
+batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device="cuda:0")
+
+# Per-system adaptive state and scratch (all single-entry arrays)
+alpha = wp.array([0.09], dtype=wp.float64, device="cuda:0")
+dt = wp.array([0.005], dtype=wp.float64, device="cuda:0")
+nsteps_inc = wp.array([0], dtype=wp.int32, device="cuda:0")
+vf = wp.array([0.0], dtype=wp.float64, device="cuda:0")
+v_sumsq = wp.array([0.0], dtype=wp.float64, device="cuda:0")
+f_sumsq = wp.array([0.0], dtype=wp.float64, device="cuda:0")
+max_norm = wp.array([0.0], dtype=wp.float64, device="cuda:0")
+max_force = wp.zeros(1, dtype=wp.float64, device="cuda:0")
+
+for _ in range(max_steps):
+    forces = compute_forces(positions)  # User-defined
+
+    max_force.zero_()
+    wp.launch(
+        max_force_component_kernel,
+        dim=forces.shape[0],
+        inputs=[forces, max_force],
+        device=forces.device,
+    )
+    if wp.utils.array_sum(max_force) < force_tol:
+        break
+
+    fire2_step(
+        positions, velocities, forces,
+        batch_idx=batch_idx,
+        alpha=alpha, dt=dt, nsteps_inc=nsteps_inc,
+        vf=vf, v_sumsq=v_sumsq, f_sumsq=f_sumsq, max_norm=max_norm,
+    )
+```
+
+You own the loop and the convergence test; `fire2_step` adapts the
+timestep and mixing and applies one bounded step per call.
+:::
+
 ::::
+
+The optimization examples read the largest per-atom force magnitude
+without converting the force array to NumPy. Define this reduction once;
+the max stays on the device and only the final scalar returns to Python:
+
+```python
+@wp.kernel
+def max_force_component_kernel(
+    forces: wp.array(dtype=wp.vec3d),
+    max_force: wp.array(dtype=wp.float64),
+):
+    i = wp.tid()
+    wp.atomic_max(max_force, 0, wp.length(forces[i]))
+```
+
+Allocate ``max_force`` once. Before each convergence check, zero it, launch
+the kernel, and read the result with ``wp.utils.array_sum(max_force)``.
 
 ## Batch Mode: Simulating Multiple Systems
 
@@ -365,6 +430,7 @@ uphill_flag = wp.array([0], dtype=wp.int32, device="cuda:0")
 vf = wp.array([0.0], dtype=wp.float64, device="cuda:0")
 vv = wp.array([0.0], dtype=wp.float64, device="cuda:0")
 ff = wp.array([0.0], dtype=wp.float64, device="cuda:0")
+max_force = wp.zeros(1, dtype=wp.float64, device="cuda:0")
 
 for step in range(max_steps):
     # Compute forces
@@ -378,8 +444,15 @@ for step in range(max_steps):
         uphill_flag, vf, vv, ff
     )
 
-    # Check convergence
-    fmax = wp.max(wp.abs(forces)).numpy()
+    # Check convergence: largest per-atom force magnitude below the tolerance
+    max_force.zero_()
+    wp.launch(
+        max_force_component_kernel,
+        dim=forces.shape[0],
+        inputs=[forces, max_force],
+        device=forces.device,
+    )
+    fmax = wp.utils.array_sum(max_force)
     if fmax < force_tolerance:
         break
 ```
@@ -450,16 +523,15 @@ fire2_step_coord_cell(
 
 L-BFGS approximates the inverse Hessian from the last few position and force
 differences to pick a search direction, then steps along it as far as a
-`maxstep` trust region allows. It usually reaches a given force tolerance in
-far fewer force evaluations than FIRE or FIRE2 — the cost that dominates
-relaxation with a machine-learned potential.
+`maxstep` trust region allows. It reads no energies; the only per-step input
+is one force evaluation.
 
-**Choosing between FIRE2 and L-BFGS.** Both cost one force evaluation per
-step. FIRE2 carries almost no state, which suits very large systems or
-geometries far from any minimum. L-BFGS spends `2 * history_size` history
-vectors and
-converges in far fewer evaluations. If your force evaluation costs more than a
-few microseconds, prefer L-BFGS.
+**Choosing between FIRE2 and L-BFGS.** Both methods take one force evaluation
+per step. FIRE2 has little optimizer state; L-BFGS stores `2 * history_size`
+history vectors. Their evaluation counts and step costs depend on the system,
+force model, precision, and optimizer settings. Use the measurements in the
+benchmark section as a starting point, then compare both methods on your
+workload.
 
 **Prepare the state once.** `lbfgs_prepare_state` allocates, initializes and
 validates every array and returns an `LBFGSState`; calling it again is how you
@@ -481,18 +553,25 @@ descending, and takes one bounded step. No tolerance, no terminal status —
 exactly as with FIRE2.
 
 ```python
-import numpy as np
 import warp as wp
 from nvalchemiops.dynamics.optimizers import lbfgs_prepare_state, lbfgs_step
 
 state = lbfgs_prepare_state(num_atoms, num_systems, device=device)
+max_force = wp.zeros(1, dtype=wp.float64, device=device)
 
 for _ in range(max_steps):
     forces = model(positions)
 
     # Test *before* stepping: these forces describe the positions you have,
     # and after a step they describe the previous point.
-    if np.linalg.norm(forces.numpy(), axis=1).max() < force_tol:
+    max_force.zero_()
+    wp.launch(
+        max_force_component_kernel,
+        dim=forces.shape[0],
+        inputs=[forces, max_force],
+        device=forces.device,
+    )
+    if wp.utils.array_sum(max_force) < force_tol:
         break
 
     lbfgs_step(

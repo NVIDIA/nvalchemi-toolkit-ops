@@ -102,7 +102,7 @@ class D3Parameters:
 
     Create from a dictionary (e.g., loaded from file):
 
-    >>> state_dict = torch.load("dftd3_parameters.pt")
+    >>> state_dict = torch.load("dftd3_parameters.pt", weights_only=True)
     >>> params = D3Parameters(
     ...     rcov=state_dict["rcov"],
     ...     r4r2=state_dict["r4r2"],

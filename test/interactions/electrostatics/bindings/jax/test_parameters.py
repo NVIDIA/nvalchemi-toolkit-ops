@@ -284,16 +284,21 @@ class TestEstimatePMEMeshDimensions:
         assert len(dims) == 3
         assert all(isinstance(d, int) for d in dims)
 
-    def test_power_of_two_dimensions(self):
-        """Test that all dimensions are powers of 2."""
+    def test_fft_friendly_dimensions(self):
+        """The estimated mesh meets the raw bound using supported FFT factors."""
         cell = jnp.eye(3)[None, ...] * 20.0
         alpha = jnp.array([0.3])
 
         dims = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
 
         for d in dims:
-            # Check if power of 2: d & (d - 1) == 0
-            assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
+            assert d >= 4
+            remaining = d
+            for prime in (2, 3, 5, 7):
+                while remaining % prime == 0:
+                    remaining //= prime
+            assert remaining == 1
+            assert d >= math.ceil(2.0 * 0.3 * 20.0 / (3.0 * 1e-6**0.2))
 
     def test_larger_alpha_more_points(self):
         """Test that larger alpha leads to more mesh points."""
@@ -328,7 +333,7 @@ class TestEstimatePMEMeshDimensions:
 
         dims = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
 
-        # Longer dimension should have more points (or equal if rounded to same power of 2)
+        # Longer dimensions require at least as many mesh points.
         assert dims[0] <= dims[1] <= dims[2]
 
     def test_batch_uses_max(self):
@@ -458,20 +463,23 @@ class TestEstimatePMEParameters:
             jnp.full_like(params.alpha, expected_alpha),
         )
 
-    def test_mesh_dimensions_are_power_of_two(self):
-        """Test that mesh dimensions are powers of 2."""
+    def test_mesh_dimensions_are_fft_friendly(self):
+        """The parameter estimate returns dimensions with supported FFT factors."""
         positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         cell = jnp.eye(3)[None, ...] * 20.0
 
         params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
 
-        for d in params.mesh_dimensions:
-            assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
+        for dimension in params.mesh_dimensions:
+            assert dimension >= 4
+            remaining = dimension
+            for prime in (2, 3, 5, 7):
+                while remaining % prime == 0:
+                    remaining //= prime
+            assert remaining == 1
 
     def test_pme_alpha_matches_ewald_closed_form(self):
-        """Default PME estimator uses the same Essmann/Kolafa-Perram
-        closed-form as the Ewald estimator (both derive rc and α from
-        a single length scale η)."""
+        """PME and Ewald use the same Kolafa-Perram cutoff and alpha."""
         positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         cell = jnp.eye(3)[None, ...] * 20.0
 
@@ -483,14 +491,36 @@ class TestEstimatePMEParameters:
         )
         assert jnp.allclose(pme_params.alpha, ewald_params.alpha)
 
-    def test_pme_cutoff_in_sane_range(self):
-        """Cost-optimal PME rc should land in the 4–20 Å band for typical systems."""
-        positions = jax.random.normal(jax.random.PRNGKey(0), (500, 3))
-        cell = jnp.eye(3)[None, ...] * 25.0
+    def test_pme_parameters_scale_with_length_units(self):
+        """Automatic parameters are unchanged by a consistent length conversion."""
+        positions = jax.random.normal(
+            jax.random.PRNGKey(0),
+            (500, 3),
+            dtype=jnp.float64,
+        )
+        cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 25.0
+        scale = 0.1
 
-        params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
-        rc = float(params.real_space_cutoff[0])
-        assert 4.0 <= rc <= 20.0, f"rc={rc} outside sane band"
+        base = estimate_pme_parameters(positions, cell, accuracy=1e-6)
+        scaled = estimate_pme_parameters(
+            positions * scale,
+            cell * scale,
+            accuracy=1e-6,
+        )
+
+        assert scaled.mesh_dimensions == base.mesh_dimensions
+        assert jnp.allclose(
+            scaled.real_space_cutoff,
+            base.real_space_cutoff * scale,
+            rtol=1e-12,
+            atol=0.0,
+        )
+        assert jnp.allclose(
+            scaled.alpha,
+            base.alpha / scale,
+            rtol=1e-12,
+            atol=0.0,
+        )
 
     def test_pme_user_supplied_cutoff_respected(self):
         """When real_space_cutoff is given, it is used as-is."""
@@ -506,6 +536,11 @@ class TestEstimatePMEParameters:
         assert jnp.allclose(params.real_space_cutoff, jnp.array([7.5]))
         expected_alpha = math.sqrt(-math.log(1e-6)) / 7.5
         assert jnp.allclose(params.alpha, jnp.array([expected_alpha]), rtol=1e-5)
+        assert params.mesh_dimensions == estimate_pme_mesh_dimensions(
+            cell,
+            params.alpha,
+            accuracy=1e-6,
+        )
 
     def test_mesh_spacing_varies_per_system(self):
         """Test that mesh_spacing varies per system in batch mode."""
@@ -553,16 +588,13 @@ class TestMeshSpacingToDimensions:
         assert len(dims) == 3
         assert all(isinstance(d, int) for d in dims)
 
-    def test_power_of_two_dimensions(self):
-        """Test that all dimensions are powers of 2."""
+    def test_fft_friendly_dimensions(self):
+        """The spacing request resolves to the smallest supported dimensions."""
         cell = jnp.eye(3)[None, ...] * 20.0
 
         dims = mesh_spacing_to_dimensions(cell, mesh_spacing=0.5)
 
-        for d_val in dims:
-            assert d_val > 0 and (d_val & (d_val - 1)) == 0, (
-                f"{d_val} is not a power of 2"
-            )
+        assert dims == (40, 40, 40)
 
     def test_smaller_spacing_more_points(self):
         """Test that smaller spacing leads to more mesh points."""
