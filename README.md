@@ -221,6 +221,14 @@ uv pip install nvalchemi-toolkit-ops \
 See the [installation guide](https://nvidia.github.io/nvalchemi-toolkit-ops/userguide/about/install.html#cuda-13-installation)
 for details.
 
+## Roadmap
+
+Features planned for the next release:
+
+- Performance improvement to electrostatics, neighbor lists and DFT-D3
+- DFT-D4
+- CSVR thermostat
+
 ## Contributions & Disclaimers
 
 Feature requests, discussions, and general feedback are
