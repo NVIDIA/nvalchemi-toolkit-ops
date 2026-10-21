@@ -95,6 +95,10 @@
 
 ### Changed
 
+- Removed the literal docstring-contract unit test for neighbor Warp
+  definitions. The test only checked that source docstrings contained section
+  heading words. Docstring coverage is still enforced by `make interrogate`.
+  The runtime specialization docstring tests remain.
 - Torch and JAX single and batched naive neighbor APIs now reject zero and
   negative cutoffs before allocating or modifying output buffers. Eager calls
   raise `ValueError`; this replaces the earlier empty-result behavior for zero
