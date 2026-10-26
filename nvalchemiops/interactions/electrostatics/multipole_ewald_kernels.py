@@ -50,7 +50,7 @@ from typing import Any
 
 import warp as wp
 
-from nvalchemiops.math import wp_erfc
+from nvalchemiops.math import wp_erfc_input_precision
 from nvalchemiops.warp_dispatch import register_overloads
 
 # 2 / sqrt(pi), precomputed for the A(r) coefficient in the tensor helpers.
@@ -86,7 +86,7 @@ def damped_coulomb_T0(distance: wp.float64, alpha: wp.float64) -> wp.float64:
     wp.float64
         :math:`\mathrm{erfc}(\alpha r)/r`.
     """
-    return wp_erfc(alpha * distance) / distance
+    return wp_erfc_input_precision(alpha * distance) / distance
 
 
 @wp.func
@@ -125,7 +125,7 @@ def damped_coulomb_T1(
         The three components of :math:`T^{(1)}(\mathbf{r})`.
     """
     alpha_r = alpha * distance
-    erfc_ar = wp_erfc(alpha_r)
+    erfc_ar = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
 
     inv_r = wp.float64(1.0) / distance
@@ -192,7 +192,7 @@ def _gto_ewald_A_single(r: wp.float64, x: wp.float64) -> wp.vec4d:
         :math:`(A, A', A'', A''')` at this single :math:`x`.
     """
     xr = x * r
-    erf_xr = wp.float64(1.0) - wp_erfc(xr)
+    erf_xr = wp.float64(1.0) - wp_erfc_input_precision(xr)
     exp_term = wp.exp(-xr * xr)
 
     inv_r = wp.float64(1.0) / r
@@ -239,7 +239,7 @@ def _gto_ewald_t0(r: wp.float64, a: wp.float64, b: wp.float64) -> wp.float64:
     cancellation since ``a > b`` means ``erfc(ar) < erfc(br)`` and the
     subtraction is numerically well-conditioned.
     """
-    return (wp_erfc(b * r) - wp_erfc(a * r)) / r
+    return (wp_erfc_input_precision(b * r) - wp_erfc_input_precision(a * r)) / r
 
 
 @wp.func
@@ -280,13 +280,13 @@ def _gto_ewald_monopole_pair_terms_fused(
 ) -> _MonopolePairTerms:
     """Fused per-pair `(t0, a_scalar)` sharing erfc evaluations.
 
-    Computes both quantities from two `wp_erfc` calls (vs four for the
+    Computes both quantities from two `wp_erfc_input_precision` calls (vs four for the
     separate energy + analytical-backward path), sharing `inv_r`,
     `inv_r2`, and the `erf = 1 - erfc` identity. Only the `[0]` component
     of `_gto_ewald_A_single` is needed for lmax=0 forces.
     """
-    erfc_ar = wp_erfc(a * r)
-    erfc_br = wp_erfc(b * r)
+    erfc_ar = wp_erfc_input_precision(a * r)
+    erfc_br = wp_erfc_input_precision(b * r)
     inv_r = wp.float64(1.0) / r
     inv_r2 = inv_r * inv_r
 
@@ -337,8 +337,8 @@ def _gto_ewald_dipole_pair_terms_fused(
     evaluations, saving 2 erfcs and 2 exps per pair vs the separate
     energy + analytical-backward path.
     """
-    erfc_ar = wp_erfc(a * r)
-    erfc_br = wp_erfc(b * r)
+    erfc_ar = wp_erfc_input_precision(a * r)
+    erfc_br = wp_erfc_input_precision(b * r)
     erf_ar = wp.float64(1.0) - erfc_ar
     erf_br = wp.float64(1.0) - erfc_br
     exp_ar = wp.exp(-a * a * r * r)
@@ -636,7 +636,7 @@ def _gto_ewald_A_single_v5(r: wp.float64, x: wp.float64) -> _QuadrupoleRadialTer
     subtracts at-a vs at-b); only the 5 ``a*`` fields are populated.
     """
     xr = x * r
-    erf_xr = wp.float64(1.0) - wp_erfc(xr)
+    erf_xr = wp.float64(1.0) - wp_erfc_input_precision(xr)
     exp_term = wp.exp(-xr * xr)
     inv_r = wp.float64(1.0) / r
     inv_r2 = inv_r * inv_r
@@ -694,8 +694,8 @@ def _gto_ewald_quadrupole_pair_terms_fused(
     r: wp.float64, a: wp.float64, b: wp.float64
 ) -> _QuadrupoleRadialTerms:
     """Fused per-pair radial helpers for LMAX=2 -- shared erfc/exp pairs."""
-    erfc_ar = wp_erfc(a * r)
-    erfc_br = wp_erfc(b * r)
+    erfc_ar = wp_erfc_input_precision(a * r)
+    erfc_br = wp_erfc_input_precision(b * r)
     erf_ar = wp.float64(1.0) - erfc_ar
     erf_br = wp.float64(1.0) - erfc_br
     exp_ar = wp.exp(-a * a * r * r)

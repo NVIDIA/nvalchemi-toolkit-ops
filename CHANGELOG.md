@@ -26,6 +26,10 @@
 
 ### Fixed
 
+- Multipole Ewald and PME real-space kernels evaluated `erfc` with the
+  float32-grade approximation for float64 inputs, so float64 multipole
+  real-space energies and gradients were accurate to only about 1e-7. They now
+  use the native float64 `erfc`, as the monopole Ewald kernels do.
 - Multipole PME used the transposed inverse cell for the k-grid, which gave
   wrong energies, forces and stress for triclinic cells.
 - Multipole PME position and cell gradients at `l >= 1` were silently wrong
