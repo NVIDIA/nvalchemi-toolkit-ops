@@ -5075,8 +5075,8 @@ def multipole_ewald_summation(
     k_cutoff : float, optional
         Maximum :math:`|k|` for the reciprocal sum. Auto-estimated from the
         Kolafa-Perram balance when ``None`` (single mode); batched mode always
-        builds its own k-grid per system. Unnecessary when a ``cache`` or
-        ``miller_indices`` is supplied.
+        builds its own k-grid per system. Unnecessary when a ``cache`` is
+        supplied; cannot be combined with ``miller_indices``.
     batch_idx : torch.Tensor, optional
         :math:`(N_\text{total},)` int32. ``None`` selects single-system mode.
     accuracy : float, default 1e-6
@@ -5122,6 +5122,8 @@ def multipole_ewald_summation(
     # estimator is unnecessary: take alpha from the cache when not given and
     # skip the Kolafa-Perram balance entirely (the cache supplies k_cutoff
     # implicitly). See the cache= note in the docstring for the stress caveat.
+    if miller_indices is not None and k_cutoff is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
     if cache is not None and alpha is None:
         alpha = float(cache.alpha)
 
@@ -5162,7 +5164,7 @@ def multipole_ewald_summation(
                         "each system separately."
                     )
                 alpha = alpha_min
-        if k_cutoff is None:
+        if k_cutoff is None and miller_indices is None:
             kcut_tensor = params.reciprocal_space_cutoff
             k_cutoff = float(kcut_tensor.max().item())
 

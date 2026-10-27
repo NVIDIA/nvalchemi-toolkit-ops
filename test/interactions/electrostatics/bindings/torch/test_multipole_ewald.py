@@ -3451,17 +3451,39 @@ class TestReciprocalMillerIndices:
             for got, want in zip(out, ref, strict=True):
                 torch.testing.assert_close(got, want, rtol=1e-9, atol=1e-9)
 
-    def test_rejects_both_k_vectors_and_miller_indices(self):
+    @pytest.mark.parametrize(
+        "conflict",
+        [
+            {"k_vectors": torch.zeros(1, 3, dtype=torch.float64, device="cuda:0")},
+            {"k_cutoff": 2.0},
+        ],
+        ids=["k_vectors", "k_cutoff"],
+    )
+    def test_rejects_conflicting_topology_source(self, conflict):
         from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
             prepare_multipole_scf_cache,
         )
 
         cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
-        with pytest.raises(ValueError, match="not both"):
+        with pytest.raises(ValueError, match="cannot be combined"):
             prepare_multipole_scf_cache(
                 cell,
                 sigma=self.SIGMA,
                 receiver_sigmas=[self.SIGMA],
-                k_vectors=torch.zeros(1, 3, dtype=torch.float64, device="cuda:0"),
                 miller_indices=self._topology(cell),
+                **conflict,
+            )
+
+    def test_rejects_miller_indices_on_other_device(self):
+        from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
+            prepare_multipole_scf_cache,
+        )
+
+        cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
+        with pytest.raises(ValueError, match="same device"):
+            prepare_multipole_scf_cache(
+                cell,
+                sigma=self.SIGMA,
+                receiver_sigmas=[self.SIGMA],
+                miller_indices=self._topology(cell).cpu(),
             )

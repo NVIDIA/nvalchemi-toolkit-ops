@@ -276,8 +276,8 @@ def prepare_multipole_scf_cache(
         (stress) while its shape is static: no data-dependent grid size, host
         synchronization, or per-system loop, which makes the build
         ``torch.compile``-traceable. The topology must conservatively cover
-        every cell it is used with; ``k_cutoff`` is then ignored. Not combined
-        with ``k_vectors``.
+        every cell it is used with. Cannot be combined with ``k_vectors`` or
+        ``k_cutoff``.
     l_max : int
         Source multipole order the cache is being built for. ``0`` or
         ``1``. Only affects the ``feature_overlap_constants`` layout
@@ -335,7 +335,9 @@ def prepare_multipole_scf_cache(
     if alpha is not None and alpha <= 0.0:
         raise ValueError(f"alpha, when given, must be positive, got {alpha}")
     if k_vectors is not None and miller_indices is not None:
-        raise ValueError("Pass either k_vectors or miller_indices, not both.")
+        raise ValueError("k_vectors cannot be combined with miller_indices")
+    if k_cutoff is not None and miller_indices is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
     if (
         k_vectors is None
         and miller_indices is None
@@ -368,7 +370,7 @@ def prepare_multipole_scf_cache(
         cell_on_device = cell.to(device)
         if miller_indices is not None:
             k_vectors_half = k_vectors_from_miller_indices(
-                cell_on_device, miller_indices.to(device)
+                cell_on_device, miller_indices
             )
         else:
             k_vectors_half = generate_k_vectors_ewald_summation(
@@ -619,15 +621,11 @@ def _prepare_multipole_scf_cache_batch(
         raise ValueError(f"l_max must be 0, 1, or 2, got {l_max}")
     if feature_max_l not in (0, 1, 2):
         raise ValueError(f"feature_max_l must be 0, 1, or 2, got {feature_max_l}")
+    if miller_indices is not None and k_cutoff is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
     if miller_indices is None and (k_cutoff is None or k_cutoff <= 0.0):
         raise ValueError(
             f"k_cutoff must be a positive float (or miller_indices given), got {k_cutoff}"
-        )
-    if miller_indices is not None and (
-        miller_indices.ndim != 2 or miller_indices.shape[-1] != 3
-    ):
-        raise ValueError(
-            f"miller_indices must be (K, 3), got {tuple(miller_indices.shape)}"
         )
 
     if isinstance(receiver_sigmas, torch.Tensor):
@@ -652,9 +650,9 @@ def _prepare_multipole_scf_cache_batch(
     if miller_indices is not None:
         # Caller-retained topology: static (B, 1 + K, 3) grid, differentiable in
         # the cells, no per-system loop / data-dependent size / host sync.
-        k_half = k_vectors_from_miller_indices(
-            cells_dev, miller_indices.to(device)
-        ).reshape(batch_size, -1, 3)
+        k_half = k_vectors_from_miller_indices(cells_dev, miller_indices).reshape(
+            batch_size, -1, 3
+        )
         k_vectors = torch.cat([torch.zeros_like(k_half[:, :1]), k_half], dim=1).to(
             dtype=torch.float64
         )

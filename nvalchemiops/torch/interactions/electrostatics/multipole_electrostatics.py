@@ -513,8 +513,9 @@ def multipole_reciprocal_space_energy(
         the self-interaction overlap (matches ``GTOElectrostaticEnergy``).
     k_cutoff : float, optional
         Maximum ``|k|`` to include in the reciprocal-space sum. Required when
-        ``cache`` is not supplied (unless ``miller_indices`` is given); ignored
-        when a pre-built cache is passed.
+        ``cache`` is not supplied and ``miller_indices`` is not given; ignored
+        when a pre-built cache is passed. Cannot be combined with
+        ``miller_indices``.
     miller_indices : torch.Tensor, optional
         Caller-retained half-space Miller topology ``(K, 3)`` replacing the
         ``k_cutoff``-derived grid. See :func:`prepare_multipole_scf_cache`; it
@@ -574,6 +575,8 @@ def multipole_reciprocal_space_energy(
         raise ValueError(f"sigma must be positive, got {sigma}")
     if alpha <= 0.0:
         raise ValueError(f"alpha must be positive, got {alpha}")
+    if miller_indices is not None and k_cutoff is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
     if (
         cache is None
         and miller_indices is None
