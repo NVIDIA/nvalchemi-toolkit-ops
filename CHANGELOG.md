@@ -34,6 +34,9 @@
 
 ### Added
 
+- Added the CSVR (Bussi stochastic velocity rescaling) NVT thermostat,
+  `csvr_thermostat` and `csvr_thermostat_out`, with single, `batch_idx`, and
+  `atom_ptr` modes.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was

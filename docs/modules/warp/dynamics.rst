@@ -62,6 +62,14 @@ Deterministic thermostat for NVT ensemble using Nosé-Hoover chains with Yoshida
 .. autofunction:: nvalchemiops.dynamics.integrators.nose_hoover.nhc_compute_masses
 .. autofunction:: nvalchemiops.dynamics.integrators.nose_hoover.nhc_compute_chain_energy
 
+CSVR (Stochastic Velocity Rescaling)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Bussi-Donadio-Parrinello stochastic velocity rescaling thermostat for NVT ensemble.
+
+.. autofunction:: nvalchemiops.dynamics.integrators.csvr.csvr_thermostat
+.. autofunction:: nvalchemiops.dynamics.integrators.csvr.csvr_thermostat_out
+
 Velocity Rescaling
 ~~~~~~~~~~~~~~~~~~
 
