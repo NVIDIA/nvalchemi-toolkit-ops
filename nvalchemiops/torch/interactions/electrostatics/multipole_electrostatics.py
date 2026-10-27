@@ -460,6 +460,7 @@ def multipole_reciprocal_space_energy(
     sigma: float,
     alpha: float,
     k_cutoff: float | None = None,
+    miller_indices: torch.Tensor | None = None,
     normalize: NormMode | int | str = NormMode.MULTIPOLES,
     cache: MultipoleSCFCache | None = None,
 ) -> torch.Tensor:
@@ -512,7 +513,13 @@ def multipole_reciprocal_space_energy(
         the self-interaction overlap (matches ``GTOElectrostaticEnergy``).
     k_cutoff : float, optional
         Maximum ``|k|`` to include in the reciprocal-space sum. Required when
-        ``cache`` is not supplied; ignored when a pre-built cache is passed.
+        ``cache`` is not supplied (unless ``miller_indices`` is given); ignored
+        when a pre-built cache is passed.
+    miller_indices : torch.Tensor, optional
+        Caller-retained half-space Miller topology ``(K, 3)`` replacing the
+        ``k_cutoff``-derived grid. See :func:`prepare_multipole_scf_cache`; it
+        gives a static-shape, ``torch.compile``-traceable k-grid that stays
+        differentiable in ``cell``.
     normalize : NormMode | int | str
         Normalization convention for the density basis. Defaults to
         ``NormMode.MULTIPOLES`` (the only physically meaningful choice for
@@ -567,9 +574,13 @@ def multipole_reciprocal_space_energy(
         raise ValueError(f"sigma must be positive, got {sigma}")
     if alpha <= 0.0:
         raise ValueError(f"alpha must be positive, got {alpha}")
-    if cache is None and (k_cutoff is None or k_cutoff <= 0.0):
+    if (
+        cache is None
+        and miller_indices is None
+        and (k_cutoff is None or k_cutoff <= 0.0)
+    ):
         raise ValueError(
-            "Either a pre-built cache or a positive k_cutoff "
+            "Either a pre-built cache, miller_indices, or a positive k_cutoff "
             f"must be supplied (got k_cutoff={k_cutoff})."
         )
 
@@ -591,6 +602,7 @@ def multipole_reciprocal_space_energy(
             sigma=sigma,
             receiver_sigmas=[sigma],
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             l_max=l_max,
             density_normalize=norm_mode,
             feature_normalize=norm_mode,

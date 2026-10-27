@@ -3357,3 +3357,111 @@ def test_batch_fused_scalar_cell_grad_matches_fd(lmax):
     assert rel < 5e-4, (
         f"batched LMAX={lmax}: rel_err={rel:.3e}\nan={grad_an}\nfd={grad_fd}"
     )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+class TestReciprocalMillerIndices:
+    """Caller-retained Miller topology for the batched Ewald reciprocal sum.
+
+    ``miller_indices`` replaces the per-system, data-dependent ``k_cutoff`` grid
+    with a static-shape grid that is still differentiable in the cell, which is
+    what makes the reciprocal sum ``torch.compile``-traceable.
+    """
+
+    SIGMA, ALPHA, K_CUT = 0.8, 0.6, 5.0
+
+    @staticmethod
+    def _system(lmax: int):
+        device, dtype = torch.device("cuda:0"), torch.float64
+        gen = torch.Generator(device=device).manual_seed(11)
+        n_sys, n_per, L = 2, 16, 9.0
+        n = n_sys * n_per
+        cell = (torch.eye(3, dtype=dtype, device=device) * L).repeat(n_sys, 1, 1)
+        positions = L * torch.rand(n, 3, generator=gen, dtype=dtype, device=device)
+        moments = 0.5 * torch.randn(
+            n, (lmax + 1) ** 2, generator=gen, dtype=dtype, device=device
+        )
+        batch_idx = torch.arange(n_sys, dtype=torch.int32, device=device)
+        return positions, moments, cell, batch_idx.repeat_interleave(n_per)
+
+    def _energy(self, positions, moments, cell, batch_idx, **grid):
+        from nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics import (
+            multipole_reciprocal_space_energy,
+        )
+
+        return multipole_reciprocal_space_energy(
+            positions,
+            moments,
+            cell,
+            batch_idx=batch_idx,
+            sigma=self.SIGMA,
+            alpha=self.ALPHA,
+            **grid,
+        )
+
+    def _topology(self, cell):
+        from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+            generate_ewald_miller_indices,
+        )
+
+        return generate_ewald_miller_indices(cell.detach(), self.K_CUT)
+
+    @pytest.mark.parametrize("lmax", [0, 1, 2])
+    def test_matches_k_cutoff_grid(self, lmax):
+        positions, moments, cell, batch_idx = self._system(lmax)
+        ref = self._energy(positions, moments, cell, batch_idx, k_cutoff=self.K_CUT)
+        got = self._energy(
+            positions, moments, cell, batch_idx, miller_indices=self._topology(cell)
+        )
+        torch.testing.assert_close(got, ref, rtol=1e-10, atol=1e-10)
+
+    @pytest.mark.parametrize("lmax", [0, 2])
+    def test_position_and_cell_grads_match_k_cutoff_grid(self, lmax):
+        positions, moments, cell, batch_idx = self._system(lmax)
+        topology = self._topology(cell)
+
+        def grads(**grid):
+            pos = positions.detach().clone().requires_grad_(True)
+            cel = cell.detach().clone().requires_grad_(True)
+            e = self._energy(pos, moments, cel, batch_idx, **grid)
+            return torch.autograd.grad(e.sum(), [pos, cel])
+
+        for got, want in zip(
+            grads(miller_indices=topology), grads(k_cutoff=self.K_CUT), strict=True
+        ):
+            torch.testing.assert_close(got, want, rtol=1e-9, atol=1e-9)
+
+    @pytest.mark.parametrize("lmax", [0, 1, 2])
+    def test_compiled_grads_match_eager(self, lmax, monkeypatch):
+        monkeypatch.setattr(torch._inductor.config, "fx_graph_cache", False)
+        monkeypatch.setattr(torch._functorch.config, "enable_autograd_cache", False)
+        positions, moments, cell, batch_idx = self._system(lmax)
+        topology = self._topology(cell)
+
+        def grads(fn):
+            pos = positions.detach().clone().requires_grad_(True)
+            cel = cell.detach().clone().requires_grad_(True)
+            e = fn(pos, moments, cel, batch_idx, miller_indices=topology)
+            return torch.autograd.grad(e.sum(), [pos, cel])
+
+        ref = grads(self._energy)
+        for _ in range(2):
+            torch._dynamo.reset()
+            out = grads(torch.compile(self._energy, fullgraph=True))
+            for got, want in zip(out, ref, strict=True):
+                torch.testing.assert_close(got, want, rtol=1e-9, atol=1e-9)
+
+    def test_rejects_both_k_vectors_and_miller_indices(self):
+        from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
+            prepare_multipole_scf_cache,
+        )
+
+        cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
+        with pytest.raises(ValueError, match="not both"):
+            prepare_multipole_scf_cache(
+                cell,
+                sigma=self.SIGMA,
+                receiver_sigmas=[self.SIGMA],
+                k_vectors=torch.zeros(1, 3, dtype=torch.float64, device="cuda:0"),
+                miller_indices=self._topology(cell),
+            )

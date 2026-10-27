@@ -5017,6 +5017,7 @@ def multipole_ewald_summation(
     cost_ratio: float = 1.0,
     half_neighbor_list: bool = False,
     cache: MultipoleSCFCache | None = None,
+    miller_indices: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Full GTO-Ewald multipole electrostatic total energy.
 
@@ -5074,8 +5075,8 @@ def multipole_ewald_summation(
     k_cutoff : float, optional
         Maximum :math:`|k|` for the reciprocal sum. Auto-estimated from the
         Kolafa-Perram balance when ``None`` (single mode); batched mode always
-        builds its own k-grid per system. Unnecessary when a ``cache`` is
-        supplied (the cache already encodes the k-grid).
+        builds its own k-grid per system. Unnecessary when a ``cache`` or
+        ``miller_indices`` is supplied.
     batch_idx : torch.Tensor, optional
         :math:`(N_\text{total},)` int32. ``None`` selects single-system mode.
     accuracy : float, default 1e-6
@@ -5128,7 +5129,9 @@ def multipole_ewald_summation(
     # balance if either is missing. We only run the estimator once per
     # call (single-system mode); batched callers that want per-system
     # parameters should pass them in explicitly.
-    if cache is None and (alpha is None or k_cutoff is None):
+    if cache is None and (
+        alpha is None or (k_cutoff is None and miller_indices is None)
+    ):
         from nvalchemiops.torch.interactions.electrostatics.parameters import (
             estimate_multipole_ewald_parameters,
         )
@@ -5211,7 +5214,7 @@ def multipole_ewald_summation(
                 raise ValueError(
                     f"batched mode requires cell shape (B, 3, 3); got {tuple(cell.shape)}"
                 )
-            if cache is None and k_cutoff is None:
+            if cache is None and k_cutoff is None and miller_indices is None:
                 raise ValueError(
                     "batched mode requires k_cutoff (batched reciprocal "
                     "builds its own k-grid per system) unless a prebuilt "
@@ -5243,6 +5246,7 @@ def multipole_ewald_summation(
                 sigma=sigma,
                 alpha=alpha,
                 k_cutoff=k_cutoff,
+                miller_indices=miller_indices,
                 cache=cache,
             )
             atom_self = _multipole_ewald_self_energy_per_atom(
@@ -5281,6 +5285,7 @@ def multipole_ewald_summation(
             sigma=sigma,
             alpha=alpha,
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             cache=cache,
         )
         e_self = _multipole_ewald_self_energy_per_atom(
@@ -5311,7 +5316,7 @@ def multipole_ewald_summation(
         sigmas = torch.full((B,), sigma, dtype=input_dtype, device=device)
         alphas = torch.full((B,), alpha, dtype=input_dtype, device=device)
 
-        if cache is None and k_cutoff is None:
+        if cache is None and k_cutoff is None and miller_indices is None:
             raise ValueError(
                 "batched mode requires k_cutoff (batched reciprocal "
                 "builds its own k-grid per system) unless a prebuilt cache= "
@@ -5337,6 +5342,7 @@ def multipole_ewald_summation(
             sigma=sigma,
             alpha=alpha,
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             cache=cache,
         )
         atom_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
@@ -5363,6 +5369,7 @@ def multipole_ewald_summation(
         sigma=sigma,
         alpha=alpha,
         k_cutoff=k_cutoff,
+        miller_indices=miller_indices,
         cache=cache,
     )
     e_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)

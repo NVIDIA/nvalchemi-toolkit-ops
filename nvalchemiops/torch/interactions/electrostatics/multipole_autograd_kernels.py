@@ -306,13 +306,97 @@ class SourcePhiHatFunction:
 # =============================================================================
 
 
-class ReceiverPhiHatFunction(torch.autograd.Function):
-    r"""Autograd-registered :func:`eval_receiver_gto_fourier_dipole`.
+@scoped_torch_warp_stream
+def _receiver_phi_hat_forward(
+    k_vectors: torch.Tensor,
+    k_norm2: torch.Tensor,
+    sigmas: torch.Tensor,
+    inv_cl_table: torch.Tensor,
+) -> torch.Tensor:
+    """Opaque forward: :func:`eval_receiver_gto_fourier_dipole` -> ``(N_k, N_sigma, 4, 2)``."""
+    device = k_vectors.device
+    out = torch.empty(
+        (k_vectors.shape[0], sigmas.shape[0], 4, 2), dtype=torch.float64, device=device
+    )
+    eval_receiver_gto_fourier_dipole(
+        _wp_in(k_vectors, wp.vec3d),
+        _wp_in(k_norm2),
+        _wp_in(sigmas),
+        _wp_in(inv_cl_table),
+        _wp_out(out),
+        device=str(wp.device_from_torch(device)),
+    )
+    return out
 
-    Forward takes ``(k_vectors, k_norm2, sigmas, inv_cl_table)`` and
-    returns ``receiver_phi_hat`` of shape :math:`(N_k, N_\sigma, 4, 2)`.
-    The ``sigmas`` and ``inv_cl_table`` tensors are treated as
-    non-differentiable (receiver widths are hyper-parameters).
+
+def _receiver_phi_hat_forward_fake(
+    k_vectors: torch.Tensor,
+    k_norm2: torch.Tensor,
+    sigmas: torch.Tensor,
+    inv_cl_table: torch.Tensor,
+) -> torch.Tensor:
+    """Shape/dtype metadata: ``(N_k, N_sigma, 4, 2)`` float64."""
+    return k_vectors.new_empty(
+        (k_vectors.shape[0], sigmas.shape[0], 4, 2), dtype=torch.float64
+    )
+
+
+@scoped_torch_warp_stream
+def _receiver_phi_hat_backward(
+    grad_output: torch.Tensor,
+    k_vectors: torch.Tensor,
+    k_norm2: torch.Tensor,
+    sigmas: torch.Tensor,
+    inv_cl_table: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """First-order backward via the Warp ``receiver_phi_hat_backward_dipole`` kernel."""
+    device = k_vectors.device
+    grad_k_vec = torch.empty_like(k_vectors, dtype=torch.float64)
+    grad_k_n2 = torch.empty_like(k_norm2, dtype=torch.float64)
+    receiver_phi_hat_backward_dipole(
+        _wp_in(grad_output),
+        _wp_in(k_vectors, wp.vec3d),
+        _wp_in(k_norm2),
+        _wp_in(sigmas),
+        _wp_in(inv_cl_table),
+        _wp_out(grad_k_vec, wp.vec3d),
+        _wp_out(grad_k_n2),
+        device=str(wp.device_from_torch(device)),
+    )
+    return grad_k_vec, grad_k_n2
+
+
+_RECEIVER_PHI_HAT_SCHEMA = (
+    "(Tensor k_vectors, Tensor k_norm2, Tensor sigmas, Tensor inv_cl_table) -> Tensor"
+)
+_RECEIVER_PHI_HAT_BWD_SCHEMA = (
+    "(Tensor grad_output, Tensor k_vectors, Tensor k_norm2, Tensor sigmas, "
+    "Tensor inv_cl_table) -> (Tensor, Tensor)"
+)
+register_warp_op_chain(
+    name="nvalchemiops::multipole_receiver_phi_hat",
+    forward=_receiver_phi_hat_forward,
+    forward_schema=_RECEIVER_PHI_HAT_SCHEMA,
+    forward_fake=_receiver_phi_hat_forward_fake,
+    backward=_receiver_phi_hat_backward,
+    backward_schema=_RECEIVER_PHI_HAT_BWD_SCHEMA,
+    backward_return_arity=2,
+    diff_input_positions=(
+        0,
+        1,
+    ),  # k_vectors, k_norm2; sigmas/inv_cl_table are constants
+    n_forward_inputs=4,
+)
+
+
+class ReceiverPhiHatFunction:
+    r"""Back-compat shim for the l<=1 receiver :math:`\hat\phi(k)` GTO-Fourier eval.
+
+    The implementation is the differentiable, ``torch.compile``-traceable
+    ``torch.ops.nvalchemiops.multipole_receiver_phi_hat`` Warp op chain (opaque
+    forward :func:`eval_receiver_gto_fourier_dipole` + analytical Warp backward
+    to ``k_vectors`` / ``k_norm2``). This class only preserves the historical
+    ``.apply(k_vectors, k_norm2, sigmas, inv_cl_table)`` signature.
 
     Parameters
     ----------
@@ -332,22 +416,16 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    @scoped_torch_warp_stream
-    def forward(
-        ctx,
+    def apply(
         k_vectors: torch.Tensor,
         k_norm2: torch.Tensor,
         sigmas: torch.Tensor,
         inv_cl_table: torch.Tensor,
     ) -> torch.Tensor:
-        r"""Evaluate the l<=1 receiver Fourier block via :func:`eval_receiver_gto_fourier_dipole`.
-
-        Saves ``k_vectors``, ``k_norm2``, ``sigmas``, and ``inv_cl_table`` for backward.
+        r"""Dispatch to ``torch.ops.nvalchemiops.multipole_receiver_phi_hat``.
 
         Parameters
         ----------
-        ctx : torch.autograd.function.FunctionCtx
-            Autograd context object used to stash tensors for backward.
         k_vectors : torch.Tensor, shape (N_k, 3)
             Reciprocal-lattice vectors, dtype float64.
         k_norm2 : torch.Tensor, shape (N_k,)
@@ -355,91 +433,106 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
         sigmas : torch.Tensor, shape (N_sigma,)
             Per-receiver Gaussian widths (non-differentiable), dtype float64.
         inv_cl_table : torch.Tensor
-            Inverse closure-length normalization table (non-differentiable), dtype float64.
+            Inverse closure-length normalization table (non-differentiable).
 
         Returns
         -------
         torch.Tensor, shape (N_k, N_sigma, 4, 2)
             Receiver-basis :math:`\hat\phi(k)`, dtype float64.
         """
-        n_k = k_vectors.shape[0]
-        n_sigma = sigmas.shape[0]
-        device = k_vectors.device
-        wp_device = wp.device_from_torch(device)
-
-        out = torch.empty((n_k, n_sigma, 4, 2), dtype=torch.float64, device=device)
-        eval_receiver_gto_fourier_dipole(
-            wp.from_torch(k_vectors.detach().contiguous(), dtype=wp.vec3d),
-            wp.from_torch(k_norm2.detach().contiguous(), dtype=wp.float64),
-            wp.from_torch(sigmas.detach().contiguous(), dtype=wp.float64),
-            wp.from_torch(inv_cl_table.detach().contiguous(), dtype=wp.float64),
-            wp.from_torch(out, dtype=wp.float64),
-            device=str(wp_device),
+        return torch.ops.nvalchemiops.multipole_receiver_phi_hat(
+            k_vectors, k_norm2, sigmas, inv_cl_table
         )
 
-        ctx.save_for_backward(k_vectors, k_norm2, sigmas, inv_cl_table)
-        return out
 
-    @staticmethod
-    @scoped_torch_warp_stream
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:
-        r"""Propagate gradients through :func:`eval_receiver_gto_fourier_dipole`.
-
-        Computes :math:`\partial L/\partial` ``k_vectors`` and
-        :math:`\partial L/\partial` ``k_norm2`` via
-        :func:`receiver_phi_hat_backward_dipole`. The ``sigmas`` and
-        ``inv_cl_table`` slots return ``None`` (non-differentiable).
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function.FunctionCtx
-            Autograd context holding saved tensors from forward.
-        grad_output : torch.Tensor, shape (N_k, N_sigma, 4, 2)
-            Upstream gradient w.r.t. the forward output.
-
-        Returns
-        -------
-        grad_k_vec : torch.Tensor, shape (N_k, 3)
-            Gradient w.r.t. ``k_vectors``.
-        grad_k_n2 : torch.Tensor, shape (N_k,)
-            Gradient w.r.t. ``k_norm2``.
-        None
-            Placeholder for ``sigmas`` (non-differentiable).
-        None
-            Placeholder for ``inv_cl_table`` (non-differentiable).
-        """
-        k_vectors, k_norm2, sigmas, inv_cl_table = ctx.saved_tensors
-        device = k_vectors.device
-        wp_device = wp.device_from_torch(device)
-
-        grad_k_vec = torch.empty_like(k_vectors)
-        grad_k_n2 = torch.empty_like(k_norm2)
-
-        receiver_phi_hat_backward_dipole(
-            wp.from_torch(grad_output.contiguous(), dtype=wp.float64),
-            wp.from_torch(k_vectors.contiguous(), dtype=wp.vec3d),
-            wp.from_torch(k_norm2.contiguous(), dtype=wp.float64),
-            wp.from_torch(sigmas.contiguous(), dtype=wp.float64),
-            wp.from_torch(inv_cl_table.contiguous(), dtype=wp.float64),
-            wp.from_torch(grad_k_vec, dtype=wp.vec3d),
-            wp.from_torch(grad_k_n2, dtype=wp.float64),
-            device=str(wp_device),
-        )
-        return grad_k_vec, grad_k_n2, None, None
+@scoped_torch_warp_stream
+def _receiver_phi_hat_quadrupole_forward(
+    k_vectors: torch.Tensor,
+    k_norm2: torch.Tensor,
+    sigmas: torch.Tensor,
+    inv_cl_l2: torch.Tensor,
+) -> torch.Tensor:
+    """Opaque forward: :func:`eval_receiver_gto_fourier_quadrupole` -> ``(N_k, N_sigma, 5, 2)``."""
+    device = k_vectors.device
+    out = torch.empty(
+        (k_vectors.shape[0], sigmas.shape[0], 5, 2), dtype=torch.float64, device=device
+    )
+    eval_receiver_gto_fourier_quadrupole(
+        _wp_in(k_vectors, wp.vec3d),
+        _wp_in(k_norm2),
+        _wp_in(sigmas),
+        _wp_in(inv_cl_l2),
+        _wp_out(out),
+        device=str(wp.device_from_torch(device)),
+    )
+    return out
 
 
-class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
-    r"""Autograd-registered :func:`eval_receiver_gto_fourier_quadrupole`.
+def _receiver_phi_hat_quadrupole_forward_fake(
+    k_vectors: torch.Tensor,
+    k_norm2: torch.Tensor,
+    sigmas: torch.Tensor,
+    inv_cl_l2: torch.Tensor,
+) -> torch.Tensor:
+    """Shape/dtype metadata: ``(N_k, N_sigma, 5, 2)`` float64."""
+    return k_vectors.new_empty(
+        (k_vectors.shape[0], sigmas.shape[0], 5, 2), dtype=torch.float64
+    )
 
-    Forward takes ``(k_vectors, k_norm2, sigmas, inv_cl_l2)`` and returns the
-    5-column :math:`l=2` receiver block :math:`(N_k, N_\sigma, 5, 2)` (purely
-    real). ``sigmas`` and ``inv_cl_l2`` are non-differentiable (receiver
-    widths/normalizations are hyper-parameters). Backward produces
-    :math:`\partial L/\partial`\ (k_vectors, k_norm2) so feature cell-grad
-    (stress) composes; torch accumulates with the :math:`l\le1`
-    :class:`ReceiverPhiHatFunction` at the shared ``k_vectors`` / ``k_norm2``.
+
+@scoped_torch_warp_stream
+def _receiver_phi_hat_quadrupole_backward(
+    grad_output: torch.Tensor,
+    k_vectors: torch.Tensor,
+    k_norm2: torch.Tensor,
+    sigmas: torch.Tensor,
+    inv_cl_l2: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """First-order backward via the Warp ``receiver_phi_hat_backward_quadrupole`` kernel."""
+    device = k_vectors.device
+    grad_k_vec = torch.empty_like(k_vectors, dtype=torch.float64)
+    grad_k_n2 = torch.empty_like(k_norm2, dtype=torch.float64)
+    receiver_phi_hat_backward_quadrupole(
+        _wp_in(grad_output),
+        _wp_in(k_vectors, wp.vec3d),
+        _wp_in(k_norm2),
+        _wp_in(sigmas),
+        _wp_in(inv_cl_l2),
+        _wp_out(grad_k_vec, wp.vec3d),
+        _wp_out(grad_k_n2),
+        device=str(wp.device_from_torch(device)),
+    )
+    return grad_k_vec, grad_k_n2
+
+
+_RECEIVER_PHI_HAT_QUAD_SCHEMA = (
+    "(Tensor k_vectors, Tensor k_norm2, Tensor sigmas, Tensor inv_cl_l2) -> Tensor"
+)
+_RECEIVER_PHI_HAT_QUAD_BWD_SCHEMA = (
+    "(Tensor grad_output, Tensor k_vectors, Tensor k_norm2, Tensor sigmas, "
+    "Tensor inv_cl_l2) -> (Tensor, Tensor)"
+)
+register_warp_op_chain(
+    name="nvalchemiops::multipole_receiver_phi_hat_quadrupole",
+    forward=_receiver_phi_hat_quadrupole_forward,
+    forward_schema=_RECEIVER_PHI_HAT_QUAD_SCHEMA,
+    forward_fake=_receiver_phi_hat_quadrupole_forward_fake,
+    backward=_receiver_phi_hat_quadrupole_backward,
+    backward_schema=_RECEIVER_PHI_HAT_QUAD_BWD_SCHEMA,
+    backward_return_arity=2,
+    diff_input_positions=(0, 1),  # k_vectors, k_norm2; sigmas/inv_cl_l2 are constants
+    n_forward_inputs=4,
+)
+
+
+class ReceiverPhiHatQuadrupoleFunction:
+    r"""Back-compat shim for the l=2 receiver :math:`\hat\phi(k)` GTO-Fourier eval.
+
+    Dispatches to the differentiable, ``torch.compile``-traceable
+    ``torch.ops.nvalchemiops.multipole_receiver_phi_hat_quadrupole`` op chain.
+    Preserves the historical ``.apply(k_vectors, k_norm2, sigmas, inv_cl_l2)``
+    signature; the output is the 5-column purely-real l=2 block
+    :math:`(N_k, N_\sigma, 5, 2)`.
 
     Parameters
     ----------
@@ -459,22 +552,16 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    @scoped_torch_warp_stream
-    def forward(
-        ctx,
+    def apply(
         k_vectors: torch.Tensor,
         k_norm2: torch.Tensor,
         sigmas: torch.Tensor,
         inv_cl_l2: torch.Tensor,
     ) -> torch.Tensor:
-        """Evaluate the l=2 receiver Fourier block via :func:`eval_receiver_gto_fourier_quadrupole`.
-
-        Saves ``k_vectors``, ``k_norm2``, ``sigmas``, and ``inv_cl_l2`` for backward.
+        r"""Dispatch to ``torch.ops.nvalchemiops.multipole_receiver_phi_hat_quadrupole``.
 
         Parameters
         ----------
-        ctx : torch.autograd.function.FunctionCtx
-            Autograd context object used to stash tensors for backward.
         k_vectors : torch.Tensor, shape (N_k, 3)
             Reciprocal-lattice vectors, dtype float64.
         k_norm2 : torch.Tensor, shape (N_k,)
@@ -482,76 +569,13 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
         sigmas : torch.Tensor, shape (N_sigma,)
             Per-receiver Gaussian widths (non-differentiable), dtype float64.
         inv_cl_l2 : torch.Tensor
-            l=2 inverse closure-length normalization table (non-differentiable), dtype float64.
+            l=2 inverse closure-length normalization table (non-differentiable).
 
         Returns
         -------
         torch.Tensor, shape (N_k, N_sigma, 5, 2)
             l=2 receiver block, dtype float64 (purely real).
         """
-        n_k = k_vectors.shape[0]
-        n_sigma = sigmas.shape[0]
-        device = k_vectors.device
-        wp_device = wp.device_from_torch(device)
-
-        out = torch.empty((n_k, n_sigma, 5, 2), dtype=torch.float64, device=device)
-        eval_receiver_gto_fourier_quadrupole(
-            wp.from_torch(k_vectors.detach().contiguous(), dtype=wp.vec3d),
-            wp.from_torch(k_norm2.detach().contiguous(), dtype=wp.float64),
-            wp.from_torch(sigmas.detach().contiguous(), dtype=wp.float64),
-            wp.from_torch(inv_cl_l2.detach().contiguous(), dtype=wp.float64),
-            wp.from_torch(out, dtype=wp.float64),
-            device=str(wp_device),
+        return torch.ops.nvalchemiops.multipole_receiver_phi_hat_quadrupole(
+            k_vectors, k_norm2, sigmas, inv_cl_l2
         )
-
-        ctx.save_for_backward(k_vectors, k_norm2, sigmas, inv_cl_l2)
-        return out
-
-    @staticmethod
-    @scoped_torch_warp_stream
-    def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:
-        r"""Propagate gradients through :func:`eval_receiver_gto_fourier_quadrupole`.
-
-        Computes :math:`\partial L/\partial` ``k_vectors`` and
-        :math:`\partial L/\partial` ``k_norm2`` via
-        :func:`receiver_phi_hat_backward_quadrupole`. The ``sigmas`` and
-        ``inv_cl_l2`` slots return ``None`` (non-differentiable).
-
-        Parameters
-        ----------
-        ctx : torch.autograd.function.FunctionCtx
-            Autograd context holding saved tensors from forward.
-        grad_output : torch.Tensor, shape (N_k, N_sigma, 5, 2)
-            Upstream gradient w.r.t. the forward output.
-
-        Returns
-        -------
-        grad_k_vec : torch.Tensor, shape (N_k, 3)
-            Gradient w.r.t. ``k_vectors``.
-        grad_k_n2 : torch.Tensor, shape (N_k,)
-            Gradient w.r.t. ``k_norm2``.
-        None
-            Placeholder for ``sigmas`` (non-differentiable).
-        None
-            Placeholder for ``inv_cl_l2`` (non-differentiable).
-        """
-        k_vectors, k_norm2, sigmas, inv_cl_l2 = ctx.saved_tensors
-        device = k_vectors.device
-        wp_device = wp.device_from_torch(device)
-
-        grad_k_vec = torch.empty_like(k_vectors)
-        grad_k_n2 = torch.empty_like(k_norm2)
-
-        receiver_phi_hat_backward_quadrupole(
-            wp.from_torch(grad_output.contiguous(), dtype=wp.float64),
-            wp.from_torch(k_vectors.contiguous(), dtype=wp.vec3d),
-            wp.from_torch(k_norm2.contiguous(), dtype=wp.float64),
-            wp.from_torch(sigmas.contiguous(), dtype=wp.float64),
-            wp.from_torch(inv_cl_l2.contiguous(), dtype=wp.float64),
-            wp.from_torch(grad_k_vec, dtype=wp.vec3d),
-            wp.from_torch(grad_k_n2, dtype=wp.float64),
-            device=str(wp_device),
-        )
-        return grad_k_vec, grad_k_n2, None, None
