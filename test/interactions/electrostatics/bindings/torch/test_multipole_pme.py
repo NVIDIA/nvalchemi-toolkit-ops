@@ -1215,6 +1215,41 @@ class TestReciprocalSpace:
         )
         torch.testing.assert_close(ours.sum(), target, rtol=1e-4, atol=1e-4)
 
+    @pytest.mark.parametrize("shear", [0.2, 0.4])
+    @pytest.mark.parametrize("with_dipoles", [False, True])
+    def test_triclinic_cell_matches_path_a(self, shear, with_dipoles):
+        """A sheared (non-symmetric) cell matches Path A.
+
+        The k-grid must use ``inv(cell)`` for row-stored lattice vectors; its
+        transpose coincides with it only for symmetric cells, so orthorhombic
+        cells cannot catch the difference.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("Path A reference uses Warp launchers (GPU-only)")
+        _, positions, charges, dipoles, cell = self._setup_neutral_system(
+            N=8, L=10.0, seed=0xBEEF
+        )
+        if not with_dipoles:
+            dipoles = torch.zeros_like(dipoles)
+        cell = cell.reshape(3, 3)
+        sheared = cell.clone()
+        sheared[1, 0] += shear * 10.0
+        positions = positions @ torch.linalg.inv(cell) @ sheared
+
+        ours = multipole_pme_reciprocal_space(
+            positions,
+            pack_multipole_moments(charges, dipoles),
+            sheared,
+            sigma=1.0,
+            alpha=0.5,
+            mesh_dimensions=(60, 60, 60),
+            spline_order=6,
+        )
+        target = self._path_a_oracle(
+            positions, charges, dipoles, sheared, 1.0, 0.5, k_cutoff=12.0
+        )
+        torch.testing.assert_close(ours.sum(), target, rtol=1e-4, atol=1e-4)
+
     def test_translation_invariance(self):
         """Shifting all atoms by a lattice vector leaves the energy invariant."""
         if not torch.cuda.is_available():

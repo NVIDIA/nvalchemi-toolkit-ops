@@ -5812,10 +5812,13 @@ def _build_pme_k_grids(
     miller_z = torch.fft.rfftfreq(nz, d=1.0 / nz, device=device, dtype=dtype)
 
     cell_2d = cell if cell.dim() == 2 else cell.squeeze(0)
-    inv_cell_t = torch.linalg.inv_ex(cell_2d.T)[0].to(dtype).unsqueeze(0).contiguous()
+    # The kernel contracts k = M @ m, and for lattice vectors stored as rows the
+    # reciprocal vector is inv(cell) @ m, so M is inv(cell), not its transpose
+    # (the two only agree for a symmetric cell).
+    inv_cell = torch.linalg.inv_ex(cell_2d)[0].to(dtype).unsqueeze(0).contiguous()
 
     return torch.ops.nvalchemiops.multipole_pme_k_squared(
-        inv_cell_t,
+        inv_cell,
         miller_x,
         miller_y,
         miller_z,
@@ -6349,9 +6352,10 @@ def _build_batch_pme_k_grids(
     miller_y = torch.fft.fftfreq(ny, d=1.0 / ny, device=device, dtype=dtype)
     miller_z = torch.fft.rfftfreq(nz, d=1.0 / nz, device=device, dtype=dtype)
     nz_rfft = nz // 2 + 1
-    inv_cell_t = torch.linalg.inv_ex(cells.transpose(-1, -2))[0].to(dtype).contiguous()
+    # k = inv(cell) @ m for row-stored lattice vectors; see _build_pme_k_grids.
+    inv_cell = torch.linalg.inv_ex(cells)[0].to(dtype).contiguous()
     return torch.ops.nvalchemiops.multipole_pme_k_squared_batch(
-        inv_cell_t,
+        inv_cell,
         miller_x,
         miller_y,
         miller_z,
