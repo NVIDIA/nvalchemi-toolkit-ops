@@ -3454,3 +3454,57 @@ class TestMultipolePMESymbolicBatch:
         torch.testing.assert_close(value, reference_value, rtol=1e-13, atol=1e-13)
         torch.testing.assert_close(gradient, reference_gradient, rtol=1e-11, atol=1e-11)
         torch.testing.assert_close(hvp, reference_hvp, rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+class TestCompiledReciprocalGradients:
+    """``torch.compile`` (Inductor) gradients of the batched reciprocal half
+    match eager.
+
+    Regression: Inductor dropped the Hermitian RFFT interior-frequency
+    weighting (``slice * 2`` scatter) ahead of the opaque convolve backward, so
+    position and cell gradients were wrong for ``l_max >= 1``. Each case
+    compiles twice because the miscompile depended on how many graphs had
+    already been lowered in the process.
+    """
+
+    @staticmethod
+    def _grads(fn, positions, moments, cell, batch_idx, **kw):
+        pos = positions.detach().clone().requires_grad_(True)
+        cel = cell.detach().clone().requires_grad_(True)
+        energy = fn(pos, moments, cel, batch_idx=batch_idx, **kw)
+        return torch.autograd.grad(energy.sum(), [pos, cel])
+
+    @pytest.mark.parametrize("lmax", [0, 1, 2])
+    def test_compiled_grads_match_eager(self, lmax, monkeypatch):
+        # A cached artifact from an earlier build must not mask the result.
+        monkeypatch.setattr(torch._inductor.config, "fx_graph_cache", False)
+        monkeypatch.setattr(torch._functorch.config, "enable_autograd_cache", False)
+        device, dtype = torch.device("cuda:0"), torch.float64
+        gen = torch.Generator(device=device).manual_seed(7)
+        n_sys, n_per = 2, 24
+        n = n_sys * n_per
+        L = 9.0
+        cell = (torch.eye(3, dtype=dtype, device=device) * L).repeat(n_sys, 1, 1)
+        positions = L * torch.rand(n, 3, generator=gen, dtype=dtype, device=device)
+        moments = 0.5 * torch.randn(
+            n, (lmax + 1) ** 2, generator=gen, dtype=dtype, device=device
+        )
+        batch_idx = torch.arange(n_sys, dtype=torch.int32, device=device)
+        batch_idx = batch_idx.repeat_interleave(n_per)
+        kw = {
+            "sigma": 0.8,
+            "alpha": 0.6,
+            "mesh_dimensions": (24, 24, 24),
+            "spline_order": 6,
+        }
+
+        ref = self._grads(
+            multipole_pme_reciprocal_space, positions, moments, cell, batch_idx, **kw
+        )
+        for _ in range(2):
+            torch._dynamo.reset()
+            compiled = torch.compile(multipole_pme_reciprocal_space, fullgraph=True)
+            out = self._grads(compiled, positions, moments, cell, batch_idx, **kw)
+            for got, want in zip(out, ref, strict=True):
+                torch.testing.assert_close(got, want, rtol=1e-9, atol=1e-9)

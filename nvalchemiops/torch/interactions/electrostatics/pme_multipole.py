@@ -682,6 +682,19 @@ def _batch_convolve_double_backward_fake(  # pragma: no cover
     )
 
 
+def _convolve_backward_args(grad_outputs, forward_inputs):
+    """Order the convolve backward args, materializing the cotangent under compile.
+
+    Inductor otherwise drops the Hermitian RFFT interior-frequency weighting
+    (``slice * 2`` scatter) that precedes this opaque complex consumer, giving
+    wrong position/cell gradients at ``l_max >= 1``.
+    """
+    grad_convolved = grad_outputs[0]
+    if torch.compiler.is_compiling():
+        grad_convolved = grad_convolved * 1.0
+    return (grad_convolved, *forward_inputs)
+
+
 _CONVOLVE_DBWD_SCHEMA = (
     "(Tensor? gg_mesh_fft, Tensor? gg_k_squared, Tensor? gg_volume, "
     "Tensor grad_convolved, Tensor mesh_fft, Tensor k_squared, "
@@ -700,6 +713,7 @@ register_warp_op_chain(
     # mesh_fft (0), k_squared (1), volume (7) — cell-grad.
     diff_input_positions=(0, 1, 7),
     n_forward_inputs=8,
+    backward_args=_convolve_backward_args,
     # create_graph (force-loss + stress-loss). Backward inputs:
     # grad_convolved=0, mesh_fft=1, k_squared=2, ..., volume=8. The double-back
     # covers grad_convolved (force-loss) AND the k_squared/volume cotangent
@@ -724,6 +738,7 @@ register_warp_op_chain(
     # cell-grad) through the convolve.
     diff_input_positions=(0, 1, 7),
     n_forward_inputs=8,
+    backward_args=_convolve_backward_args,
     # create_graph force-loss + stress-loss (batched).
     double_backward=_batch_multipole_pme_convolve_double_backward,
     double_backward_fake=_batch_convolve_double_backward_fake,
