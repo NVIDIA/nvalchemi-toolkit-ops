@@ -1919,7 +1919,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         neighbor_ptr,
         unit_shifts,
         batch_idx,
-        num_systems,
         l_max,
         half_neighbor_list,
     ):
@@ -1941,7 +1940,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
             neighbor_ptr,
             unit_shifts,
             batch_idx,
-            num_systems,
             l_max,
             half_neighbor_list,
         ) = inputs
@@ -1958,8 +1956,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
             batch_idx if batch_idx is not None else cell.new_zeros(0),
         )
         ctx.has_batch = batch_idx is not None
-        ctx.num_systems = num_systems
-        ctx.num_atoms = output.shape[0]
         ctx.l_max = l_max
         ctx.half_neighbor_list = half_neighbor_list
 
@@ -1981,11 +1977,14 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         grad_cell = None
         if ctx.needs_input_grad[1]:
             batch_idx = batch_idx_saved if ctx.has_batch else None
+            # Sizes come from the saved tensors, not ctx: an int() of a symbolic
+            # size made in the caller does not belong to the traced Function graph.
+            num_systems = cell.shape[0] if (ctx.has_batch and cell.dim() == 3) else 1
             grad_system, _ = _energy_cotangents(
                 grad_energy,
                 batch_idx,
-                ctx.num_atoms,
-                ctx.num_systems,
+                positions.shape[0],
+                num_systems,
                 "atom",
             )
             if ctx.has_batch:
@@ -2047,7 +2046,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         return (
             grad_energy,
             grad_cell,
-            None,
             None,
             None,
             None,
@@ -2148,9 +2146,6 @@ def multipole_real_space_energy_with_stress(
     if l_max == 2:
         # l=2 already differentiates cell through its per-atom-weighted cell-grad op.
         return per_atom
-    num_systems = (
-        int(cell.shape[0]) if (batch_idx is not None and cell.dim() == 3) else 1
-    )
     dipoles_in = (
         dipoles_cart
         if dipoles_cart is not None
@@ -2170,7 +2165,6 @@ def multipole_real_space_energy_with_stress(
         neighbor_ptr,
         unit_shifts,
         batch_idx,
-        num_systems,
         l_max,
         half_neighbor_list,
     )
