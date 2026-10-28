@@ -43,6 +43,7 @@ Public autograd.Function classes
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
@@ -5019,6 +5020,8 @@ def multipole_ewald_summation(
     cache: MultipoleSCFCache | None = None,
     miller_indices: torch.Tensor | None = None,
     total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Full GTO-Ewald multipole electrostatic total energy.
 
@@ -5110,6 +5113,9 @@ def multipole_ewald_summation(
         Per-system total charge for the background correction, ``(1,)`` single
         or ``(B,)`` batched. Supply it when the moments are one shard of a
         distributed system; summed from ``multipole_moments`` when omitted.
+    source_weights, reduce_partial : optional
+        Structure-factor weights and reduction for callers holding part of a
+        system; see :func:`multipole_scf_step_energy` (batched path only).
 
     Returns
     -------
@@ -5123,6 +5129,10 @@ def multipole_ewald_summation(
     """
     if sigma <= 0.0:
         raise ValueError(f"sigma must be positive, got {sigma}")
+    if batch_idx is None and (source_weights is not None or reduce_partial is not None):
+        raise ValueError(
+            "source_weights and reduce_partial require the batched path (batch_idx)."
+        )
 
     # A prebuilt reciprocal cache already encodes alpha + the k-grid, so the
     # estimator is unnecessary: take alpha from the cache when not given and
@@ -5257,6 +5267,8 @@ def multipole_ewald_summation(
                 k_cutoff=k_cutoff,
                 miller_indices=miller_indices,
                 cache=cache,
+                source_weights=source_weights,
+                reduce_partial=reduce_partial,
             )
             atom_self = _multipole_ewald_self_energy_per_atom(
                 source_feats,
@@ -5353,6 +5365,8 @@ def multipole_ewald_summation(
             k_cutoff=k_cutoff,
             miller_indices=miller_indices,
             cache=cache,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
         )
         atom_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
         return (e_real + e_recip - atom_self - atom_background).to(torch.float64)

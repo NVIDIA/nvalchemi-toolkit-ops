@@ -1573,6 +1573,116 @@ class TestParticleMeshEwald:
         )
         torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
 
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
+    def test_partial_structure_factor_matches_full(self, l_max):
+        """Two weighted partial structure factors, summed, match the full Ewald sum."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, dipoles, cell, _, _, _, kcut = self._setup(
+            N=6, L=9.0, seed=0xE11, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        n = positions.shape[0]
+        g = torch.Generator(device="cpu").manual_seed(5)
+        quad = 0.1 * torch.randn(n, 3, 3, generator=g, dtype=torch.float64)
+        quad = (0.5 * (quad + quad.mT)).to(positions.device)
+        moments = pack_charges_dipoles(charges, dipoles if l_max >= 1 else None)
+        if l_max == 2:
+            moments = torch.cat([moments, cartesian_quadrupole_to_e3nn(quad)], dim=-1)
+        batch_idx = torch.zeros(n, dtype=torch.int32, device=positions.device)
+        cell_b = cell.unsqueeze(0)
+        common = {
+            "sigma": sigma,
+            "alpha": alpha,
+            "k_cutoff": kcut,
+            "batch_idx": batch_idx,
+        }
+        full = multipole_reciprocal_space_energy(positions, moments, cell_b, **common)
+
+        half = (torch.arange(n, device=positions.device) < 3).to(positions.dtype)
+        captured = []
+
+        def capture(rho):
+            captured.append(rho.detach())
+            return rho
+
+        multipole_reciprocal_space_energy(
+            positions,
+            moments,
+            cell_b,
+            source_weights=1.0 - half,
+            reduce_partial=capture,
+            **common,
+        )
+        partial = multipole_reciprocal_space_energy(
+            positions,
+            moments,
+            cell_b,
+            source_weights=half,
+            reduce_partial=lambda rho: rho + captured[0],
+            **common,
+        )
+        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
+
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
+    def test_ewald_summation_partial_matches_full(self, l_max):
+        """The partial-source arguments reach every batched branch of the summation."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, dipoles, cell, idx_j, nptr, sh, kcut = self._setup(
+            N=6, L=9.0, seed=0xE12, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        n = positions.shape[0]
+        g = torch.Generator(device="cpu").manual_seed(6)
+        quad = 0.1 * torch.randn(n, 3, 3, generator=g, dtype=torch.float64)
+        quad = (0.5 * (quad + quad.mT)).to(positions.device)
+        moments = pack_charges_dipoles(charges, dipoles if l_max >= 1 else None)
+        if l_max == 2:
+            moments = torch.cat([moments, cartesian_quadrupole_to_e3nn(quad)], dim=-1)
+        batch_idx = torch.zeros(n, dtype=torch.int32, device=positions.device)
+        common = {
+            "sigma": sigma,
+            "alpha": alpha,
+            "k_cutoff": kcut,
+            "batch_idx": batch_idx,
+        }
+        args = (positions, moments, cell.unsqueeze(0), idx_j, nptr, sh)
+        full = multipole_ewald_summation(*args, **common)
+
+        half = (torch.arange(n, device=positions.device) < 3).to(positions.dtype)
+        captured = []
+
+        def capture(rho):
+            captured.append(rho.detach())
+            return rho
+
+        multipole_ewald_summation(
+            *args, source_weights=1.0 - half, reduce_partial=capture, **common
+        )
+        partial = multipole_ewald_summation(
+            *args,
+            source_weights=half,
+            reduce_partial=lambda rho: rho + captured[0],
+            **common,
+        )
+        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
+
+    def test_ewald_partial_arguments_need_the_batched_path(self):
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, _, cell, idx_j, nptr, sh, kcut = self._setup(
+            N=6, L=9.0, seed=0xE11, sigma=sigma, alpha=alpha
+        )
+        with pytest.raises(ValueError, match="batched path"):
+            multipole_ewald_summation(
+                positions,
+                pack_charges_dipoles(charges, None),
+                cell,
+                idx_j,
+                nptr,
+                sh,
+                sigma=sigma,
+                alpha=alpha,
+                k_cutoff=kcut,
+                reduce_partial=lambda rho: rho,
+            )
+
     def test_partial_arguments_need_the_batched_path(self):
         sigma, alpha = 1.0, 0.5
         _, positions, charges, _, cell, _, _, _, _ = self._setup(

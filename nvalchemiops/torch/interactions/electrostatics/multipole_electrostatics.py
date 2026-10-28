@@ -34,6 +34,7 @@ autograd-connected to ``positions`` and ``multipole_moments``.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -463,6 +464,8 @@ def multipole_reciprocal_space_energy(
     miller_indices: torch.Tensor | None = None,
     normalize: NormMode | int | str = NormMode.MULTIPOLES,
     cache: MultipoleSCFCache | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Reciprocal-space half of an Ewald-split multipole electrostatic energy.
 
@@ -540,6 +543,9 @@ def multipole_reciprocal_space_energy(
         ``alpha``, and ``normalize`` are still validated or resolved before
         cache use; ``k_cutoff`` is ignored because the cache already encodes
         the k-grid. The caller owns matching the cache to the system.
+    source_weights, reduce_partial : optional
+        Structure-factor weights and reduction for callers holding part of a
+        system; see :func:`multipole_scf_step_energy` (batched path only).
 
     Returns
     -------
@@ -636,4 +642,6 @@ def multipole_reciprocal_space_energy(
         batch_idx=batch_idx,
         include_self_interaction=True,
         quadrupoles=quadrupoles,
+        source_weights=source_weights,
+        reduce_partial=reduce_partial,
     )
