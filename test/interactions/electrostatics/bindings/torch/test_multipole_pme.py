@@ -1105,6 +1105,60 @@ class TestEnergyCorrectionsPerAtom:
         torch.testing.assert_close(h_pa[0], h_red[0], rtol=1e-12, atol=1e-12)
         torch.testing.assert_close(h_pa[1], h_red[1], rtol=1e-12, atol=1e-12)
 
+    @pytest.mark.parametrize("batched", [False, True])
+    def test_total_charge_override_serves_a_shard(self, batched):
+        """A shard's background uses the supplied global ``Q``, not its own sum."""
+        td = (
+            torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+        )
+        rng = np.random.default_rng(0xB6 + int(batched))
+        sigma, alpha = 0.9, 0.37
+        if batched:
+            batch_idx = torch.tensor(
+                [0, 0, 0, 0, 1, 1, 1, 2, 2, 2], dtype=torch.int32, device=td
+            )
+            volume = torch.tensor([700.0, 800.0, 900.0], dtype=torch.float64, device=td)
+        else:
+            batch_idx = None
+            volume = torch.tensor(729.0, dtype=torch.float64, device=td)
+        N = 10 if batched else 8
+        charges = torch.from_numpy(rng.uniform(-1.0, 1.0, N)).to(td, torch.float64)
+
+        def _total(q):
+            if batch_idx is None:
+                return q.sum().reshape(1)
+            return torch.zeros(3, dtype=torch.float64, device=td).scatter_add(
+                0, batch_idx.long(), q
+            )
+
+        full = multipole_pme_energy_corrections_per_atom(
+            charges, None, sigma, alpha, volume, batch_idx=batch_idx, n_systems=3
+        )
+        explicit = multipole_pme_energy_corrections_per_atom(
+            charges,
+            None,
+            sigma,
+            alpha,
+            volume,
+            batch_idx=batch_idx,
+            n_systems=3,
+            total_charge=_total(charges),
+        )
+        torch.testing.assert_close(explicit, full, rtol=1e-14, atol=1e-14)
+
+        keep = torch.arange(N, device=td) % 2 == 0
+        shard = multipole_pme_energy_corrections_per_atom(
+            charges[keep],
+            None,
+            sigma,
+            alpha,
+            volume,
+            batch_idx=None if batch_idx is None else batch_idx[keep],
+            n_systems=3,
+            total_charge=_total(charges),
+        )
+        torch.testing.assert_close(shard, full[keep], rtol=1e-14, atol=1e-14)
+
 
 class TestReciprocalSpace:
     """Full PME reciprocal pipeline vs Path A reciprocal-self.
@@ -1446,6 +1500,34 @@ class TestParticleMeshEwald:
             ),
         )
         torch.testing.assert_close(snapshot, expected)
+
+    @pytest.mark.parametrize("method", ["pme", "ewald"])
+    def test_explicit_total_charge_matches_default(self, method):
+        """A supplied global ``Q`` reproduces the default on a non-neutral system."""
+        sigma, alpha = 1.0, 0.5
+        td, positions, charges, dipoles, cell, idx_j, nptr, sh, kcut = self._setup(
+            N=6, L=9.0, seed=0x70C, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        sf = pack_charges_dipoles(charges, dipoles)
+        total = charges.sum().reshape(1)
+        if method == "pme":
+            op, extra = (
+                multipole_particle_mesh_ewald,
+                {
+                    "mesh_dimensions": (24, 24, 24),
+                    "spline_order": 5,
+                },
+            )
+        else:
+            op, extra = multipole_ewald_summation, {"k_cutoff": kcut}
+        args = (positions, sf, cell, idx_j, nptr, sh)
+        base = op(*args, sigma=sigma, alpha=alpha, **extra)
+        with_q = op(*args, sigma=sigma, alpha=alpha, total_charge=total, **extra)
+        torch.testing.assert_close(with_q, base, rtol=1e-13, atol=1e-13)
+
+        # The background term must actually follow the supplied value.
+        shifted = op(*args, sigma=sigma, alpha=alpha, total_charge=total + 1.0, **extra)
+        assert not torch.allclose(shifted, base)
 
     @pytest.mark.parametrize("alpha", [0.4, 0.6])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])

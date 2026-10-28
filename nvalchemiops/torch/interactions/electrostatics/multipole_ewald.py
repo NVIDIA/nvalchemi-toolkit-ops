@@ -4939,6 +4939,7 @@ def _multipole_ewald_background_energy_per_atom(
     *,
     batch_idx: torch.Tensor | None = None,
     n_systems: int | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return the positive per-atom uniform-background correction.
 
@@ -4959,6 +4960,10 @@ def _multipole_ewald_background_energy_per_atom(
     n_systems : int, optional
         Number of packed systems. It is required for compile-safe batched
         calls; eager calls infer it from ``batch_idx`` when omitted.
+    total_charge : torch.Tensor, optional
+        Per-system total charge, ``(1,)`` or ``(B,)``, for callers whose
+        ``source_feats`` hold only part of the system. Summed from the
+        monopole channel when omitted.
 
     Returns
     -------
@@ -4992,6 +4997,7 @@ def _multipole_ewald_background_energy_per_atom(
         volume,
         batch_idx=batch_idx,
         n_systems=n_systems,
+        total_charge=total_charge,
     )
 
 
@@ -5012,6 +5018,7 @@ def multipole_ewald_summation(
     half_neighbor_list: bool = False,
     cache: MultipoleSCFCache | None = None,
     miller_indices: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Full GTO-Ewald multipole electrostatic total energy.
 
@@ -5098,6 +5105,11 @@ def multipole_ewald_summation(
         (detached) k-grid/volume, so ``grad(E, cell)`` does not flow through
         the reciprocal term — pass ``cache=None`` for stress / cell-gradient
         training. Forces (``grad(E, positions)``) are unaffected.
+
+    total_charge : torch.Tensor, optional
+        Per-system total charge for the background correction, ``(1,)`` single
+        or ``(B,)`` batched. Supply it when the moments are one shard of a
+        distributed system; summed from ``multipole_moments`` when omitted.
 
     Returns
     -------
@@ -5191,6 +5203,7 @@ def multipole_ewald_summation(
         volume,
         batch_idx=batch_idx,
         n_systems=cell.shape[0] if is_batch else None,
+        total_charge=total_charge,
     )
 
     # l_max=2 path: full Ewald total = real-space + direct-k reciprocal − self.

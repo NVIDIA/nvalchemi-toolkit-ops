@@ -4320,6 +4320,7 @@ def _multipole_background_energy_per_atom(
     *,
     batch_idx: torch.Tensor | None = None,
     n_systems: int | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return the positive uniform-background correction per atom.
 
@@ -4340,6 +4341,11 @@ def _multipole_background_energy_per_atom(
     n_systems : int, optional
         Number of packed systems. It is required for compile-safe batched
         calls; eager calls infer it from ``batch_idx`` when omitted.
+    total_charge : torch.Tensor, optional
+        Per-system total charge ``Q_b``, shape ``(1,)`` or ``(B,)``. Supply it
+        when ``charges`` holds only part of the system (a distributed shard),
+        so ``Q_b`` is the global sum rather than the sum of the rows seen.
+        When omitted it is summed from ``charges``.
 
     Returns
     -------
@@ -4364,30 +4370,33 @@ def _multipole_background_energy_per_atom(
     charges_f64 = charges.to(torch.float64)
     c_bg_no_v = _multipole_background_coefficient(alpha)
     if batch_idx is None:
-        total_charge = charges_f64.sum()
-        return (
-            c_bg_no_v
-            * charges_f64
-            * total_charge
-            / volume.to(torch.float64).reshape(())
+        q_total = (
+            charges_f64.sum()
+            if total_charge is None
+            else total_charge.to(torch.float64).reshape(())
         )
+        return c_bg_no_v * charges_f64 * q_total / volume.to(torch.float64).reshape(())
 
-    if n_systems is None:
-        _warn_compile_missing_argument_inference(
-            missing="`n_systems`",
-            inference="inferring it from `batch_idx`",
-        )
-        n_systems = int(batch_idx.max().item()) + 1
-    total_charge = torch.zeros(
-        n_systems, dtype=torch.float64, device=charges.device
-    ).scatter_add(0, batch_idx, charges_f64)
+    if total_charge is not None:
+        q_total = total_charge.to(torch.float64).reshape(-1)
+        n_systems = q_total.shape[0]
+    else:
+        if n_systems is None:
+            _warn_compile_missing_argument_inference(
+                missing="`n_systems`",
+                inference="inferring it from `batch_idx`",
+            )
+            n_systems = int(batch_idx.max().item()) + 1
+        q_total = torch.zeros(
+            n_systems, dtype=torch.float64, device=charges.device
+        ).scatter_add(0, batch_idx, charges_f64)
     vol_per_system = volume.to(torch.float64).reshape(-1)
     if vol_per_system.numel() == 1 and n_systems > 1:
         vol_per_system = vol_per_system.expand(n_systems)
     return (
         c_bg_no_v
         * charges_f64
-        * total_charge.index_select(0, batch_idx)
+        * q_total.index_select(0, batch_idx)
         / vol_per_system.index_select(0, batch_idx)
     )
 
@@ -4573,6 +4582,7 @@ def multipole_pme_energy_corrections_per_atom(
     batch_idx: torch.Tensor | None = None,
     quadrupoles: torch.Tensor | None = None,
     n_systems: int | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Per-atom GTO-Ewald multipole self + background corrections.
 
@@ -4600,8 +4610,11 @@ def multipole_pme_energy_corrections_per_atom(
     elementwise (twice-differentiable for free) — matches the
     ``multipole_pme_corrections`` Warp op's reduced value/grads to machine eps.
 
-    Parameters mirror :func:`multipole_pme_energy_corrections`. Returns a
-    ``float64`` tensor of shape ``(N,)`` (single) or ``(N_total,)`` (batched).
+    Parameters mirror :func:`multipole_pme_energy_corrections`, plus
+    ``total_charge`` (``(1,)`` or ``(B,)``): the per-system total charge in the
+    background term, for callers whose ``charges`` hold only part of the system.
+    Returns a ``float64`` tensor of shape ``(N,)`` (single) or ``(N_total,)``
+    (batched).
     """
     if dipoles is not None and dipoles.shape != (charges.shape[0], 3):
         raise ValueError(
@@ -4631,6 +4644,7 @@ def multipole_pme_energy_corrections_per_atom(
         volume,
         batch_idx=batch_idx,
         n_systems=n_systems,
+        total_charge=total_charge,
     )
 
     return self_e + bg
@@ -5842,6 +5856,7 @@ def multipole_pme_reciprocal_space(
     volume: torch.Tensor | None = None,
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Compute the multipole-PME reciprocal-space energy.
 
@@ -5921,6 +5936,10 @@ def multipole_pme_reciprocal_space(
         (single-system) or ``(B, Nx, Ny, Nz_rfft)`` (batched). Cacheable
         across MD steps when the cell is fixed; when ``None`` it is built
         from ``cell`` and ``mesh_dimensions``.
+    total_charge : torch.Tensor or None, optional
+        Per-system total charge for the background correction, ``(1,)`` single
+        or ``(B,)`` batched. Supply it when the moments are one shard of a
+        distributed system; when ``None`` it is summed from the charges given.
 
     Returns
     -------
@@ -5953,6 +5972,7 @@ def multipole_pme_reciprocal_space(
             moduli=moduli,
             k_squared=k_squared,
             quadrupoles=quadrupoles,
+            total_charge=total_charge,
         )
 
     cell_inv_t_resolved = _resolve_cell_inv_t(cell, cell_inv_t)
@@ -6084,6 +6104,7 @@ def multipole_pme_reciprocal_space(
         alpha,
         volume,
         quadrupoles=quadrupoles,
+        total_charge=total_charge,
     )
     return e_recip_per_atom - corrections
 
@@ -6112,6 +6133,7 @@ def multipole_particle_mesh_ewald(
     volume: torch.Tensor | None = None,
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Total multipole PME energy (real + reciprocal − self − background).
 
@@ -6197,6 +6219,10 @@ def multipole_particle_mesh_ewald(
         (single-system) or ``(B, Nx, Ny, Nz_rfft)`` (batched), cacheable
         across MD steps when the cell is fixed. When ``None`` it is built
         from ``cell`` and ``mesh_dimensions``.
+
+    total_charge : torch.Tensor or None, optional
+        Per-system total charge for the background correction; see
+        :func:`multipole_pme_reciprocal_space`.
 
     Returns
     -------
@@ -6299,6 +6325,7 @@ def multipole_particle_mesh_ewald(
             volume=volume,
             moduli=moduli,
             k_squared=k_squared,
+            total_charge=total_charge,
         )
 
         return (e_real + e_recip_minus_corr).to(torch.float64)
@@ -6331,6 +6358,7 @@ def multipole_particle_mesh_ewald(
         volume=volume,
         moduli=moduli,
         k_squared=k_squared,
+        total_charge=total_charge,
     )
 
     return (e_real + e_recip_minus_corr).to(torch.float64)
@@ -6381,6 +6409,7 @@ def _batch_multipole_pme_reciprocal_space_impl(
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
     quadrupoles: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Batched body of :func:`multipole_pme_reciprocal_space`.
 
@@ -6524,5 +6553,6 @@ def _batch_multipole_pme_reciprocal_space_impl(
         batch_idx=batch_idx,
         quadrupoles=quadrupoles,
         n_systems=B,
+        total_charge=total_charge,
     )
     return e_recip_per_atom - corrections
