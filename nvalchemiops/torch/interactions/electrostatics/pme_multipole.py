@@ -33,6 +33,7 @@ Design:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 import warp as wp
@@ -5857,6 +5858,8 @@ def multipole_pme_reciprocal_space(
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
     total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Compute the multipole-PME reciprocal-space energy.
 
@@ -5940,6 +5943,14 @@ def multipole_pme_reciprocal_space(
         Per-system total charge for the background correction, ``(1,)`` single
         or ``(B,)`` batched. Supply it when the moments are one shard of a
         distributed system; when ``None`` it is summed from the charges given.
+    source_weights : torch.Tensor or None, optional
+        Per-atom weights ``(N,)`` applied to each atom's contribution to the
+        spread only (batched path). With ``reduce_partial`` this lets a caller
+        that holds part of a system, plus copies of atoms it does not own,
+        spread each atom once: weight owned atoms 1 and copies 0.
+    reduce_partial : callable or None, optional
+        Applied to the spread mesh ``(B, nx, ny, nz)`` before the FFT, to sum
+        partial meshes held by several callers (batched path).
 
     Returns
     -------
@@ -5973,8 +5984,14 @@ def multipole_pme_reciprocal_space(
             k_squared=k_squared,
             quadrupoles=quadrupoles,
             total_charge=total_charge,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
         )
 
+    if source_weights is not None or reduce_partial is not None:
+        raise ValueError(
+            "source_weights and reduce_partial require the batched path (batch_idx)."
+        )
     cell_inv_t_resolved = _resolve_cell_inv_t(cell, cell_inv_t)
     cell_2d = cell if cell.dim() == 2 else cell.squeeze(0)
     if volume is None:
@@ -6134,6 +6151,8 @@ def multipole_particle_mesh_ewald(
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
     total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Total multipole PME energy (real + reciprocal − self − background).
 
@@ -6223,6 +6242,9 @@ def multipole_particle_mesh_ewald(
     total_charge : torch.Tensor or None, optional
         Per-system total charge for the background correction; see
         :func:`multipole_pme_reciprocal_space`.
+    source_weights, reduce_partial : optional
+        Spread weights and mesh reduction for callers holding part of a system;
+        see :func:`multipole_pme_reciprocal_space` (batched path only).
 
     Returns
     -------
@@ -6326,6 +6348,8 @@ def multipole_particle_mesh_ewald(
             moduli=moduli,
             k_squared=k_squared,
             total_charge=total_charge,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
         )
 
         return (e_real + e_recip_minus_corr).to(torch.float64)
@@ -6410,6 +6434,8 @@ def _batch_multipole_pme_reciprocal_space_impl(
     k_squared: torch.Tensor | None = None,
     quadrupoles: torch.Tensor | None = None,
     total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Batched body of :func:`multipole_pme_reciprocal_space`.
 
@@ -6481,11 +6507,20 @@ def _batch_multipole_pme_reciprocal_space_impl(
         .unsqueeze(0)
         .expand(B, 3, 3)
     )
+    # ``source_weights`` scales each atom's contribution to the spread only (the
+    # gather and corrections below still use every atom); ``reduce_partial``
+    # combines the resulting mesh with the other holders of the system.
+    q_src, df_src, qf_src = charges, df_frac, qf_frac
+    if source_weights is not None:
+        w = source_weights.to(positions.dtype)
+        q_src = charges * w
+        df_src = df_frac * w[:, None]
+        qf_src = qf_frac * w[:, None, None]
     rho_grid = torch.ops.nvalchemiops.multipole_pme_spread_unified_batch(
         p_frac,
-        charges,
-        df_frac,
-        qf_frac,
+        q_src,
+        df_src,
+        qf_src,
         batch_idx,
         identity_cell,
         nx,
@@ -6494,6 +6529,8 @@ def _batch_multipole_pme_reciprocal_space_impl(
         spline_order,
         lmax,
     )  # (B, nx, ny, nz)
+    if reduce_partial is not None:
+        rho_grid = reduce_partial(rho_grid)
 
     # Step 2: forward FFT along spatial dims. ``.contiguous()`` so torch.compile
     # plans the convolve custom op's output contiguously (matching the real op);

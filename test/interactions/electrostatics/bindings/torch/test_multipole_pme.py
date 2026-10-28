@@ -1529,6 +1529,66 @@ class TestParticleMeshEwald:
         shifted = op(*args, sigma=sigma, alpha=alpha, total_charge=total + 1.0, **extra)
         assert not torch.allclose(shifted, base)
 
+    @pytest.mark.parametrize("with_dipoles", [False, True])
+    def test_partial_mesh_reduction_matches_full(self, with_dipoles):
+        """Two weighted partial spreads, summed, reproduce the full reciprocal energy."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, dipoles, cell, _, _, _, _ = self._setup(
+            N=6, L=9.0, seed=0x5EED, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        moments = pack_charges_dipoles(charges, dipoles if with_dipoles else None)
+        batch_idx = torch.zeros(6, dtype=torch.int32, device=positions.device)
+        common = {
+            "sigma": sigma,
+            "alpha": alpha,
+            "mesh_dimensions": (24, 24, 24),
+            "spline_order": 5,
+            "batch_idx": batch_idx,
+        }
+        cell_b = cell.unsqueeze(0)
+        full = multipole_pme_reciprocal_space(positions, moments, cell_b, **common)
+
+        half = (torch.arange(6, device=positions.device) < 3).to(positions.dtype)
+        captured = []
+
+        def capture(mesh):
+            captured.append(mesh.detach())
+            return mesh
+
+        multipole_pme_reciprocal_space(
+            positions,
+            moments,
+            cell_b,
+            source_weights=1.0 - half,
+            reduce_partial=capture,
+            **common,
+        )
+        partial = multipole_pme_reciprocal_space(
+            positions,
+            moments,
+            cell_b,
+            source_weights=half,
+            reduce_partial=lambda mesh: mesh + captured[0],
+            **common,
+        )
+        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
+
+    def test_partial_arguments_need_the_batched_path(self):
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, _, cell, _, _, _, _ = self._setup(
+            N=6, L=9.0, seed=0x5EED, sigma=sigma, alpha=alpha
+        )
+        with pytest.raises(ValueError, match="batched path"):
+            multipole_pme_reciprocal_space(
+                positions,
+                pack_charges_dipoles(charges, None),
+                cell,
+                sigma=sigma,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                source_weights=torch.ones_like(charges),
+            )
+
     @pytest.mark.parametrize("alpha", [0.4, 0.6])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
     @pytest.mark.parametrize("spline_order", [4, 5, 6])
