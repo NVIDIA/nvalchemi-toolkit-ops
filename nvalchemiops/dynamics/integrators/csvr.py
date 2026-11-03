@@ -173,11 +173,11 @@ def csvr_thermostat(
     random_seed : int
         Seed for this step. The noise depends only on ``(random_seed, system)``.
     ke : wp.array
-        Kinetic energy :math:`K` before rescaling. Filled internally when
+        Kinetic energy :math:`K` before rescaling. Pre-allocated OUTPUT when
         ``compute_ke`` is True; otherwise a caller-supplied input.
     scale : wp.array
-        Output scale factor :math:`\alpha`. The energy transferred to the bath
-        is ``ke * (1 - scale**2)``.
+        Pre-allocated OUTPUT scale factor :math:`\alpha`. The energy transferred
+        to the bath is ``ke * (1 - scale**2)``.
     batch_idx : wp.array(dtype=wp.int32), optional
         System index for each atom.
     atom_ptr : wp.array(dtype=wp.int32), optional
@@ -243,7 +243,7 @@ def csvr_thermostat_out(
     Parameters
     ----------
     velocities_out : wp.array
-        Pre-allocated output array. Must match ``velocities`` in shape,
+        Pre-allocated OUTPUT array. Must match ``velocities`` in shape,
         dtype, and device.
 
     Returns
