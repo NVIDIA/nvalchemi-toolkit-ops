@@ -47,6 +47,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _GraphRegistration,
 )
 from nvalchemiops.jax.neighbors._status import _build_cluster_status_tail
+from nvalchemiops.jax.neighbors.batch_naive import _compute_cell_inverse
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_dual_cutoff_order,
     coo_pack_pair_geometry,
@@ -1011,7 +1012,9 @@ def _morton_sort_and_gather(
     sorted_pos_z)``.
     """
     N = positions.shape[0]
-    inv_cell = jnp.linalg.inv(cell[0]) if inv_cell is None else inv_cell[0]
+    if inv_cell is None:
+        inv_cell = _compute_cell_inverse(cell[:1], jnp.empty_like(cell[:1]))
+    inv_cell = inv_cell[0]
     if N < n_padded:
         # Pad with the last real atom (any in-cell point works).
         pad = jnp.broadcast_to(
@@ -1158,7 +1161,7 @@ def _build_cluster_tile_list_bounded(
 
     cell_n = _normalize_cell(cell, jnp.float32)
     inv_cell_n = (
-        jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
+        _compute_cell_inverse(cell_n, jnp.empty_like(cell_n))
         if _fixed_cell_geometry is None
         else _fixed_cell_geometry[0]
     )
@@ -1539,7 +1542,7 @@ def query_cluster_tile(
         fill_value = natom
     cell_n = _normalize_cell(cell, jnp.float32)
     inv_cell_n = (
-        jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
+        _compute_cell_inverse(cell_n, jnp.empty_like(cell_n))
         if _fixed_cell_geometry is None
         else _fixed_cell_geometry[0]
     )
@@ -1983,7 +1986,7 @@ def query_cluster_tile_coo(
 
     cell_n = _normalize_cell(cell, jnp.float32)
     inv_cell_n = (
-        jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
+        _compute_cell_inverse(cell_n, jnp.empty_like(cell_n))
         if _fixed_cell_geometry is None
         else _fixed_cell_geometry[0]
     )

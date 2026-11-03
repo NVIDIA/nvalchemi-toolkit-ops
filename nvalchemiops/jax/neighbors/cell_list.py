@@ -40,6 +40,7 @@ from nvalchemiops.jax.neighbors._resolution import (
     resolve_cell_strategy as _resolve_cell_strategy,
 )
 from nvalchemiops.jax.neighbors._status import _build_cell_list_status_tail
+from nvalchemiops.jax.neighbors.batch_naive import _compute_cell_inverse
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
@@ -179,7 +180,7 @@ def _derive_neighbor_search_radius(
         cells_per_dimension[jnp.newaxis, ...] if is_single else cells_per_dimension
     )
     inverse_cell_transpose = jnp.swapaxes(
-        jnp.linalg.inv(cell_batch),
+        _compute_cell_inverse(cell_batch, jnp.empty_like(cell_batch)),
         -1,
         -2,
     )
@@ -204,7 +205,9 @@ def _derive_promoted_cells_per_dimension(
     cutoff: float,
 ) -> jax.Array:
     """Derive uncapped promoted grids for one or more cell geometries."""
-    inverse_cell_transpose = jnp.swapaxes(jnp.linalg.inv(cell), -1, -2)
+    cell_batch = cell.reshape(-1, 3, 3)
+    inverse = _compute_cell_inverse(cell_batch, jnp.empty_like(cell_batch))
+    inverse_cell_transpose = jnp.swapaxes(inverse.reshape(cell.shape), -1, -2)
     face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
     cells_per_dimension = jnp.maximum(
         (face_distances / cutoff).astype(jnp.int32),
