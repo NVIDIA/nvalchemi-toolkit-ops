@@ -129,6 +129,52 @@ _csvr_scale_overloads = register_overloads(
 )
 
 
+def _csvr_update(
+    velocities: wp.array,
+    velocities_out: wp.array,
+    masses: wp.array,
+    target_temp: wp.array,
+    tau: wp.array,
+    dt: wp.array,
+    ndof: wp.array,
+    random_seed: int,
+    ke: wp.array,
+    scale: wp.array,
+    batch_idx: wp.array | None,
+    atom_ptr: wp.array | None,
+    device: str | None,
+    compute_ke: bool,
+) -> None:
+    """Compute ``ke`` and ``scale`` from ``velocities``; write the rescaled velocities to ``velocities_out``."""
+    if device is None:
+        device = velocities.device
+    if compute_ke:
+        compute_kinetic_energy(
+            velocities,
+            masses,
+            ke,
+            batch_idx=batch_idx,
+            atom_ptr=atom_ptr,
+            device=device,
+        )
+    wp.launch(
+        _csvr_scale_overloads[ke.dtype],
+        dim=ke.shape[0],
+        inputs=[ke, target_temp, tau, dt, ndof, wp.uint64(random_seed), scale],
+        device=device,
+    )
+    dispatch_family(
+        velocity_rescale_families,
+        velocities,
+        batch_idx=batch_idx,
+        atom_ptr=atom_ptr,
+        device=device,
+        inputs_single=[velocities, scale, velocities_out],
+        inputs_batch=[velocities, batch_idx, scale, velocities_out],
+        inputs_ptr=[velocities, atom_ptr, scale, velocities_out],
+    )
+
+
 def csvr_thermostat(
     velocities: wp.array,
     masses: wp.array,
@@ -188,32 +234,21 @@ def csvr_thermostat(
         If True (default), compute ``ke`` from velocities and masses. If False,
         use the values already in ``ke`` (e.g. a globally reduced kinetic energy).
     """
-    if device is None:
-        device = velocities.device
-    if compute_ke:
-        compute_kinetic_energy(
-            velocities,
-            masses,
-            ke,
-            batch_idx=batch_idx,
-            atom_ptr=atom_ptr,
-            device=device,
-        )
-    wp.launch(
-        _csvr_scale_overloads[ke.dtype],
-        dim=ke.shape[0],
-        inputs=[ke, target_temp, tau, dt, ndof, wp.uint64(random_seed), scale],
-        device=device,
-    )
-    dispatch_family(
-        velocity_rescale_families,
+    _csvr_update(
         velocities,
-        batch_idx=batch_idx,
-        atom_ptr=atom_ptr,
-        device=device,
-        inputs_single=[velocities, scale, velocities],
-        inputs_batch=[velocities, batch_idx, scale, velocities],
-        inputs_ptr=[velocities, atom_ptr, scale, velocities],
+        velocities,
+        masses,
+        target_temp,
+        tau,
+        dt,
+        ndof,
+        random_seed,
+        ke,
+        scale,
+        batch_idx,
+        atom_ptr,
+        device,
+        compute_ke,
     )
 
 
@@ -252,8 +287,8 @@ def csvr_thermostat_out(
         Rescaled velocities (same object as ``velocities_out``).
     """
     validate_out_array(velocities_out, velocities, "velocities_out")
-    wp.copy(velocities_out, velocities)
-    csvr_thermostat(
+    _csvr_update(
+        velocities,
         velocities_out,
         masses,
         target_temp,
@@ -263,9 +298,9 @@ def csvr_thermostat_out(
         random_seed,
         ke,
         scale,
-        batch_idx=batch_idx,
-        atom_ptr=atom_ptr,
-        device=device,
-        compute_ke=compute_ke,
+        batch_idx,
+        atom_ptr,
+        device,
+        compute_ke,
     )
     return velocities_out
