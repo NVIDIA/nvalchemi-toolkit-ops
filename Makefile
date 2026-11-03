@@ -130,7 +130,8 @@ ARGS_benchmarks           := test/benchmarks test/test_benchmark_pme_mesh_integr
 MINIMAL_GROUPS ?= types_min math_min neighbors_jax_min neighbors_min neighbors_torch_min dynamics_min warp_dispatch_min \
 	segment_ops_min segment_ops_backward_min segment_ops_torch_min \
 	segment_ops_jax_min interactions_min dispersion_min electrostatics_min \
-	electrostatics_jax_min electrostatics_torch_min
+	electrostatics_jax_min electrostatics_torch_min \
+	segment_mm_min segment_mm_jax_min segment_mm_torch_min
 
 ARGS_types_min                := test/test_types.py
 ARGS_warp_dispatch_min        := test/test_warp_dispatch.py
@@ -138,6 +139,11 @@ ARGS_segment_ops_min          := test/test_segment_ops.py
 ARGS_segment_ops_backward_min := test/test_segment_ops_backward.py
 ARGS_segment_ops_torch_min    := test/test_segment_ops_torch.py
 ARGS_segment_ops_jax_min      := test/test_segment_ops_jax.py
+# These three files cover SegMM's core and framework APIs; capture stress and
+# distributed tests remain in their full groups.
+ARGS_segment_mm_min          := test/test_segment_mm.py
+ARGS_segment_mm_jax_min      := test/bindings/jax/test_segment_mm.py
+ARGS_segment_mm_torch_min    := test/bindings/torch/test_segment_mm.py
 ARGS_interactions_min         := test/interactions/test_lj.py
 ARGS_electrostatics_jax_min   := test/interactions/electrostatics/bindings/jax/test_slab.py
 
@@ -222,7 +228,8 @@ SHARD_1_GROUPS := electrostatics_torch_min
 SHARD_2_GROUPS := neighbors_jax_min neighbors_min neighbors_torch_min math_min electrostatics_min
 SHARD_3_GROUPS := electrostatics_jax_min dispersion_min dynamics_min \
 	interactions_min types_min warp_dispatch_min segment_ops_min \
-	segment_ops_backward_min segment_ops_torch_min segment_ops_jax_min
+	segment_ops_backward_min segment_ops_torch_min segment_ops_jax_min \
+	segment_mm_min segment_mm_jax_min segment_mm_torch_min
 
 # pytest-skip-slow skips anything marked `slow` unless --slow is passed, so the
 # marker is what separates the two tiers: the pull-request suite leaves this
@@ -332,6 +339,8 @@ test-minimal:  ## Pull-request suite: fewest tests that still clear the gate
 # the database is missing rather than accidentally running the whole suite.
 $(foreach grp,$(FULL_GROUPS),\
   $(eval IGNORE_$(grp) := $(foreach path,$(ARGS_$(grp)_min),--ignore=$(path))))
+# Pytest still collects explicitly requested files when they are also ignored.
+IGNORE_segment_mm += --deselect=$(ARGS_segment_mm_min)
 
 .PHONY: test-impacted
 test-impacted:  ## Tests affected by the change, beyond the minimal suite
