@@ -845,6 +845,8 @@ def _batch_indices(
 
 def _cell_inverse(cell_batch: jax.Array) -> jax.Array:
     """Invert ``(num_systems, 3, 3)`` cells with the Warp cell-inverse kernel."""
+    # The kernel has no backward pass; the inverse is only used for sizing.
+    cell_batch = jax.lax.stop_gradient(cell_batch)
     (inverse,) = _FIXED_CELL_INVERSE_REGISTRATION[cell_batch.dtype](
         cell_batch,
         jnp.zeros_like(cell_batch),
