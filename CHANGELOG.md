@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- JAX naive and batched naive neighbor lists (single and dual cutoff) were
+  slower than needed with periodic cells: they inverted the cell with
+  `jnp.linalg.inv` on every call, which runs cuSOLVER/cuBLAS on GPU and cannot
+  be captured in XLA command buffers. They now use the Warp cell-inverse kernel
+  that the tile path already uses.
+
 ## 0.5.0
 
 ### Added
