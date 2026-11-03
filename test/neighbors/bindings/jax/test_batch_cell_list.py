@@ -46,12 +46,12 @@ batch_cell_list_module = importlib.import_module(
 )
 
 
-def _compact_pair_shift_set(neighbor_matrix, num_neighbors, shifts, targets):
+def _compact_pair_shift_multiset(neighbor_matrix, num_neighbors, shifts, targets):
     nm = np.asarray(neighbor_matrix)
     nn = np.asarray(num_neighbors)
     nms = np.asarray(shifts)
     target_values = np.asarray(targets)
-    return {
+    return sorted(
         (
             int(target_values[row]),
             int(nm[row, slot]),
@@ -59,7 +59,19 @@ def _compact_pair_shift_set(neighbor_matrix, num_neighbors, shifts, targets):
         )
         for row in range(nm.shape[0])
         for slot in range(int(nn[row]))
-    }
+    )
+
+
+def _compact_pair_shift_set(neighbor_matrix, num_neighbors, shifts, targets):
+    """Return unique pair/shift tuples for legacy set-based assertions."""
+    return set(
+        _compact_pair_shift_multiset(
+            neighbor_matrix,
+            num_neighbors,
+            shifts,
+            targets,
+        )
+    )
 
 
 class TestBatchCellList:
@@ -108,6 +120,50 @@ class TestBatchCellList:
         assert neighbor_matrix.shape[0] == 4
         assert num_neighbors.shape == (4,)
         assert shifts.shape[0] == 4
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_managed_atom_centric_grid_matches_naive_unequal_batch(self, dtype):
+        """Batched atom-centric grids recover exact pairs and shifts."""
+        rng = np.random.default_rng(83)
+        right = np.asarray([[7.0, 0.2, 0.1], [0.5, 8.0, 0.3], [-0.2, 0.6, 9.0]])
+        left = right.copy()
+        left[0] *= -1.0
+        cell = jnp.asarray(np.stack((right, left)), dtype=dtype)
+        counts = (7, 13)
+        positions = jnp.concatenate(
+            [
+                jnp.asarray(rng.random((count, 3)), dtype=dtype) @ cell[index]
+                for index, count in enumerate(counts)
+            ]
+        )
+        pbc = jnp.asarray([[True, True, True], [True, False, True]])
+        batch_ptr = jnp.asarray([0, counts[0], sum(counts)], dtype=jnp.int32)
+        batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), jnp.asarray(counts))
+
+        nm, nn, shifts = batch_cell_list(
+            positions,
+            cutoff=2.2,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=96,
+            strategy="atom_centric",
+        )
+        naive_nm, naive_nn, naive_shifts = batch_naive_neighbor_list(
+            positions,
+            cutoff=2.2,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=96,
+        )
+        targets = jnp.arange(positions.shape[0], dtype=jnp.int32)
+
+        assert _compact_pair_shift_multiset(nm, nn, shifts, targets) == (
+            _compact_pair_shift_multiset(naive_nm, naive_nn, naive_shifts, targets)
+        )
 
     def test_default_cell_pbc_matches_explicit_identity(self):
         """Default batch cell/PBC inputs match explicit identity/all-periodic."""
@@ -1013,8 +1069,9 @@ class TestBatchCellListJIT:
         assert shifts.shape[0] == 4
         assert shifts.shape[2] == 3
 
-    def test_jit_fixed_capacity_coo(self):
-        """The batched one-shot API returns fixed COO recovery metadata."""
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_jit_fixed_capacity_coo(self, compiled):
+        """Eager and compiled batched calls retain fixed COO recovery metadata."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.0, 0.0]],
             dtype=jnp.float32,
@@ -1024,7 +1081,6 @@ class TestBatchCellListJIT:
         batch_idx = jnp.array([0, 0, 1], dtype=jnp.int32)
         batch_ptr = jnp.array([0, 2, 3], dtype=jnp.int32)
 
-        @jax.jit
         def jitted_batch_cell_list(positions, cells, pbcs):
             return batch_cell_list(
                 positions,
@@ -1039,6 +1095,9 @@ class TestBatchCellListJIT:
                 coo_capacity=4,
                 strategy="atom_centric",
             )
+
+        if compiled:
+            jitted_batch_cell_list = jax.jit(jitted_batch_cell_list)
 
         neighbor_list, neighbor_ptr, shifts, counts, metadata_valid = (
             jitted_batch_cell_list(

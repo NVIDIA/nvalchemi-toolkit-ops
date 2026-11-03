@@ -48,7 +48,6 @@ import pytest
 import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
-    _check_cell_is_aligned,
     _check_packed_topology,
     _lbfgs_apply_step,
     _lbfgs_cell_kappa,
@@ -1997,37 +1996,19 @@ class TestLBFGSCellConvention:
         np.testing.assert_allclose(lbfgs_rows, expected, rtol=1e-12, atol=0)
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_an_unaligned_cell_is_rejected_at_setup(self, device):
-        """The packing only means what it says in the aligned frame.
-
-        Measured: relaxing an unaligned cell leaves entries above the diagonal
-        at O(1) -- a rotation the six components cannot remove. FIRE2 documents
-        the same requirement; this one is checked, because preparation runs
-        once and can afford the read.
-        """
-        unaligned = np.array([[5.0, 1.0, 2.0], [0.0, 6.0, 1.0], [0.0, 0.0, 7.0]])
-        with pytest.raises(ValueError, match="not aligned"):
-            _check_cell_is_aligned(
-                wp.array(unaligned[None], dtype=wp.mat33d, device=device)
-            )
-        aligned = np.tril(np.array([[5.0, 0.0, 0.0], [1.0, 6.0, 0.0], [2.0, 1.0, 7.0]]))
-        _check_cell_is_aligned(wp.array(aligned[None], dtype=wp.mat33d, device=device))
-
-    @pytest.mark.parametrize("device", DEVICES)
     def test_align_cell_output_is_accepted(self, device):
-        """Whatever ``align_cell`` produces must satisfy the check.
-
-        Pins the two against each other, so a change to either is caught.
-        """
+        """The public raw-Warp setup accepts the result of ``align_cell``."""
         from nvalchemiops.dynamics.utils.cell_filter import align_cell
 
         rng = np.random.default_rng(3)
         h = rng.normal(size=(3, 3)) + np.eye(3) * 6.0
         positions = wp.array(rng.normal(size=(5, 3)), dtype=wp.vec3d, device=device)
         cell = wp.array(h[None], dtype=wp.mat33d, device=device)
+        atom_ptr = wp.array(np.array([0, 5], np.int32), dtype=wp.int32, device=device)
         align_cell(cell=cell, positions=positions,
                    transform=wp.zeros(1, dtype=wp.mat33d, device=device))  # fmt: skip
-        _check_cell_is_aligned(cell)
+        cell_state = lbfgs_prepare_cell_state(atom_ptr, cell, device=device)
+        np.testing.assert_allclose(cell_state.ref_cell.numpy(), cell.numpy())
 
 
 class TestLBFGSRaggedVariableCell:

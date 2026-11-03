@@ -15,7 +15,7 @@
 
 r"""
 FourierD3: Particle-Mesh Evaluation of the DFT-D3 Dispersion Correction
-======================================================================
+=======================================================================
 
 Periodic DFT-D3(BJ) dispersion in :math:`O(N \log N)` with **no pair cutoff on the
 dispersion sum**; only the short coordination-number list remains.

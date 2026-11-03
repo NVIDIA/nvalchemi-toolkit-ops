@@ -58,6 +58,9 @@ from nvalchemiops.torch.fire2 import (
 # ==============================================================================
 
 DEVICES = ["cuda:0"]
+CELL_MOTION_DEVICES = ["cpu"] + (
+    ["cuda:0"] if wp.is_cuda_available() and torch.cuda.is_available() else []
+)
 
 DTYPE_CONFIGS = [
     pytest.param(wp.vec3f, wp.float32, np.float32, id="float32"),
@@ -251,8 +254,8 @@ def make_fire2_scratch(M, dtype_scalar, device):
     return vf, v_sumsq, f_sumsq, max_norm
 
 
-def _pack_upper_triangular_cell_np(cell: np.ndarray) -> np.ndarray:
-    """Pack one upper-triangular cell matrix into the 2x3 FIRE2 layout."""
+def _pack_lower_triangular_cell_np(cell: np.ndarray) -> np.ndarray:
+    """Pack one lower-triangular cell matrix into the 2x3 FIRE2 layout."""
     return np.array(
         [
             [cell[0, 0], cell[1, 0], cell[2, 0]],
@@ -262,8 +265,8 @@ def _pack_upper_triangular_cell_np(cell: np.ndarray) -> np.ndarray:
     )
 
 
-def _unpack_upper_triangular_cell_np(packed: np.ndarray) -> np.ndarray:
-    """Unpack the 2x3 FIRE2 cell layout into a 3x3 upper-triangular matrix."""
+def _unpack_lower_triangular_cell_np(packed: np.ndarray) -> np.ndarray:
+    """Unpack the 2x3 FIRE2 cell layout into a 3x3 lower-triangular matrix."""
     return np.array(
         [
             [packed[0, 0], 0.0, 0.0],
@@ -277,9 +280,9 @@ def _unpack_upper_triangular_cell_np(packed: np.ndarray) -> np.ndarray:
 def _fractional_coordinates_np(
     positions: np.ndarray, cells: np.ndarray, batch_idx: np.ndarray
 ) -> np.ndarray:
-    """Compute fractional coordinates for row-major NumPy position arrays."""
-    cells_inv_t = np.linalg.inv(cells)[batch_idx].transpose(0, 2, 1)
-    return np.einsum("ni,nij->nj", positions, cells_inv_t)
+    """Compute fractional coordinates for row-major NumPy positions and row-cell matrices."""
+    cells_inv = np.linalg.inv(cells)[batch_idx]
+    return np.einsum("ni,nij->nj", positions, cells_inv)
 
 
 def _fire2_coord_cell_reference_step(
@@ -304,10 +307,10 @@ def _fire2_coord_cell_reference_step(
     cell_force_scale: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Single-system NumPy reference for the coupled FIRE2 variable-cell step."""
-    ext_vel = np.vstack([velocities, _pack_upper_triangular_cell_np(cell_velocities)])
+    ext_vel = np.vstack([velocities, _pack_lower_triangular_cell_np(cell_velocities)])
     cell_force_divisor = positions.shape[0] * cell_force_scale
     ext_forces = np.vstack(
-        [forces, _pack_upper_triangular_cell_np(cell_force / cell_force_divisor)]
+        [forces, _pack_lower_triangular_cell_np(cell_force / cell_force_divisor)]
     )
 
     dt_old = dt[0]
@@ -335,15 +338,15 @@ def _fire2_coord_cell_reference_step(
     ext_vel_mixed = (1.0 - alpha_new) * ext_vel_half + alpha_new * ratio * ext_forces
 
     velocities_mixed = ext_vel_mixed[: positions.shape[0]]
-    cell_velocities_mixed = _unpack_upper_triangular_cell_np(
+    cell_velocities_mixed = _unpack_lower_triangular_cell_np(
         ext_vel_mixed[positions.shape[0] :]
     )
 
     factor = -0.5 if vf <= 0.0 else 1.0
     raw_cell_step = factor * dt_new * cell_velocities_mixed
-    transform = (cell + raw_cell_step) @ np.linalg.inv(cell)
+    transform = np.linalg.inv(cell) @ (cell + raw_cell_step)
     raw_displacement = (
-        positions @ transform.T + factor * dt_new * velocities_mixed - positions
+        positions @ transform + factor * dt_new * velocities_mixed - positions
     )
     max_norm = np.linalg.norm(raw_displacement, axis=1).max()
     inv = min(1.0, maxstep / max_norm) if max_norm > 0.0 else 1.0
@@ -1311,7 +1314,7 @@ class TestFire2TorchRegistration:
         rng = np.random.default_rng(72)
         state = make_fire2_torch_state(24, 2, torch.float32, device, rng=rng)[:7]
         cell = torch.tensor(
-            _make_upper_triangular_cell(2, np.float32, rng=rng),
+            _make_lower_triangular_cell(2, np.float32, rng=rng),
             dtype=torch.float32,
             device=device,
         )
@@ -2967,8 +2970,8 @@ class TestFire2TorchCoordErrors:
 # ==============================================================================
 
 
-def _make_upper_triangular_cell(M, np_dtype, *, rng=None, scale=5.0):
-    """Create random upper-triangular cell matrices (M, 3, 3)."""
+def _make_lower_triangular_cell(M, np_dtype, *, rng=None, scale=5.0):
+    """Create random lower-triangular cell matrices (M, 3, 3)."""
     if rng is None:
         rng = np.random.default_rng(99)
     cells = np.zeros((M, 3, 3), dtype=np_dtype)
@@ -2999,7 +3002,7 @@ class TestFire2TorchCoordCell:
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
 
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3043,7 +3046,7 @@ class TestFire2TorchCoordCell:
         (pos_a, vel_a, forces, batch_idx, alpha_a, dt_a, nsteps_a, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell_a = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel_a = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.2
@@ -3106,7 +3109,7 @@ class TestFire2TorchCoordCell:
         (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
@@ -3138,7 +3141,7 @@ class TestFire2TorchCoordCell:
         forces = torch.empty(0, 3, dtype=torch_dtype, device=device)
         batch_idx = torch.empty(0, dtype=torch.int32, device=device)
         cell = torch.tensor(
-            _make_upper_triangular_cell(M, np_dtype),
+            _make_lower_triangular_cell(M, np_dtype),
             dtype=torch_dtype,
             device=device,
         )
@@ -3202,7 +3205,7 @@ class TestFire2TorchCoordCell:
         forces = torch.zeros_like(positions)
         batch_idx = torch.zeros(N, dtype=torch.int32, device=device)
         cell = torch.tensor(
-            _make_upper_triangular_cell(M, np_dtype, rng=rng),
+            _make_lower_triangular_cell(M, np_dtype, rng=rng),
             dtype=torch_dtype,
             device=device,
         )
@@ -3227,20 +3230,39 @@ class TestFire2TorchCoordCell:
                 **FIRE2_CELL_DEFAULTS,
             )
 
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_cell_only_motion_preserves_fractional_coordinates(self, device):
-        """Cell-only coupled motion preserves atom fractional coordinates."""
+    @pytest.mark.parametrize("device", CELL_MOTION_DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_cell_only_motion_preserves_fractional_coordinates(
+        self, device, torch_dtype
+    ):
+        """Skew row-cell motion preserves fractions across ragged FIRE2 systems."""
         rng = np.random.default_rng(525)
-        N, M = 12, 2
-        torch_dtype = torch.float64
-        np_dtype = np.float64
-        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
-        batch_idx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
-        cell_force_np = np.zeros((M, 3, 3), dtype=np_dtype)
-        cell_force_np[:, 0, 0] = np.array([0.5, -0.3], dtype=np_dtype)
-        cell_force_np[:, 1, 1] = np.array([0.2, 0.4], dtype=np_dtype)
-        cell_force_np[:, 2, 2] = np.array([-0.1, 0.3], dtype=np_dtype)
+        atom_counts = [3, 6, 5]
+        N, M = sum(atom_counts), len(atom_counts)
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+        pos_np = (1.5 * rng.standard_normal((N, 3))).astype(np_dtype)
+        batch_idx_np = np.concatenate(
+            [np.full(n, i, dtype=np.int32) for i, n in enumerate(atom_counts)]
+        )
+        cell_np = np.array(
+            [
+                [[4.0, 0.0, 0.0], [0.65, 4.5, 0.0], [-0.3, 0.45, 5.0]],
+                [[4.4, 0.0, 0.0], [-0.55, 4.2, 0.0], [0.4, 0.3, 4.8]],
+                [[3.8, 0.0, 0.0], [0.7, 4.6, 0.0], [-0.5, -0.35, 4.3]],
+            ],
+            dtype=np_dtype,
+        )
+        cell_force_np = np.array(
+            [
+                [[0.4, 0.0, 0.0], [0.08, 0.3, 0.0], [-0.06, 0.04, 0.35]],
+                [[0.3, 0.0, 0.0], [-0.05, 0.35, 0.0], [0.04, 0.06, 0.25]],
+                [[0.35, 0.0, 0.0], [0.07, 0.25, 0.0], [-0.03, -0.05, 0.4]],
+            ],
+            dtype=np_dtype,
+        )
+        cell_vel_np = np.stack(
+            [-4.0 * cell_force_np[0], 4.0 * cell_force_np[1], 4.0 * cell_force_np[2]]
+        )
 
         positions = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
         velocities = torch.zeros(N, 3, dtype=torch_dtype, device=device)
@@ -3248,12 +3270,13 @@ class TestFire2TorchCoordCell:
         batch_idx = torch.tensor(batch_idx_np, dtype=torch.int32, device=device)
         cell = torch.tensor(cell_np.copy(), dtype=torch_dtype, device=device)
         cell_before = cell.clone()
-        cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_vel = torch.tensor(cell_vel_np, dtype=torch_dtype, device=device)
         cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
         alpha = torch.full((M,), 0.09, dtype=torch_dtype, device=device)
-        dt = torch.full((M,), 0.05, dtype=torch_dtype, device=device)
-        nsteps_inc = torch.zeros(M, dtype=torch.int32, device=device)
-        defaults = {**FIRE2_CELL_DEFAULTS, "maxstep": 10.0}
+        dt = torch.full((M,), 0.08, dtype=torch_dtype, device=device)
+        nsteps_inc = torch.full((M,), 2, dtype=torch.int32, device=device)
+        maxstep = 0.003
+        defaults = {**FIRE2_CELL_DEFAULTS, "maxstep": maxstep}
 
         frac_before = _fractional_coordinates_np(pos_np, cell_np, batch_idx_np)
 
@@ -3270,13 +3293,30 @@ class TestFire2TorchCoordCell:
             nsteps_inc,
             **defaults,
         )
-        torch.cuda.synchronize()
+        if str(device).startswith("cuda"):
+            torch.cuda.synchronize()
 
         frac_after = _fractional_coordinates_np(
             positions.cpu().numpy(), cell.cpu().numpy(), batch_idx_np
         )
-        np.testing.assert_allclose(frac_after, frac_before, atol=1e-10, rtol=1e-10)
+        tolerance = 4e-5 if np_dtype == np.float32 else 2e-10
+        np.testing.assert_allclose(
+            frac_after, frac_before, atol=tolerance, rtol=tolerance
+        )
         assert not torch.allclose(cell, cell_before)
+        np.testing.assert_array_equal(nsteps_inc.cpu().numpy(), [0, 3, 3])
+        torch.testing.assert_close(
+            cell_vel[0], torch.zeros_like(cell_vel[0]), atol=0.0, rtol=0.0
+        )
+        assert torch.linalg.vector_norm(cell_vel[1:]) > 0
+
+        positions_after = positions.cpu().numpy()
+        displacement = np.linalg.norm(positions_after - pos_np, axis=1)
+        max_displacement = np.array(
+            [displacement[batch_idx_np == i].max() for i in range(M)]
+        )
+        assert np.all(max_displacement <= maxstep + tolerance)
+        assert np.all(dt.cpu().numpy() < 0.08)
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
@@ -3292,7 +3332,7 @@ class TestFire2TorchCoordCell:
         alpha_np = np.array([0.07], dtype=np_dtype)
         dt_np = np.array([0.05], dtype=np_dtype)
         nsteps_np = np.array([5], dtype=np.int32)
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)[0]
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)[0]
         cell_vel_np = rng.standard_normal((3, 3)).astype(np_dtype) * 0.05
         cell_vel_np[np.triu_indices(3, k=1)] = 0.0
         cell_force_np = rng.standard_normal((3, 3)).astype(np_dtype) * 0.3
@@ -3379,7 +3419,7 @@ class TestFire2TorchCoordCell:
         bidx_np = np.concatenate(
             [np.full(n, i, dtype=np.int32) for i, n in enumerate(atom_counts)]
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell_vel_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.04
         cell_vel_np[:, np.triu_indices(3, k=1)[0], np.triu_indices(3, k=1)[1]] = 0.0
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.25
@@ -3483,7 +3523,7 @@ class TestFire2TorchCoordCell:
         vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.2
         forces_np = -vel_np.copy()
         batch_idx_np = np.zeros(N, dtype=np.int32)
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell_vel_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.05
         cell_vel_np[:, np.triu_indices(3, k=1)[0], np.triu_indices(3, k=1)[1]] = 0.0
         cell_force_np = -cell_vel_np.copy()
@@ -3534,7 +3574,7 @@ class TestFire2TorchCoordCell:
         (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3585,7 +3625,7 @@ class TestFire2TorchCoordCell:
         (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3623,7 +3663,7 @@ class TestFire2TorchCoordCell:
         (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3730,7 +3770,7 @@ class TestFire2TorchCoordCell:
         (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3770,7 +3810,7 @@ class TestFire2TorchCoordCell:
         (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3808,7 +3848,7 @@ class TestFire2TorchCoordCell:
         (pos_a, vel_a, forces, batch_idx, alpha_a, dt_a, nsteps_a, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell_a = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel_a = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3932,7 +3972,7 @@ class TestFire2TorchCoordCell:
         dt = torch.full((M,), 0.05, dtype=torch_dtype, device=device)
         nsteps_inc = torch.zeros(M, dtype=torch.int32, device=device)
 
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
         cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
         cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
@@ -3978,7 +4018,7 @@ class TestFire2TorchCoordCell:
         vel_np = np.zeros((N, 3), dtype=np_dtype)
         forces_np = np.zeros((N, 3), dtype=np_dtype)
         batch_idx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_np = _make_lower_triangular_cell(M, np_dtype, rng=rng)
         cell_force_np = np.zeros((M, 3, 3), dtype=np_dtype)
         cell_force_np[:, 0, 0] = np.array([0.8, -0.6], dtype=np_dtype)
         cell_force_np[:, 1, 1] = np.array([0.4, 0.5], dtype=np_dtype)
@@ -4224,7 +4264,7 @@ class TestFire2ComputeReductions:
                 make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
             )
             cell = torch.tensor(
-                _make_upper_triangular_cell(M, np_dtype, rng=rng),
+                _make_lower_triangular_cell(M, np_dtype, rng=rng),
                 dtype=torch_dtype,
                 device=device,
             )
@@ -4338,7 +4378,7 @@ class TestFire2ComputeReductions:
                 rng.standard_normal((N, 3)).astype(np_dtype), device=device
             )
             cell = torch.tensor(
-                _make_upper_triangular_cell(M, np_dtype, rng=rng),
+                _make_lower_triangular_cell(M, np_dtype, rng=rng),
                 dtype=torch_dtype,
                 device=device,
             )
@@ -4429,7 +4469,7 @@ class TestFire2ComputeReductions:
                     rng.standard_normal((N, 3)).astype(np_dtype), device=device
                 ),
                 torch.tensor(
-                    _make_upper_triangular_cell(M, np_dtype, rng=rng),
+                    _make_lower_triangular_cell(M, np_dtype, rng=rng),
                     dtype=torch_dtype,
                     device=device,
                 ),

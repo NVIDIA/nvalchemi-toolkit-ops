@@ -1604,8 +1604,7 @@ def ewald_reciprocal_space_from_miller_indices(
 
     Parameters
     ----------
-    positions, charges, cell, alpha, batch_idx, max_atoms_per_system,
-    compute_forces, compute_charge_gradients, compute_virial, energy_reduction
+    positions, charges, cell, alpha, batch_idx, max_atoms_per_system, compute_forces, compute_charge_gradients, compute_virial, energy_reduction
         Match :func:`ewald_reciprocal_space`.
     miller_indices : jax.Array, shape (K, 3)
         Caller-retained signed integer topology. See

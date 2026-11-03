@@ -458,15 +458,12 @@ def prepare_multipole_scf_cache(
         normalize_source=density_mode,
         normalize_receive=density_mode,
     )
+    source_row = source_oc_np[0].to(device=device, dtype=torch.float64)
     source_oc = torch.zeros(3, dtype=torch.float64, device=device)
-    source_oc[0] = float(source_oc_np[0, 0])
-    if l_max >= 1:
-        source_oc[1] = float(source_oc_np[0, 1])
+    source_oc[: l_max + 1] = source_row
     if l_max >= 2:
-        # x3/2: the Cartesian-Frobenius |Q|_F^2 energy-self needs the angular
-        # (k.Q.k)^2 contraction factor on top of the bare overlap constant.
-        # See _multipole_ewald_self_energy_per_atom.
-        source_oc[2] = 1.5 * float(source_oc_np[0, 2])
+        # Cartesian-Frobenius quadrupole norm contributes the angular 3/2 factor.
+        source_oc[2] *= 1.5
 
     # feature_overlap_constants for the feature-step self-interaction subtract,
     # up to max(l_max, feature_max_l) so the receiver l=2 self constant exists
@@ -779,13 +776,12 @@ def _prepare_multipole_scf_cache_batch(
         normalize_source=density_mode,
         normalize_receive=density_mode,
     )
+    source_row = source_oc_np[0].to(device=device, dtype=torch.float64)
     source_oc = torch.zeros(3, dtype=torch.float64, device=device)
-    source_oc[0] = float(source_oc_np[0, 0])
-    if l_max >= 1:
-        source_oc[1] = float(source_oc_np[0, 1])
+    source_oc[: l_max + 1] = source_row
     if l_max >= 2:
-        # x3/2: the Cartesian-Frobenius |Q|_F^2 energy-self angular factor.
-        source_oc[2] = 1.5 * float(source_oc_np[0, 2])
+        # Cartesian-Frobenius quadrupole norm contributes the angular 3/2 factor.
+        source_oc[2] *= 1.5
 
     # Computed up to max(l_max, feature_max_l) so the receiver l=2 self
     # constant exists when decoupled (feature_max_l=2, l_max<2).

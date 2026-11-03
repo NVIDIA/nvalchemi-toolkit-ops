@@ -36,6 +36,11 @@ Batch Scaling
 
 ## Performance Results
 
+```{note}
+Torch pair-centric curves use **`grid_policy="adaptive"`** (opt-in).
+The API default is `grid_policy="configured"`.
+```
+
 <!-- markdownlint-disable MD013 -->
 
 ```{raw} html

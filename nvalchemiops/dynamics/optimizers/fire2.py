@@ -38,6 +38,7 @@ Given positions :math:`\mathbf{r}`, velocities :math:`\mathbf{v}`, and forces
    :math:`\mathbf{v} \leftarrow \mathbf{v} + \mathbf{F} \Delta t`
 2. Compute power:  :math:`P = \sum \mathbf{v} \cdot \mathbf{F}`  per system
 3. Adaptive parameter update:
+
    - If :math:`P > 0`: increment counter, optionally grow :math:`\Delta t`,
      shrink :math:`\alpha`
    - If :math:`P \leq 0`: reset counter, shrink :math:`\Delta t`, reset

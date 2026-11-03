@@ -2321,8 +2321,10 @@ def _batch_multipole_rho_gather_t_backward(ctx, g_cot: torch.Tensor):
     grad_rho, positions, source_phi_hat, k_vectors, volume, batch_idx = (
         ctx.saved_tensors
     )
-    cg_q = g_cot[:, 0].contiguous()
-    cg_dip = g_cot[:, [3, 1, 2]].contiguous()
+    # ``g`` is float64 by construction, so the cotangent is too; match the
+    # coordinate dtype so the moment and position kernels agree on precision.
+    cg_q = g_cot[:, 0].to(positions.dtype).contiguous()
+    cg_dip = g_cot[:, [3, 1, 2]].to(positions.dtype).contiguous()
     cosines, sines = torch.ops.nvalchemiops.batch_multipole_structure_factor(
         positions.detach(), k_vectors.detach(), batch_idx
     )
@@ -2420,7 +2422,8 @@ def _batch_multipole_rho_q_gather_t_setup_context(ctx, inputs, output) -> None:
 def _batch_multipole_rho_q_gather_t_backward(ctx, g_cot: torch.Tensor):
     r"""Adjoint of :math:`g_Q = S_Q^\top \cdot \nabla_\rho` (batched)."""
     grad_rho, positions, source_coeff2, k_vectors, volume, batch_idx = ctx.saved_tensors
-    cg_q = g_cot.contiguous()
+    # Cotangent of the float64 ``g_Q``; match the coordinate dtype.
+    cg_q = g_cot.to(positions.dtype).contiguous()
     cosines, sines = torch.ops.nvalchemiops.batch_multipole_structure_factor(
         positions.detach(), k_vectors.detach(), batch_idx
     )

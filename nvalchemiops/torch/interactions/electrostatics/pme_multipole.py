@@ -37,6 +37,9 @@ import math
 import torch
 import warp as wp
 
+from nvalchemiops.interactions.electrostatics._pme_mesh import (
+    _DEFAULT_PME_SPLINE_ORDER,
+)
 from nvalchemiops.interactions.electrostatics.pme_multipole_kernels import (
     batch_multipole_pme_convolve_backward_launch,
     batch_multipole_pme_convolve_double_backward_launch,
@@ -52,6 +55,8 @@ from nvalchemiops.interactions.electrostatics.pme_multipole_kernels import (
     batch_multipole_pme_spread_backward_unified_launch,
     batch_multipole_pme_spread_launch,
     batch_multipole_pme_spread_unified_launch,
+    batch_pme_k_squared_backward_launch,
+    batch_pme_k_squared_launch,
     bspline_moduli_1d_launch,
     multipole_pme_convolve_backward_launch,
     multipole_pme_convolve_double_backward_launch,
@@ -1184,7 +1189,6 @@ def _batch_multipole_pme_spread_forward(
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
 ) -> torch.Tensor:
     """Batched spread of (charges + dipoles) onto per-system meshes."""
@@ -1193,7 +1197,11 @@ def _batch_multipole_pme_spread_forward(
     wp_scalar = get_wp_dtype(input_dtype)
     wp_vec = get_wp_vec_dtype(input_dtype)
     wp_mat = get_wp_mat_dtype(input_dtype)
-    mesh = torch.zeros((B, mesh_nx, mesh_ny, mesh_nz), dtype=input_dtype, device=device)
+    mesh = torch.zeros(
+        (cell_inv_t.shape[0], mesh_nx, mesh_ny, mesh_nz),
+        dtype=input_dtype,
+        device=device,
+    )
     with _scoped_warp_stream(device):
         batch_multipole_pme_spread_launch(
             _wp_from_torch(positions.detach().contiguous(), dtype=wp_vec),
@@ -1219,11 +1227,10 @@ def _batch_multipole_pme_spread_backward(  # pragma: no cover
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Batched analytical backward of the spread."""
-    del mesh_nx, mesh_ny, mesh_nz, B
+    del mesh_nx, mesh_ny, mesh_nz
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -1252,12 +1259,12 @@ def _batch_multipole_pme_spread_backward(  # pragma: no cover
 
 
 def _batch_spread_forward_fake(positions, *_args):  # pragma: no cover
-    """Fake for batched spread — derive from mesh_nx/y/z and B kwargs."""
-    # positions=0, charges=1, dipoles=2, batch_idx=3, cell_inv_t=4,
-    # mesh_nx=5, mesh_ny=6, mesh_nz=7, B=8, spline_order=9.
-    mesh_nx, mesh_ny, mesh_nz, B = _args[4], _args[5], _args[6], _args[7]
+    """Fake for batched spread; derive its leading dimension from the cell."""
+    # charges=0, dipoles=1, batch_idx=2, cell_inv_t=3, mesh_nx/y/z=4:7.
+    cell_inv_t = _args[3]
+    mesh_nx, mesh_ny, mesh_nz = _args[4], _args[5], _args[6]
     return torch.zeros(
-        (B, mesh_nx, mesh_ny, mesh_nz),
+        (cell_inv_t.shape[0], mesh_nx, mesh_ny, mesh_nz),
         dtype=positions.dtype,
         device=positions.device,
     )
@@ -1270,7 +1277,7 @@ register_warp_op_chain(
     backward=_batch_multipole_pme_spread_backward,
     backward_return_arity=3,
     diff_input_positions=(0, 1, 2),
-    n_forward_inputs=10,
+    n_forward_inputs=9,
 )
 
 
@@ -1284,7 +1291,6 @@ def _batch_multipole_pme_spread_unified_forward(
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
     lmax: int,
 ) -> torch.Tensor:
@@ -1294,7 +1300,11 @@ def _batch_multipole_pme_spread_unified_forward(
     wp_scalar = get_wp_dtype(input_dtype)
     wp_vec = get_wp_vec_dtype(input_dtype)
     wp_mat = get_wp_mat_dtype(input_dtype)
-    mesh = torch.zeros((B, mesh_nx, mesh_ny, mesh_nz), dtype=input_dtype, device=device)
+    mesh = torch.zeros(
+        (cell_inv_t.shape[0], mesh_nx, mesh_ny, mesh_nz),
+        dtype=input_dtype,
+        device=device,
+    )
     with _scoped_warp_stream(device):
         ok = batch_multipole_pme_spread_unified_launch(
             _wp_from_torch(positions.detach().contiguous(), dtype=wp_vec),
@@ -1328,7 +1338,6 @@ def _batch_multipole_pme_spread_unified_backward(  # pragma: no cover
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1345,7 +1354,7 @@ def _batch_multipole_pme_spread_unified_backward(  # pragma: no cover
     grad_charges = torch.zeros(n_atoms, dtype=input_dtype, device=device)
     grad_dipoles = torch.zeros((n_atoms, 3), dtype=input_dtype, device=device)
     grad_quadrupoles = torch.zeros((n_atoms, 3, 3), dtype=input_dtype, device=device)
-    grad_cell_inv_t = torch.zeros((B, 3, 3), dtype=input_dtype, device=device)
+    grad_cell_inv_t = torch.zeros_like(cell_inv_t)
     with _scoped_warp_stream(device):
         ok = batch_multipole_pme_spread_backward_unified_launch(
             _wp_from_torch(positions.contiguous(), dtype=wp_vec),
@@ -1380,13 +1389,13 @@ def _batch_multipole_pme_spread_unified_backward(  # pragma: no cover
 
 
 def _batch_spread_unified_forward_fake(positions, *_args):  # pragma: no cover
-    """Fake: output mesh shape ``(B, mesh_nx, mesh_ny, mesh_nz)``."""
-    # positions=0, charges=1, dipoles=2, quadrupoles=3, batch_idx=4,
-    # cell_inv_t=5, mesh_nx=6, mesh_ny=7, mesh_nz=8, B=9, spline_order=10,
-    # lmax=11.
-    mesh_nx, mesh_ny, mesh_nz, B = _args[5], _args[6], _args[7], _args[8]
+    """Fake: derive the output batch axis from ``cell_inv_t``."""
+    # charges=0, dipoles=1, quadrupoles=2, batch_idx=3, cell_inv_t=4,
+    # mesh_nx/y/z=5:8.
+    cell_inv_t = _args[4]
+    mesh_nx, mesh_ny, mesh_nz = _args[5], _args[6], _args[7]
     return torch.zeros(
-        (B, mesh_nx, mesh_ny, mesh_nz),
+        (cell_inv_t.shape[0], mesh_nx, mesh_ny, mesh_nz),
         dtype=positions.dtype,
         device=positions.device,
     )
@@ -1408,7 +1417,6 @@ def _batch_multipole_pme_spread_unified_double_backward(  # pragma: no cover
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1466,7 +1474,6 @@ def _batch_multipole_pme_spread_unified_double_backward(  # pragma: no cover
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         2,
     )
@@ -1485,7 +1492,6 @@ def _batch_multipole_pme_spread_unified_double_backward(  # pragma: no cover
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         2,
     )
@@ -1514,7 +1520,9 @@ def _batch_multipole_pme_spread_unified_double_backward(  # pragma: no cover
         ggpos_c = ggpos.contiguous()
         with _scoped_warp_stream(device):
             octu_mesh = torch.zeros(
-                (B, mesh_nx, mesh_ny, mesh_nz), dtype=dtype, device=device
+                (cell_inv_t.shape[0], mesh_nx, mesh_ny, mesh_nz),
+                dtype=dtype,
+                device=device,
             )
             batch_multipole_pme_octupole_spread_launch(
                 _wp_from_torch(positions.contiguous(), dtype=wp_vec),
@@ -1577,7 +1585,7 @@ _BATCH_SPREAD_DBWD_SCHEMA = (
     "Tensor? gg_quadrupoles, Tensor? gg_cell_inv_t, Tensor grad_mesh, "
     "Tensor positions, Tensor charges, Tensor dipoles, Tensor quadrupoles, "
     "Tensor batch_idx, Tensor cell_inv_t, int mesh_nx, int mesh_ny, "
-    "int mesh_nz, int B, int spline_order, int lmax) "
+    "int mesh_nz, int spline_order, int lmax) "
     "-> (Tensor, Tensor, Tensor, Tensor, Tensor)"
 )
 
@@ -1590,16 +1598,16 @@ register_warp_op_chain(
     backward_return_arity=5,
     # positions, charges, dipoles, quadrupoles, cell_inv_t (batch stress).
     diff_input_positions=(0, 1, 2, 3, 5),
-    n_forward_inputs=12,
+    n_forward_inputs=11,
     batch_match=True,
     # batched create_graph force-loss. Backward inputs: grad_mesh=0,
     # positions=1, charges=2, dipoles=3, quadrupoles=4, batch_idx=5,
-    # cell_inv_t=6, mesh_nx=7, ... (13 total).
+    # cell_inv_t=6, mesh_nx=7, ... (12 total).
     double_backward=_batch_multipole_pme_spread_unified_double_backward,
     double_backward_fake=_batch_spread_unified_double_backward_fake,
     double_backward_schema=_BATCH_SPREAD_DBWD_SCHEMA,
     second_order_diff_positions=(0, 1, 2, 3, 4),
-    n_backward_inputs=13,
+    n_backward_inputs=12,
 )
 
 
@@ -1929,7 +1937,6 @@ def _batch_multipole_pme_gather_via_spread_t_forward(
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1951,7 +1958,6 @@ def _batch_multipole_pme_gather_via_spread_t_forward(
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         lmax,
     )
@@ -1982,7 +1988,6 @@ def _batch_multipole_pme_gather_via_spread_t_backward(  # pragma: no cover
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1998,7 +2003,6 @@ def _batch_multipole_pme_gather_via_spread_t_backward(  # pragma: no cover
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         lmax,
     )
@@ -2013,7 +2017,6 @@ def _batch_multipole_pme_gather_via_spread_t_backward(  # pragma: no cover
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         lmax,
     )
@@ -2041,7 +2044,6 @@ def _batch_multipole_pme_gather_via_spread_t_double_backward(  # pragma: no cove
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
-    B: int,
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -2060,7 +2062,6 @@ def _batch_multipole_pme_gather_via_spread_t_double_backward(  # pragma: no cove
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         lmax,
     )
@@ -2075,7 +2076,6 @@ def _batch_multipole_pme_gather_via_spread_t_double_backward(  # pragma: no cove
         mesh_nx,
         mesh_ny,
         mesh_nz,
-        B,
         spline_order,
         lmax,
     )
@@ -2096,7 +2096,6 @@ def _batch_multipole_pme_gather_via_spread_t_double_backward(  # pragma: no cove
             mesh_nx,
             mesh_ny,
             mesh_nz,
-            B,
             spline_order,
             lmax,
         )
@@ -2129,20 +2128,20 @@ def _batch_gather_via_spread_t_double_backward_fake(  # pragma: no cover
 
 _BATCH_GATHER_VST_FWD_SCHEMA = (
     "(Tensor phi_grid, Tensor p_frac, Tensor batch_idx, Tensor identity_cell, "
-    "int mesh_nx, int mesh_ny, int mesh_nz, int B, int spline_order, int lmax) "
+    "int mesh_nx, int mesh_ny, int mesh_nz, int spline_order, int lmax) "
     "-> (Tensor, Tensor, Tensor)"
 )
 
 _BATCH_GATHER_VST_BWD_SCHEMA = (
     "(Tensor cg_q, Tensor cg_d, Tensor cg_Q, Tensor phi_grid, Tensor p_frac, "
     "Tensor batch_idx, Tensor identity_cell, int mesh_nx, int mesh_ny, "
-    "int mesh_nz, int B, int spline_order, int lmax) -> (Tensor, Tensor)"
+    "int mesh_nz, int spline_order, int lmax) -> (Tensor, Tensor)"
 )
 
 _BATCH_GATHER_VST_DBWD_SCHEMA = (
     "(Tensor? gg_phi, Tensor? gg_p, Tensor cg_q, Tensor cg_d, Tensor cg_Q, "
     "Tensor phi_grid, Tensor p_frac, Tensor batch_idx, Tensor identity_cell, "
-    "int mesh_nx, int mesh_ny, int mesh_nz, int B, int spline_order, int lmax) "
+    "int mesh_nx, int mesh_ny, int mesh_nz, int spline_order, int lmax) "
     "-> (Tensor, Tensor, Tensor, Tensor, Tensor)"
 )
 
@@ -2158,15 +2157,15 @@ register_warp_op_chain(
     backward_schema=_BATCH_GATHER_VST_BWD_SCHEMA,
     backward_return_arity=2,
     diff_input_positions=(0, 1),
-    n_forward_inputs=10,
+    n_forward_inputs=9,
     batch_match=True,
     # Backward inputs: cg_q=0, cg_d=1, cg_Q=2, phi_grid=3, p_frac=4,
-    # batch_idx=5, identity_cell=6, mesh_nx=7, ... (13 total).
+    # batch_idx=5, identity_cell=6, mesh_nx=7, ... (12 total).
     double_backward=_batch_multipole_pme_gather_via_spread_t_double_backward,
     double_backward_fake=_batch_gather_via_spread_t_double_backward_fake,
     double_backward_schema=_BATCH_GATHER_VST_DBWD_SCHEMA,
     second_order_diff_positions=(0, 1, 2, 3, 4),
-    n_backward_inputs=13,
+    n_backward_inputs=12,
     double_backward_return_arity=5,
 )
 
@@ -2340,7 +2339,7 @@ def multipole_pme_green_structure_factor(
     volume: torch.Tensor,
     *,
     mesh_dimensions: tuple[int, int, int],
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Green's function + structure factor for multipole PME.
 
@@ -2365,7 +2364,7 @@ def multipole_pme_green_structure_factor(
     mesh_dimensions : tuple[int, int, int]
         Full mesh dimensions ``(Nx, Ny, Nz)`` (note ``Nz``, not
         ``Nz_rfft``).
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline order. :math:`|C|^2 = (\mathrm{sinc}_x \, \mathrm{sinc}_y \, \mathrm{sinc}_z)^{2 \cdot \mathrm{spline\_order}}`.
 
     Returns
@@ -2993,7 +2992,7 @@ def multipole_pme_gather_potential(
     positions: torch.Tensor,
     cell: torch.Tensor,
     *,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -3020,7 +3019,7 @@ def multipole_pme_gather_potential(
         as ``mesh``.
     cell : torch.Tensor, shape ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``
         Unit-cell matrix (rows are lattice vectors); ``(B, 3, 3)`` batched.
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p`` (cardinal B-spline).
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state. Shape
@@ -3621,7 +3620,7 @@ def multipole_pme_gather_field(
     positions: torch.Tensor,
     cell: torch.Tensor,
     *,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -3651,7 +3650,7 @@ def multipole_pme_gather_field(
         as ``mesh``.
     cell : torch.Tensor, shape ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``
         Unit-cell matrix (rows are lattice vectors); ``(B, 3, 3)`` batched.
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p``.
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state. Shape
@@ -3840,7 +3839,7 @@ def multipole_pme_gather_hessian(
     positions: torch.Tensor,
     cell: torch.Tensor,
     *,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Gather the symmetric Cartesian Hessian :math:`\nabla^2_\text{cart} \phi(r_i)`.
@@ -3864,7 +3863,7 @@ def multipole_pme_gather_hessian(
         Cartesian atom positions, same dtype as ``mesh``.
     cell : torch.Tensor, shape ``(3, 3)`` or ``(1, 3, 3)``
         Unit-cell matrix (rows are lattice vectors).
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p``.
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state, shape
@@ -5407,6 +5406,151 @@ register_warp_op_chain(
 )
 
 
+def _batch_pme_k_squared_forward(
+    inv_cell_t: torch.Tensor,
+    miller_x: torch.Tensor,
+    miller_y: torch.Tensor,
+    miller_z: torch.Tensor,
+    nx: int,
+    ny: int,
+    nz_rfft: int,
+) -> torch.Tensor:
+    """Build all per-system ``k_squared`` grids in one Warp launch."""
+    device = inv_cell_t.device
+    dtype = inv_cell_t.dtype
+    wp_scalar = get_wp_dtype(dtype)
+    wp_mat = get_wp_mat_dtype(dtype)
+    k_squared = torch.empty(
+        (inv_cell_t.shape[0], nx, ny, nz_rfft), dtype=dtype, device=device
+    )
+    with _scoped_warp_stream(device):
+        batch_pme_k_squared_launch(
+            _wp_from_torch(miller_x.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(miller_y.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(miller_z.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(inv_cell_t.contiguous(), dtype=wp_mat),
+            _wp_from_torch(k_squared, dtype=wp_scalar),
+            wp_dtype=wp_scalar,
+            device=str(wp.device_from_torch(device)),
+        )
+    return k_squared
+
+
+def _batch_pme_k_squared_backward(  # pragma: no cover
+    grad_k_squared: torch.Tensor,
+    inv_cell_t: torch.Tensor,
+    miller_x: torch.Tensor,
+    miller_y: torch.Tensor,
+    miller_z: torch.Tensor,
+    nx: int,
+    ny: int,
+    nz_rfft: int,
+) -> torch.Tensor:
+    """Per-system cell adjoint of the batched ``k_squared`` operation."""
+    del nx, ny, nz_rfft
+    device = inv_cell_t.device
+    dtype = inv_cell_t.dtype
+    wp_scalar = get_wp_dtype(dtype)
+    wp_mat = get_wp_mat_dtype(dtype)
+    grad_M = torch.zeros_like(inv_cell_t)
+    with _scoped_warp_stream(device):
+        batch_pme_k_squared_backward_launch(
+            _wp_from_torch(miller_x.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(miller_y.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(miller_z.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(inv_cell_t.contiguous(), dtype=wp_mat),
+            _wp_from_torch(grad_k_squared.contiguous(), dtype=wp_scalar),
+            _wp_from_torch(grad_M, dtype=wp_scalar),
+            wp_dtype=wp_scalar,
+            device=str(wp.device_from_torch(device)),
+        )
+    return grad_M
+
+
+def _batch_pme_k_squared_forward_fake(
+    inv_cell_t, _mx, _my, _mz, nx, ny, nz_rfft
+):  # pragma: no cover
+    """Fake: per-system ``(B, nx, ny, nz_rfft)`` grid."""
+    return inv_cell_t.new_empty(
+        (inv_cell_t.shape[0], nx, ny, nz_rfft), dtype=inv_cell_t.dtype
+    )
+
+
+def _batch_pme_k_squared_double_backward(  # pragma: no cover
+    v_grad_m: torch.Tensor,
+    grad_k_squared: torch.Tensor,
+    inv_cell_t: torch.Tensor,
+    miller_x: torch.Tensor,
+    miller_y: torch.Tensor,
+    miller_z: torch.Tensor,
+    nx: int,
+    ny: int,
+    nz_rfft: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Closed-form second derivative of the batched ``k_squared`` op."""
+    const = 2.0 * (2.0 * math.pi) ** 2
+    M = inv_cell_t
+    v = v_grad_m
+    dtype = M.dtype
+    mx = miller_x.to(dtype).view(1, nx, 1, 1)
+    my = miller_y.to(dtype).view(1, 1, ny, 1)
+    mz = miller_z.to(dtype).view(1, 1, 1, nz_rfft)
+    m_axes = (mx, my, mz)
+    kred = [
+        M[:, c, 0, None, None, None] * mx
+        + M[:, c, 1, None, None, None] * my
+        + M[:, c, 2, None, None, None] * mz
+        for c in range(3)
+    ]
+    w = [
+        v[:, e, 0, None, None, None] * mx
+        + v[:, e, 1, None, None, None] * my
+        + v[:, e, 2, None, None, None] * mz
+        for e in range(3)
+    ]
+    grad_grad_k_squared = (
+        const * (kred[0] * w[0] + kred[1] * w[1] + kred[2] * w[2])
+    ).contiguous()
+    grad_m = torch.stack(
+        [
+            torch.stack(
+                [
+                    const * (grad_k_squared * w[e] * m_axes[f]).sum(dim=(1, 2, 3))
+                    for f in range(3)
+                ],
+                dim=-1,
+            )
+            for e in range(3)
+        ],
+        dim=-2,
+    )
+    return grad_grad_k_squared, grad_m.contiguous()
+
+
+def _batch_pme_k_squared_double_backward_fake(
+    _v_grad_m, grad_k_squared, inv_cell_t, *_args
+):  # pragma: no cover
+    """Fake for the cotangents of ``(grad_k_squared, inv_cell_t)``."""
+    return torch.empty_like(grad_k_squared), torch.empty_like(inv_cell_t)
+
+
+register_warp_op_chain(
+    name="nvalchemiops::multipole_pme_k_squared_batch",
+    forward=_batch_pme_k_squared_forward,
+    forward_fake=_batch_pme_k_squared_forward_fake,
+    backward=_batch_pme_k_squared_backward,
+    backward_return_arity=1,
+    diff_input_positions=(0,),
+    n_forward_inputs=7,
+    batch_match=True,
+    double_backward=_batch_pme_k_squared_double_backward,
+    double_backward_fake=_batch_pme_k_squared_double_backward_fake,
+    second_order_diff_positions=(0, 1),
+    n_backward_inputs=8,
+    double_backward_return_arity=2,
+)
+
+
 def _pme_fractionalize_forward(
     positions: torch.Tensor,
     cell_inv_t: torch.Tensor,
@@ -5674,7 +5818,7 @@ def multipole_pme_reciprocal_space(
     sigma: float,
     alpha: float,
     mesh_dimensions: tuple[int, int, int],
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     volume: torch.Tensor | None = None,
@@ -5736,7 +5880,7 @@ def multipole_pme_reciprocal_space(
         Ewald splitting parameter (positive).
     mesh_dimensions : tuple[int, int, int]
         FFT mesh dimensions ``(Nx, Ny, Nz)`` — shared across batch.
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p``.
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` for MD steady-state. Shape
@@ -5942,7 +6086,7 @@ def multipole_particle_mesh_ewald(
     sigma: float,
     alpha: float | None = None,
     mesh_dimensions: tuple[int, int, int] | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     accuracy: float = 1e-6,
@@ -6001,7 +6145,7 @@ def multipole_particle_mesh_ewald(
         FFT mesh dimensions — shared across batch. Auto-estimated from
         the same Kolafa-Perram balance when ``None``. Override this if
         you need to lock the mesh resolution (e.g. for kernel reuse).
-    spline_order : int, default 4
+    spline_order : int, default 5
         B-spline interpolation order ``p`` (used for both spread and gather).
     cell_inv_t : torch.Tensor, optional
         Pre-computed ``transpose(inv(cell))`` — shape ``(3, 3)`` /
@@ -6059,6 +6203,7 @@ def multipole_particle_mesh_ewald(
             batch_idx=batch_idx,
             accuracy=accuracy,
             cost_ratio=cost_ratio,
+            spline_order=spline_order,
         )
         if alpha is None:
             alpha_tensor = params.alpha
@@ -6106,9 +6251,9 @@ def multipole_particle_mesh_ewald(
                 "batch_idx must have shape (N_total,) matching positions[0]; "
                 f"got {tuple(batch_idx.shape)}"
             )
-        B = cell.shape[0]
-        sigmas = torch.full((B,), sigma, dtype=input_dtype, device=device)
-        alphas = torch.full((B,), alpha, dtype=input_dtype, device=device)
+        batch_shape = cell[:, 0, 0].to(dtype=input_dtype)
+        sigmas = torch.full_like(batch_shape, sigma)
+        alphas = torch.full_like(batch_shape, alpha)
 
         # Per-atom real-space ``(N_total,)``, cell-grad aware for all l_max.
         e_real = coulomb_scale * multipole_real_space_energy_with_stress(
@@ -6181,45 +6326,24 @@ def multipole_particle_mesh_ewald(
 def _build_batch_pme_k_grids(
     cells: torch.Tensor, mesh_dimensions: tuple[int, int, int], dtype: torch.dtype
 ) -> torch.Tensor:
-    """Per-system ``k_squared`` rfft grid for the batched multipole-PME pipeline.
-
-    ``cells`` is ``(B, 3, 3)``; returns ``k_squared`` shaped
-    ``(B, nx, ny, nz_rfft)``, autograd-aware through ``cells`` (per-system
-    stress). Reuses the cell-differentiable single-system
-    ``multipole_pme_k_squared`` custom_op per system and stacks — B is the
-    (small) number of systems, so the Python loop is cheap relative to the
-    spread/FFT cost and gives exact batched cell-grad without a separate
-    batched k_squared backward kernel.
-    """
+    """Build the batched ``k_squared`` rfft grid with one differentiable op."""
     nx, ny, nz = mesh_dimensions
     device = cells.device
-    B = cells.shape[0]
 
     miller_x = torch.fft.fftfreq(nx, d=1.0 / nx, device=device, dtype=dtype)
     miller_y = torch.fft.fftfreq(ny, d=1.0 / ny, device=device, dtype=dtype)
     miller_z = torch.fft.rfftfreq(nz, d=1.0 / nz, device=device, dtype=dtype)
     nz_rfft = nz // 2 + 1
-
-    per_system = []
-    for b in range(B):
-        inv_cell_t = (
-            torch.linalg.inv_ex(cells[b].transpose(-1, -2))[0]
-            .to(dtype)
-            .unsqueeze(0)
-            .contiguous()
-        )
-        per_system.append(
-            torch.ops.nvalchemiops.multipole_pme_k_squared(
-                inv_cell_t,
-                miller_x,
-                miller_y,
-                miller_z,
-                nx,
-                ny,
-                nz_rfft,
-            )
-        )
-    return torch.stack(per_system, dim=0)  # (B, nx, ny, nz_rfft)
+    inv_cell_t = torch.linalg.inv_ex(cells.transpose(-1, -2))[0].to(dtype).contiguous()
+    return torch.ops.nvalchemiops.multipole_pme_k_squared_batch(
+        inv_cell_t,
+        miller_x,
+        miller_y,
+        miller_z,
+        nx,
+        ny,
+        nz_rfft,
+    )
 
 
 def _batch_multipole_pme_reciprocal_space_impl(
@@ -6232,7 +6356,7 @@ def _batch_multipole_pme_reciprocal_space_impl(
     sigma: float,
     alpha: float,
     mesh_dimensions: tuple[int, int, int],
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     cell_inv_t: torch.Tensor | None = None,
     volumes: torch.Tensor | None = None,
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
@@ -6319,7 +6443,6 @@ def _batch_multipole_pme_reciprocal_space_impl(
         nx,
         ny,
         nz,
-        B,
         spline_order,
         lmax,
     )  # (B, nx, ny, nz)
@@ -6332,9 +6455,9 @@ def _batch_multipole_pme_reciprocal_space_impl(
     # Step 3: per-system k-grid + shared B-spline modulus LUTs.
     dtype = positions.dtype
     k_squared = _resolve_batch_pme_k_squared(cell, mesh_dimensions, dtype, k_squared)
-    alpha_t = torch.full((B,), alpha, dtype=dtype, device=positions.device)
-    sigma_t = torch.full((B,), sigma, dtype=dtype, device=positions.device)
     volumes_t = volumes.to(dtype)
+    alpha_t = torch.full_like(volumes_t, alpha)
+    sigma_t = torch.full_like(volumes_t, sigma)
     moduli_x, moduli_y, moduli_z = _resolve_pme_moduli(
         mesh_dimensions, spline_order, dtype, positions.device, moduli
     )
@@ -6365,7 +6488,7 @@ def _batch_multipole_pme_reciprocal_space_impl(
     # double-backward (force-loss + stress-loss).
     coulomb_scale = FIELD_CONSTANT / (4.0 * math.pi)
     g_q, g_d, g_Q = torch.ops.nvalchemiops.multipole_pme_gather_via_spread_t_batch(
-        phi_grid, p_frac, batch_idx, identity_cell, nx, ny, nz, B, spline_order, lmax
+        phi_grid, p_frac, batch_idx, identity_cell, nx, ny, nz, spline_order, lmax
     )
     e_per_atom = charges * g_q + (df_frac * g_d).sum(-1) + (qf_frac * g_Q).sum((-1, -2))
     # Per-atom reciprocal energy ``(N_total,)``; the caller owns the reduction

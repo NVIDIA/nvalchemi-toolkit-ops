@@ -27,8 +27,8 @@ The approach follows the "filter" pattern:
 - Results are unpacked back to atomic positions and cell
 
 Key features:
-- Cell alignment to upper-triangular form for stability
-- 6-DOF cell representation (upper-triangular: a, b*cos(gamma), b*sin(gamma), c1, c2, c3)
+- Cell alignment to lower-triangular form for stability
+- 6-DOF cell representation (lower-triangular: a, b*cos(gamma), c1, b*sin(gamma), c2, c3)
 - Stress-to-cell-force conversion with proper volume scaling
 - batch_idx/atom_ptr extension for batched systems
 
@@ -79,9 +79,9 @@ def _align_cell_kernel(
     cell: wp.array(dtype=Any),
     transform: wp.array(dtype=Any),
 ):
-    r"""Align cell to upper-triangular (right-handed) form.
+    r"""Align cell to lower-triangular (right-handed) form.
 
-    Transforms the cell matrix to the standard upper-triangular form:
+    Transforms the cell matrix to the standard lower-triangular form:
 
     .. math::
 
@@ -91,15 +91,16 @@ def _align_cell_kernel(
             c_1 & c_2 & c_3
         \end{pmatrix}
 
-    where a, b, c are lattice vector lengths and :math:`\gamma` is the angle between a and b.
+    where the lattice vectors are rows of H and Cartesian row positions satisfy r = s @ H. Here a, b, c are lattice vector lengths and gamma is the angle between a and b.
 
-    This representation:
+    This representation stores lattice vectors as rows and keeps the six cell parameters.
+    It:
     - Reduces rotational ambiguity (improves optimization stability)
     - Has 6 independent parameters instead of 9
     - Is the standard form expected by many MD codes
 
     The transformation matrix is computed such that:
-        new_positions = old_positions @ transform
+        r_new = transform @ r_old for position columns
 
     Parameters
     ----------
@@ -117,7 +118,7 @@ def _align_cell_kernel(
     -----
     - Adapted from alchemistudio2 implementation.
     - Handles negative volume cells by flipping sign.
-    - After this kernel, positions should be updated: pos = pos @ transform
+    - After this kernel, update position columns with pos = transform @ pos
     """
     tid = wp.tid()
 
@@ -155,7 +156,7 @@ def _align_cell_kernel(
     c2 = (c * (cos_alpha - cos_beta * cos_gamma)) / sin_gamma
     c3 = wp.sqrt(wp.max(_zero, c * c - c1 * c1 - c2 * c2))
 
-    # Construct aligned cell (upper triangular)
+    # Construct aligned cell (lower-triangular)
     cell_r = type(_cell)(
         a,
         _zero,
@@ -256,7 +257,7 @@ def _pack_positions_kernel(
 
     Combines N atomic positions with 6 cell parameters (stored as 2 vec3s) into
     a single extended array of shape (N + 2,). The cell is assumed to be in
-    upper-triangular form from align_cell().
+    lower-triangular form from align_cell().
 
     Cell packing format:
         extended[N]   = [H[0,0], H[1,0], H[2,0]] = [a, b*cos(gamma), c1]
@@ -267,7 +268,7 @@ def _pack_positions_kernel(
     positions : wp.array, shape (N,), dtype=vec3f or vec3d
         Atomic positions.
     cell : wp.array, shape (1,), dtype=mat33f or mat33d
-        Cell matrix (should be upper-triangular from align_cell).
+        Cell matrix (should be lower-triangular from align_cell).
     extended : wp.array, shape (N + 2,), dtype=vec3f or vec3d
         OUTPUT: Extended position array. Modified in-place.
     num_atoms : wp.int32
@@ -303,7 +304,7 @@ def _unpack_positions_kernel(
 ):
     """Unpack extended position array to atomic positions and cell (single system).
 
-    Extracts N atomic positions and reconstructs the upper-triangular cell matrix
+    Extracts N atomic positions and reconstructs the lower-triangular cell matrix
     from the extended array. This is the inverse of _pack_positions_kernel.
 
     Parameters
@@ -313,7 +314,7 @@ def _unpack_positions_kernel(
     positions : wp.array, shape (N,), dtype=vec3f or vec3d
         OUTPUT: Atomic positions. Modified in-place.
     cell : wp.array, shape (1,), dtype=mat33f or mat33d
-        OUTPUT: Reconstructed upper-triangular cell matrix. Modified in-place.
+        OUTPUT: Reconstructed lower-triangular cell matrix. Modified in-place.
     num_atoms : wp.int32
         Number of atoms (N).
 
@@ -332,7 +333,7 @@ def _unpack_positions_kernel(
         v1 = extended[num_atoms]  # [a, b*cos(γ), c1]
         v2 = extended[num_atoms + 1]  # [b*sin(γ), c2, c3]
 
-        # Upper triangular cell:
+        # Lower-triangular cell:
         # [a,       0,    0   ]
         # [b*cos(γ), b*sin(γ), 0   ]
         # [c1,      c2,   c3  ]
@@ -695,15 +696,15 @@ def _stress_to_cell_force_kernel(
 ):
     r"""Convert stress tensor to cell force for optimization.
 
-    The cell "force" is computed as:
+    With cell lattice vectors stored as rows, the cell "force" is computed as:
 
     .. math::
 
-        \mathbf{F}_{\text{cell}} = -V \cdot \boldsymbol{\sigma} \cdot (\mathbf{H}^{-1})^T
+        \mathbf{F}_{\text{cell}} = -V \cdot (\mathbf{H}^{-1})^T \cdot \boldsymbol{\sigma}
 
-    where V is cell volume, :math:`\sigma` is the stress tensor, and H is the cell matrix.
-
-    For upper-triangular cells, this simplifies since H^{-1} is also upper-triangular.
+    where V is cell volume, :math:`\sigma` is tensile-positive stress, and H
+    stores lattice vectors as rows. In the aligned mode, H is lower-triangular
+    and positions follow :math:`r=sH`.
 
     Parameters
     ----------
@@ -714,14 +715,16 @@ def _stress_to_cell_force_kernel(
         LJ kernel.  For finite external pressure use
         ``P_ext − P_internal`` (see ``virial_to_stress``).
     cell : wp.array, shape (B,), dtype=wp.mat33*
-        Cell matrices (should be upper-triangular from align_cell).
+        Cell matrices with lattice vectors stored as rows. In aligned mode,
+        the matrices are lower-triangular from align_cell().
     volume : wp.array, shape (B,), dtype=wp.float*
         Cell volumes.
     cell_force : wp.array, shape (B,), dtype=wp.mat33*
         Output cell force matrices.
     keep_aligned : wp.bool
-        If True, zero out upper-triangular off-diagonal elements [0,1], [0,2], [1,2]
-        to prevent the cell from rotating away from upper-triangular form.
+        If True, zero out upper off-diagonal elements [0,1], [0,2], [1,2].
+        They are intentionally held fixed because they are outside the
+        lower-triangular six-parameter cell representation.
 
     Launch Grid
     -----------
@@ -736,7 +739,7 @@ def _stress_to_cell_force_kernel(
       expands the cell, while positive stress (tension) produces a negative
       cell force that contracts the cell.
     - When keep_aligned=True, the upper off-diagonal elements are zeroed to
-      maintain the upper-triangular cell representation from align_cell().
+      maintain the lower-triangular cell representation from align_cell().
       This is essential for stable variable-cell optimization.
     """
     sys = wp.tid()
@@ -748,12 +751,11 @@ def _stress_to_cell_force_kernel(
     # Compute H^{-1}
     H_inv = wp.inverse(H)
 
-    # F_cell = -V * S @ H_inv^T
-    # Note: in warp, H_inv * x is matrix-vector, we need transpose
+    # For row positions r=s@H, F_cell = -dE/dH = -V * H_inv^T @ S.
     H_inv_T = wp.transpose(H_inv)
-    Fc = type(S[0, 0])(-1.0) * V * wp.mul(S, H_inv_T)
+    Fc = type(S[0, 0])(-1.0) * V * wp.mul(H_inv_T, S)
 
-    # Zero upper off-diagonal to keep cell aligned (upper-triangular)
+    # Zero upper off-diagonal to keep cell aligned (lower-triangular)
     if keep_aligned:
         _zero = type(S[0, 0])(0.0)
         Fc_aligned = type(Fc)(
@@ -789,7 +791,7 @@ def _fire2_coord_cell_max_displacement_kernel(
     The raw trial update is:
 
     ``cell_raw = H + factor * dt * Hdot``
-    ``r_raw = (cell_raw @ H^-1) @ r + factor * dt * v``
+    ``r_raw = transpose(H^-1 @ cell_raw) @ r + factor * dt * v``
 
     where ``factor`` is ``1`` downhill and ``-0.5`` uphill.  The per-system
     maximum is computed from the actual Cartesian atomic displacement
@@ -822,7 +824,7 @@ def _fire2_coord_cell_max_displacement_kernel(
     cell_old_inv = wp.inverse(cell_old)
     cell_step_raw = factor * local_dt * cell_velocities[sys]
     cell_raw = cell_old + cell_step_raw
-    transform = cell_raw * cell_old_inv
+    transform = wp.transpose(cell_old_inv * cell_raw)
 
     position_old = positions[atom_idx]
     raw_displacement = (
@@ -877,7 +879,7 @@ def _fire2_coord_cell_apply_positions_kernel(
     cell_old_inv = wp.inverse(cell_old)
     cell_step_raw = factor * local_dt * cell_velocities[sys]
     cell_raw = cell_old + cell_step_raw
-    transform = cell_raw * cell_old_inv
+    transform = wp.transpose(cell_old_inv * cell_raw)
 
     inv = one
     mn = max_norm[sys]
@@ -1114,10 +1116,10 @@ def align_cell(
     device: str = None,
 ) -> tuple[wp.array, wp.array]:
     """
-    Align cell to upper-triangular form and transform positions accordingly.
+    Align cell to lower-triangular form and transform positions accordingly.
 
     This is a one-time preprocessing step before variable-cell optimization.
-    The cell is transformed to the standard upper-triangular form, and
+    The cell is transformed to the standard lower-triangular form, and
     positions are rotated to maintain their fractional coordinates.
 
     Parameters
@@ -1314,7 +1316,7 @@ def pack_positions_with_cell(
     positions : wp.array(dtype=wp.vec3f or wp.vec3d)
         Atomic positions. Shape (N,) for single system or (total_atoms,) for batched.
     cell : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Cell matrix (should be upper-triangular from align_cell).
+        Cell matrix (should be lower-triangular from align_cell).
         Shape (1,) for single system or (B,) for batched.
     extended : wp.array
         Output extended array. Caller must pre-allocate.
@@ -1729,7 +1731,7 @@ def stress_to_cell_force(
     r"""
     Convert stress tensor to cell force for optimization.
 
-    Computes: F_cell = -V * sigma * (H^{-1})^T
+    Computes: F_cell = -V * H^{-T} * sigma
 
     This is the "force" on the cell that, when minimized, leads to
     zero stress (pressure equilibration).
@@ -1738,19 +1740,18 @@ def stress_to_cell_force(
     ----------
     stress : wp.array(dtype=wp.mat33f or wp.mat33d)
         Stress tensor. Shape (B,).
-        Convention: positive values indicate compression.
+        Convention: positive values indicate tension; negative values indicate compression.
     cell : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Cell matrices. Shape (B,).
+        Cell matrices with lattice vectors stored as rows. Shape (B,).
     volume : wp.array
         Cell volumes. Shape (B,). Caller must pre-compute via
         ``compute_cell_volume``.
     cell_force : wp.array
         Output cell force matrices. Shape (B,). Caller must pre-allocate.
     keep_aligned : bool, default=True
-        If True, zero out upper-triangular off-diagonal elements [0,1], [0,2], [1,2]
-        of the cell force. This is **essential** to prevent the cell from rotating
-        away from the upper-triangular form established by `align_cell()`.
-        Only set to False if you know what you're doing.
+        If True, zero out upper off-diagonal elements [0,1], [0,2], [1,2]
+        of the cell force. These entries are intentionally held fixed because
+        they are outside the lower-triangular six-parameter cell representation.
     device : str, optional
         Warp device.
 
@@ -1761,8 +1762,8 @@ def stress_to_cell_force(
 
     Notes
     -----
-    The `keep_aligned=True` behavior zeros out forces on the upper off-diagonal
-    elements of the cell matrix:
+    The `keep_aligned=True` behavior intentionally zeros forces on the upper off-diagonal
+    elements of the lower-triangular row-cell matrix:
 
     .. code-block:: text
 
@@ -1772,7 +1773,7 @@ def stress_to_cell_force(
         [F20, F21, F22]
 
     This prevents the optimizer from introducing rotations that would break
-    the upper-triangular cell representation from `align_cell()`.
+    the lower-triangular cell representation from `align_cell()`.
     """
     if device is None:
         device = stress.device

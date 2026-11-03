@@ -175,8 +175,11 @@ class TestNeighborListAutoSelection:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA is required for this test parameter")
 
-        # Large system: 2000 atoms
-        positions = torch.randn(2000, 3, dtype=dtype, device=device) * 50.0
+        # Uniform in a box at a density and size where cell_list genuinely
+        # wins; a sparser geometry selects naive, which returns no shifts.
+        num_atoms = 50_000
+        box_size = (num_atoms / 0.01) ** (1 / 3)
+        positions = torch.rand(num_atoms, 3, dtype=dtype, device=device) * box_size
         cutoff = 2.0
 
         # Call wrapper with no method specified
@@ -189,7 +192,7 @@ class TestNeighborListAutoSelection:
         )  # With PBC (auto-created), so includes neighbor_ptr and shifts
         neighbor_list_result, neighbor_ptr, shifts = result
         assert neighbor_list_result.shape[0] == 2  # COO format
-        assert neighbor_ptr.shape[0] == 2001
+        assert neighbor_ptr.shape[0] == num_atoms + 1
         assert neighbor_ptr[0] == 0
         assert shifts.shape[1] == 3  # 3D shifts
 
@@ -368,8 +371,12 @@ class TestNeighborListAutoSelection:
         monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fail_naive)
         monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
 
-        positions = torch.zeros(1000, 3, dtype=torch.float32)
-        cell = torch.eye(3, dtype=torch.float32) * 100.0
+        # Sized so cell_list is genuinely the cheapest strategy. A sparser
+        # geometry selects naive instead.
+        num_atoms = 50_000
+        box_size = (num_atoms / 0.01) ** (1 / 3)
+        positions = torch.zeros(num_atoms, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * box_size
         pbc = torch.zeros(3, dtype=torch.bool)
 
         assert (
@@ -477,11 +484,17 @@ class TestNeighborListAutoSelection:
         monkeypatch.setattr(neighbor_module, "batch_cell_list", fail_batch_cell_list)
         monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
 
-        positions = torch.zeros(1000, 3, dtype=torch.float32)
-        cell = (torch.eye(3, dtype=torch.float32) * 100.0).reshape(1, 3, 3)
+        # Sized so cell_list is genuinely the cheapest strategy (see
+        # test_auto_dispatch_sparse_geometry_uses_cell_list); the point of this
+        # test is the unbatching, which only exercises the cell_list path if
+        # cell_list is what the selector picks.
+        num_atoms = 50_000
+        box_size = (num_atoms / 0.01) ** (1 / 3)
+        positions = torch.zeros(num_atoms, 3, dtype=torch.float32)
+        cell = (torch.eye(3, dtype=torch.float32) * box_size).reshape(1, 3, 3)
         pbc = torch.zeros(1, 3, dtype=torch.bool)
-        batch_idx = torch.zeros(1000, dtype=torch.int32)
-        batch_ptr = torch.tensor([0, 1000], dtype=torch.int32)
+        batch_idx = torch.zeros(num_atoms, dtype=torch.int32)
+        batch_ptr = torch.tensor([0, num_atoms], dtype=torch.int32)
 
         assert (
             neighbor_module.neighbor_list(
@@ -519,8 +532,12 @@ class TestNeighborListAutoSelection:
         monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fail_naive)
         monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
 
-        positions = torch.zeros(2048, 3, dtype=torch.float32)
-        cell = torch.eye(3, dtype=torch.float32) * 30.0
+        # Sized so atom-centric genuinely wins while cluster_tile stays below
+        # its eligibility gate, which is what this test guards.
+        num_atoms = 8192
+        box_size = (num_atoms / 0.1) ** (1 / 3)
+        positions = torch.zeros(num_atoms, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * box_size
         pbc = torch.ones(3, dtype=torch.bool)
 
         assert (
@@ -2167,8 +2184,22 @@ class TestNeighborListFineGrainedMethodEquivalence:
     @pytest.mark.parametrize("method", ["naive_scalar", "naive_tile"])
     def test_naive_suboptions_match_naive(self, device, method):
         """``naive_scalar`` / ``naive_tile`` match the base ``naive`` pair set."""
+        if method == "naive_tile" and device == "cpu":
+            pytest.skip("CUDA is required for naive_tile.")
         positions, cell, pbc = self._periodic_float32_system(device)
         cutoff = 5.0
+
+        if method == "naive_tile" and device == "cpu":
+            with pytest.raises(ValueError, match="strategy='tile' requires CUDA"):
+                neighbor_list(
+                    positions,
+                    cutoff,
+                    cell=cell,
+                    pbc=pbc,
+                    method=method,
+                    return_neighbor_list=True,
+                )
+            return
 
         base = neighbor_list(
             positions,
@@ -2187,6 +2218,59 @@ class TestNeighborListFineGrainedMethodEquivalence:
             return_neighbor_list=True,
         )
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA is required for naive_tile partial"
+    )
+    def test_naive_tile_partial_smoke(self):
+        """Fine-grained naive_tile reaches compact unbatched and batched routes."""
+        device = "cuda"
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        targets = torch.tensor([2, 0], dtype=torch.int32, device=device)
+        matrix, counts = neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            target_indices=targets,
+            method="naive_tile",
+        )
+        assert matrix.shape == (2, 4)
+        assert counts.shape == (2,)
+        torch.testing.assert_close(
+            counts,
+            torch.tensor([1, 1], dtype=torch.int32, device=device),
+        )
+        torch.testing.assert_close(
+            matrix[:, 0],
+            torch.tensor([3, 1], dtype=torch.int32, device=device),
+        )
+
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        batch_matrix, batch_counts = neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            target_indices=targets,
+            method="batch_naive_tile",
+        )
+        assert batch_matrix.shape == (2, 4)
+        assert batch_counts.shape == (2,)
+        torch.testing.assert_close(
+            batch_counts,
+            torch.tensor([1, 1], dtype=torch.int32, device=device),
+        )
+        torch.testing.assert_close(
+            batch_matrix[:, 0],
+            torch.tensor([3, 1], dtype=torch.int32, device=device),
+        )
 
     @pytest.mark.parametrize(
         "device",
@@ -2284,6 +2368,20 @@ class TestNeighborListFineGrainedMethodEquivalence:
         )
         batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
         cutoff = 5.0
+
+        if device == "cpu":
+            with pytest.raises(ValueError, match="strategy='tile' requires CUDA"):
+                neighbor_list(
+                    positions,
+                    cutoff,
+                    cell=cell,
+                    pbc=pbc,
+                    batch_idx=batch_idx,
+                    batch_ptr=batch_ptr,
+                    method="batch_naive_tile",
+                    return_neighbor_list=True,
+                )
+            return
 
         base = neighbor_list(
             positions,

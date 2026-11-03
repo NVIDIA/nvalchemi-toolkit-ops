@@ -39,15 +39,15 @@ CUDA-graph friendly.
 l=2 convention
 --------------
 The l=2 channel is the e3nn ``component``-normalized real-SH basis (what an
-e3nn irrep head emits). The conversion is fixed by requiring
+e3nn irrep head emits). The conversion follows the convention
 
 .. math::
 
     \hat k \cdot Q \cdot \hat k = \sum_m c_m\, Y_{2m}(\hat k);
 
-the constant matrices below are the exact closed form. The l=2 channel is
-traceless: the isotropic trace of a Cartesian quadrupole is dropped on the
-way in (it is unrepresentable in 5 spherical components).
+The matrices and inverse coefficients below give the exact conversion. The
+l=2 channel is traceless, so the isotropic trace of a Cartesian quadrupole is
+dropped on conversion to its five spherical components.
 """
 
 from __future__ import annotations
@@ -93,21 +93,44 @@ _B_E3NN_TO_CART = (
 # Symmetric (3, 3) <-> q6 gather index: mat[i, j] = q6[_Q6_OF_MAT[i, j]].
 _Q6_OF_MAT = ((0, 3, 4), (3, 1, 5), (4, 5, 2))
 
-# Per-(dtype, device-string) cached constant tensors (built once).
+# T = pinv(B), written analytically from B's orthogonal columns.
+_T_CART_TO_E3NN = (
+    (0.0, 0.0, 0.0, 0.0, 2.0 / _S15, 0.0),  # c_-2 from Qxz
+    (0.0, 0.0, 0.0, 2.0 / _S15, 0.0, 0.0),  # c_-1 from Qxy
+    (-_S5 / 15.0, 2.0 * _S5 / 15.0, -_S5 / 15.0, 0.0, 0.0, 0.0),  # c_0
+    (0.0, 0.0, 0.0, 0.0, 0.0, 2.0 / _S15),  # c_+1 from Qyz
+    (-1.0 / _S15, 0.0, 1.0 / _S15, 0.0, 0.0, 0.0),  # c_+2
+)
+
+# Eager calls reuse device constants; tracing calls materialize them per trace
+# so FakeTensor inputs never encounter real tensors from the global cache.
 _CACHE: dict = {}
 
 
-def _consts(dtype: torch.dtype, device: torch.device):
-    """Return ``(B, T, q6_idx)`` constant tensors for ``(dtype, device)``."""
+def _consts(dtype: torch.dtype, device: torch.device, like: torch.Tensor):
+    """Return ``(B, T, q6_idx)`` constants, cached only for eager tensors."""
+    if torch.compiler.is_compiling():
+        return _new_const_tensors(dtype, device)
+
+    from torch._subclasses.fake_tensor import is_fake
+
+    if is_fake(like):
+        return _new_const_tensors(dtype, device)
+
     key = (dtype, str(device))
     cached = _CACHE.get(key)
     if cached is None:
-        B = torch.tensor(_B_E3NN_TO_CART, dtype=dtype, device=device)  # (6, 5)
-        T = torch.linalg.pinv(B.to(torch.float64)).to(dtype)  # (5, 6)
-        idx = torch.tensor(_Q6_OF_MAT, dtype=torch.long, device=device)  # (3, 3)
-        cached = (B, T, idx)
+        cached = _new_const_tensors(dtype, device)
         _CACHE[key] = cached
     return cached
+
+
+def _new_const_tensors(dtype: torch.dtype, device: torch.device):
+    """Materialize quadrupole conversion constants for ``(dtype, device)``."""
+    B = torch.tensor(_B_E3NN_TO_CART, dtype=dtype, device=device)  # (6, 5)
+    T = torch.tensor(_T_CART_TO_E3NN, dtype=dtype, device=device)  # (5, 6)
+    idx = torch.tensor(_Q6_OF_MAT, dtype=torch.long, device=device)  # (3, 3)
+    return B, T, idx
 
 
 def infer_l_max(multipole_moments: torch.Tensor) -> int:
@@ -127,13 +150,18 @@ def infer_l_max(multipole_moments: torch.Tensor) -> int:
             f"{tuple(multipole_moments.shape)}."
         )
     last = multipole_moments.shape[-1]
-    sizes = {1: 0, 4: 1, 9: 2}
-    if last not in sizes:
-        raise ValueError(
-            "multipole_moments last-dim must be 1 (l_max=0), 4 (l_max=1), or "
-            f"9 (l_max=2); got {last}."
-        )
-    return sizes[last]
+    # Avoid dictionary lookup: a symbolic shape is a SymInt, whose hashing is
+    # unsupported by make_fx even when the example dimension is 1, 4, or 9.
+    if last == 1:
+        return 0
+    if last == 4:
+        return 1
+    if last == 9:
+        return 2
+    raise ValueError(
+        "multipole_moments last-dim must be 1 (l_max=0), 4 (l_max=1), or "
+        f"9 (l_max=2); got {last}."
+    )
 
 
 def dipole_spherical_to_cartesian(dipole_sph: torch.Tensor) -> torch.Tensor:
@@ -171,8 +199,8 @@ def dipole_cartesian_to_spherical(dipole_cart: torch.Tensor) -> torch.Tensor:
 def e3nn_to_cartesian_quadrupole(feats5: torch.Tensor) -> torch.Tensor:
     """Convert e3nn l=2 coefficients to a symmetric traceless Cartesian tensor.
 
-    Pure torch (matmul + gather); autograd- and graph-friendly. The output is
-    traceless by construction.
+    Pure torch matmul and gather; autograd- and graph-friendly. The output is
+    symmetric and traceless by construction.
 
     Parameters
     ----------
@@ -185,7 +213,7 @@ def e3nn_to_cartesian_quadrupole(feats5: torch.Tensor) -> torch.Tensor:
     torch.Tensor, shape ``(N, 3, 3)``
         Symmetric traceless Cartesian quadrupole tensor.
     """
-    B, _, idx = _consts(feats5.dtype, feats5.device)
+    B, _, idx = _consts(feats5.dtype, feats5.device, feats5)
     q6 = feats5 @ B.t()  # (N, 6) = [xx, yy, zz, xy, xz, yz]
     return q6[:, idx]  # (N, 3, 3) symmetric
 
@@ -207,7 +235,7 @@ def cartesian_quadrupole_to_e3nn(quadrupoles: torch.Tensor) -> torch.Tensor:
     torch.Tensor, shape ``(N, 5)``
         e3nn ``component``-normalized real-SH l=2 coefficients.
     """
-    _, T, _ = _consts(quadrupoles.dtype, quadrupoles.device)
+    _, T, _ = _consts(quadrupoles.dtype, quadrupoles.device, quadrupoles)
     # Symmetrize defensively, then pull the 6 unique entries.
     q = 0.5 * (quadrupoles + quadrupoles.transpose(-1, -2))
     q6 = torch.stack(

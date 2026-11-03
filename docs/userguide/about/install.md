@@ -93,7 +93,7 @@ $ python -c "from nvalchemiops.jax import neighbors; print('JAX bindings availab
 
 ### From Github Source
 
-This approach is useful for obtain nightly builds by installing directly
+This approach is useful for obtaining nightly builds by installing directly
 from the source repository:
 
 ```bash
@@ -102,7 +102,7 @@ $ pip install git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git
 
 ### Installation via `uv`
 
-Maintainers generally use `uv`, and is the most reliable (and fastest) way
+Maintainers generally use `uv`, which is the most reliable (and fastest) way
 to spin up a virtual environment to use ALCHEMI Toolkit-Ops. Assuming `uv`
 is in your path, here are a few ways to get started:
 
@@ -157,8 +157,6 @@ $ uv pip install git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git
 ```
 
 </details>
-
-Includes Sphinx and related tools for building documentation.
 
 ### Adding `nvalchemi-toolkit-ops` as a dependency
 

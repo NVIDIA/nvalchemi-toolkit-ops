@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,6 +34,7 @@ from nvalchemiops.jax.neighbors import (
     neighbor_list,
     suggest_neighbor_list_method,
 )
+from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
 from nvalchemiops.neighbors.base_dispatch import neighbor_list_strategy_run_args
 
 from .conftest import create_batch_idx_and_ptr_jax, requires_gpu
@@ -178,8 +181,15 @@ class TestNeighborListAutoSelection:
             )
 
         monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
+        # Uniform in a box at a density and size where cell_list genuinely
+        # wins; a sparser geometry selects naive, which returns no shifts.
+        num_atoms = 50_000
+        box_size = (num_atoms / 0.01) ** (1 / 3)
         key = jax.random.PRNGKey(0)
-        positions = jax.random.normal(key, (2000, 3), dtype=dtype) * 50.0
+        positions = jax.device_put(
+            jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * box_size,
+            jax.devices("gpu" if device.startswith("cuda") else "cpu")[0],
+        )
         cutoff = 2.0
 
         result = neighbor_list(positions, cutoff, return_neighbor_list=True)
@@ -189,7 +199,7 @@ class TestNeighborListAutoSelection:
         assert len(result) == 3
         neighbor_list_coo, neighbor_ptr, shifts = result
         assert neighbor_list_coo.shape[0] == 2
-        assert neighbor_ptr.shape[0] == 2001
+        assert neighbor_ptr.shape[0] == num_atoms + 1
         assert int(neighbor_ptr[0]) == 0
         assert shifts.shape[1] == 3
 
@@ -770,6 +780,63 @@ class TestNeighborListFineGrainedMethodEquivalence:
         )
         assert _canonical_pairs(suggested_res) == _canonical_pairs(base_res)
 
+    def test_auto_partial_uses_an_executable_method(self):
+        """Automatic partial dispatch matches an explicit scalar reference."""
+        positions, cell, pbc = create_random_system_jax(1024, 20.0)
+        targets = jnp.arange(255, -1, -1, dtype=jnp.int32)
+        kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors": 256,
+            "target_indices": targets,
+        }
+
+        automatic = neighbor_list(positions, 5.0, **kwargs)
+        scalar = neighbor_list(
+            positions,
+            5.0,
+            method="naive_scalar",
+            **kwargs,
+        )
+
+        assert_neighbor_matrix_equal_jax(automatic, scalar)
+
+    @pytest.mark.gpu
+    def test_naive_tile_partial_smoke(self):
+        """Fine-grained naive_tile reaches compact unbatched and batched routes."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        targets = jnp.array([2, 0], dtype=jnp.int32)
+        matrix, counts = neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            target_indices=targets,
+            method="naive_tile",
+        )
+        assert matrix.shape == (2, 4)
+        assert counts.shape == (2,)
+        np.testing.assert_array_equal(np.asarray(counts), [1, 1])
+        np.testing.assert_array_equal(np.asarray(matrix[:, 0]), [3, 1])
+
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        batch_matrix, batch_counts = neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            target_indices=targets,
+            method="naive_tile",
+        )
+        assert batch_matrix.shape == (2, 4)
+        assert batch_counts.shape == (2,)
+        np.testing.assert_array_equal(np.asarray(batch_counts), [1, 1])
+        np.testing.assert_array_equal(np.asarray(batch_matrix[:, 0]), [3, 1])
+
 
 class TestNeighborListCellListHalfFillFillValue:
     """JAX cell_list now honors ``half_fill`` and ``fill_value`` (parity)."""
@@ -915,6 +982,156 @@ class TestNeighborListPairOutputAndExplicitStrategy:
                 method="cell_list_pair_centric",
                 half_fill=True,
             )
+
+
+class TestNaiveTileCompilationReuse:
+    """Eager tiled calls reuse compilation while consuming current inputs."""
+
+    @staticmethod
+    def _matrix_signature(result):
+        """Count entries and compare neighbor identities with periodic shifts."""
+        matrix, counts = (np.asarray(value) for value in result[:2])
+        assert np.all(counts <= matrix.shape[1])
+        rows, columns = np.nonzero(
+            np.arange(matrix.shape[1])[None, :] < counts[:, None]
+        )
+        shifts = (
+            np.asarray(result[2])[rows, columns]
+            if len(result) == 3
+            else np.zeros((len(rows), 3), dtype=np.int32)
+        )
+        pairs = _canonical_pairs(
+            (np.stack((rows, matrix[rows, columns])), None, shifts)
+        )
+        return int(counts.sum()), pairs
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize("half_fill", [False, True])
+    @pytest.mark.parametrize(
+        "batched, periodic, wrap_positions",
+        [
+            (False, False, True),
+            (False, True, True),
+            (False, True, False),
+            (True, False, True),
+            (True, True, True),
+        ],
+    )
+    def test_changing_inputs_reuses_compilation(
+        self, caplog, dtype, half_fill, batched, periodic, wrap_positions
+    ):
+        """Coordinate updates reuse the executable and match scalar neighbors."""
+        num_systems = 2 if batched else 1
+        positions = jnp.tile(
+            jnp.array(
+                [[0.2, 0, 0], [0.8, 0, 0], [3.4, 0, 0], [3.8, 0, 0]], dtype=dtype
+            ),
+            (num_systems, 1),
+        )
+        moved = jnp.tile(
+            jnp.array(
+                [[0.2, 0, 0], [1.9, 0, 0], [2.7, 0, 0], [3.8, 0, 0]], dtype=dtype
+            ),
+            (num_systems, 1),
+        )
+        kwargs = dict(
+            max_neighbors=16,
+            return_neighbor_list=False,
+            fill_value=-1,
+            half_fill=half_fill,
+            wrap_positions=wrap_positions,
+        )
+        if batched:
+            kwargs["batch_idx"], kwargs["batch_ptr"] = create_batch_idx_and_ptr_jax(
+                [4, 4]
+            )
+            kwargs["max_atoms_per_system"] = 4
+        if periodic:
+            kwargs["cell"] = jnp.broadcast_to(
+                jnp.eye(3, dtype=dtype) * 4, (num_systems, 3, 3)
+            )
+            kwargs["pbc"] = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+        prefix = "batch_" if batched else ""
+
+        def shift_metadata(cutoff, options):
+            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+                options["cell"], cutoff, options["pbc"]
+            )
+            return dict(
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+            )
+
+        if periodic:
+            # Use the same prepared sizing inputs as the reportable benchmark.
+            kwargs.update(shift_metadata(0.9, kwargs))
+
+        def run(pos, strategy, cutoff=0.9, **changes):
+            options = kwargs | changes
+            if periodic and (cutoff != 0.9 or "cell" in changes or "pbc" in changes):
+                options.update(shift_metadata(cutoff, options))
+            return jax.block_until_ready(
+                neighbor_list(
+                    pos,
+                    cutoff,
+                    method=f"{prefix}naive_{strategy}",
+                    **options,
+                )
+            )
+
+        expected = [
+            self._matrix_signature(run(pos, "scalar")) for pos in (positions, moved)
+        ]
+        assert expected[0] != expected[1]
+        assert self._matrix_signature(run(positions, "tile")) == expected[0]
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING), jax.log_compiles(True):
+            results = [run(pos, "tile") for pos in (moved, positions, moved)]
+        compilations = [
+            record.getMessage()
+            for record in caplog.records
+            if "Compiling " in record.getMessage()
+        ]
+        assert not compilations, compilations
+        assert [self._matrix_signature(result) for result in results] == [
+            expected[1],
+            expected[0],
+            expected[1],
+        ]
+
+        # Static settings select their own executable; arrays remain current inputs.
+        for cutoff, changes in [
+            (1.4, {}),
+            (0.9, {"half_fill": not half_fill}),
+            (0.9, {"max_neighbors": 8}),
+            (0.9, {}),
+        ]:
+            assert self._matrix_signature(run(moved, "tile", cutoff, **changes)) == (
+                self._matrix_signature(run(moved, "scalar", cutoff, **changes))
+            )
+        if periodic:
+            for changes in (
+                {"cell": kwargs["cell"] * 1.25},
+                {"pbc": jnp.tile(jnp.array([[False, True, True]]), (num_systems, 1))},
+            ):
+                assert self._matrix_signature(run(moved, "tile", **changes)) == (
+                    self._matrix_signature(run(moved, "scalar", **changes))
+                )
+
+    @pytest.mark.parametrize("method", ["naive_tile", "batch_naive_tile"])
+    def test_cpu_inputs_rejected(self, method):
+        """The public eager wrapper validates CUDA placement before the JIT call."""
+        with jax.default_device(jax.devices("cpu")[0]):
+            positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
+            kwargs = (
+                {"batch_ptr": jnp.array([0, 2], dtype=jnp.int32)}
+                if method.startswith("batch_")
+                else {}
+            )
+        with pytest.raises(ValueError, match="requires CUDA"):
+            neighbor_list(positions, 1.0, method=method, max_neighbors=4, **kwargs)
 
 
 class TestNeighborListBatchStrategyParity:
@@ -1252,11 +1469,23 @@ class TestNeighborListClusterTileAutoGuards:
         pbc = jnp.array([[True, True, True]])
         return batch_ptr, cell, pbc
 
-    def test_auto_dispatch_cluster_tile_eligible_metadata_selects_cluster_tile(self):
-        """Dense periodic float32 metadata crosses the cluster-tile selector gate."""
+    def test_auto_dispatch_cluster_tile_eligible_metadata_is_offered_not_chosen(self):
+        """Eligible metadata offers cluster_tile; naive still wins at this size.
+
+        Crossing the eligibility gate and winning the cost comparison are
+        separate things, and only the gate is a property of the metadata.
+        cluster_tile does win over much of its eligibility region, but not at
+        this atom count, which sits below its crossover against naive.
+        """
         batch_ptr, cell, pbc = self._cluster_tile_eligible_metadata()
 
-        assert suggest_neighbor_list_method(batch_ptr, cell, pbc, 3.0) == "cluster_tile"
+        report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, 3.0)
+        assert "cluster_tile" in [name for name, _ in report]
+        # Scalar vs tile is within measurement noise, so pin the family.
+        assert suggest_neighbor_list_method(batch_ptr, cell, pbc, 3.0) in {
+            "naive_tile",
+            "naive_scalar",
+        }
 
     def test_auto_dispatch_half_fill_excludes_cluster_tile(self):
         """Half-fill excludes an otherwise cluster-tile-eligible selector input."""

@@ -344,6 +344,7 @@ class TestBatchCellListKernels:
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp_mat_dtype, wp_device),
                 _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
                 wp_idx,
@@ -456,6 +457,7 @@ class TestBatchCellListKernels:
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp_mat_dtype, wp_device),
                 _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
                 wp_idx,
@@ -497,6 +499,7 @@ class TestBatchCellListKernels:
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp_mat_dtype, wp_device),
                 _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
                 wp_idx,

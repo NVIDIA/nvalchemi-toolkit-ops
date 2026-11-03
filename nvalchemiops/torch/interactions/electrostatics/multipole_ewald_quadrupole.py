@@ -700,7 +700,7 @@ def multipole_real_space_quadrupole_energy(
     ``(B, 3, 3)`` (batched) and set ``batch_idx`` to select the batched path.
     In batched mode ``sigma``/``alpha`` are per-system ``(B,)`` tensors and the
     return is per-atom ``(N_total,)`` (uniform with the single-system path; the
-    caller ``scatter_add``s for per-system totals).
+    caller uses ``scatter_add`` for per-system totals).
 
     Parameters
     ----------

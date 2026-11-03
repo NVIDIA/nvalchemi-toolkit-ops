@@ -170,6 +170,9 @@ from typing import Literal
 import torch
 import warp as wp
 
+from nvalchemiops.interactions.electrostatics._pme_mesh import (
+    _DEFAULT_PME_SPLINE_ORDER,
+)
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
     batch_pme_energy_corrections_with_charge_grad as _batch_pme_energy_corrections_with_charge_grad_warp,
 )
@@ -215,6 +218,7 @@ from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+    generate_k_squared_pme,
     generate_k_vectors_pme,
 )
 from nvalchemiops.torch.interactions.electrostatics.parameters import (
@@ -380,7 +384,7 @@ def pme_green_structure_factor(
     mesh_dimensions: tuple[int, int, int],
     alpha: torch.Tensor,
     cell: torch.Tensor,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Compute the PME Green's function and B-spline structure-factor correction.
@@ -408,7 +412,7 @@ def pme_green_structure_factor(
         Ewald splitting parameter, shape ``(1,)`` or ``(B,)``.
     cell : torch.Tensor
         Unit cell(s): ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``.
-    spline_order : int, default=4
+    spline_order : int, default=5
         B-spline interpolation order.
     batch_idx : torch.Tensor | None, default=None
         When provided, ``k_squared``/``alpha``/``cell`` are treated as batched.
@@ -2515,8 +2519,6 @@ def _pme_reciprocal_space_impl(
     num_atoms = positions.shape[0]
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
-    volume_is_supplied = volume is not None
-
     if hybrid_forces:
         compute_charge_gradients = True
 
@@ -2528,6 +2530,15 @@ def _pme_reciprocal_space_impl(
     moduli_x = _detach_setup_tensor(moduli_x)
     moduli_y = _detach_setup_tensor(moduli_y)
     moduli_z = _detach_setup_tensor(moduli_z)
+
+    if torch.is_grad_enabled() and cell.requires_grad:
+        # Cell derivatives follow the current reciprocal metric and assignment
+        # geometry. Rebuild these cell-dependent caches for differentiable calls.
+        k_vectors = None
+        k_squared = None
+        volume = None
+        cell_inv_t = None
+    volume_is_supplied = volume is not None
 
     if num_atoms == 0:
         energies = torch.zeros(num_atoms, device=device, dtype=input_dtype)
@@ -2591,15 +2602,33 @@ def _pme_reciprocal_space_impl(
     # Step 3: Generate k-space grid and compute Green's function + structure factor
     # Green's function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (V * k^2)
     # (includes 1/2 pair-counting factor; see pme_kernels.py)
-    # Use precomputed k_vectors/k_squared if provided, otherwise generate them
-    if k_vectors is None or k_squared is None:
-        k_vectors, k_squared = generate_k_vectors_pme(
+    # Cartesian k-vectors are only consumed by the virial path. Generate the
+    # scalar grid directly for energy/force/charge-gradient calls so the common
+    # path does not allocate an unused tensor three times its size.
+    need_virial_output = compute_virial or cache_virial
+    if k_squared is None:
+        if need_virial_output:
+            k_vectors, k_squared = generate_k_vectors_pme(
+                cell_spline,
+                mesh_dimensions=mesh_dimensions,
+                reciprocal_cell=reciprocal_cell,
+            )
+        else:
+            k_squared = generate_k_squared_pme(
+                cell_spline,
+                mesh_dimensions=mesh_dimensions,
+                reciprocal_cell=reciprocal_cell,
+            )
+    elif need_virial_output and k_vectors is None:
+        k_vectors, _generated_k_squared = generate_k_vectors_pme(
             cell_spline,
             mesh_dimensions=mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
         )
+        del _generated_k_squared
     if hybrid_forces:
-        k_vectors = k_vectors.detach()
+        if k_vectors is not None:
+            k_vectors = k_vectors.detach()
         k_squared = k_squared.detach()
 
     alpha_gsf = alpha.detach() if hybrid_forces else alpha
@@ -2641,9 +2670,9 @@ def _pme_reciprocal_space_impl(
     # to match the convolve launcher's stride contract, in eager we don't.
     is_compiled = torch.compiler.is_compiling()
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
+    del mesh_grid
     if is_compiled:
         mesh_fft = mesh_fft.contiguous()
-    need_virial_output = compute_virial or cache_virial
     mesh_fft_raw = mesh_fft if need_virial_output else None
     register_pme_ops()
     convolved_mesh = torch.ops.nvalchemiops.pme_fused_convolve(
@@ -2657,9 +2686,12 @@ def _pme_reciprocal_space_impl(
         is_batch,
         is_compiled,
     )
+    del mesh_fft
     potential_mesh = torch.fft.irfftn(
         convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims
     ).to(input_dtype)
+    if not need_virial_output:
+        del convolved_mesh
 
     # When forces are requested, the fused gather-with-force kernel
     # writes potential + spline-derivative force in one stencil walk.
@@ -2718,7 +2750,7 @@ def _pme_reciprocal_space_impl(
                 )
 
     # Step 8: Compute virial before forces to allow early release of mesh_fft_raw
-    # (virial needs mesh_fft_raw; forces only need convolved_mesh)
+    # (virial needs the spectral pair; forces use potential_mesh)
     virial = None
     if need_virial_output:
         if compute_virial:
@@ -2746,7 +2778,7 @@ def _pme_reciprocal_space_impl(
                     device=device,
                     dtype=input_dtype,
                 )
-        del mesh_fft_raw  # Free before force field meshes are allocated
+        del mesh_fft_raw, convolved_mesh
 
         # Background virial correction for non-neutral systems.
         # E_bg = π Q² / (2 α² V) is subtracted from energy; since
@@ -2882,7 +2914,7 @@ def pme_reciprocal_space(
     alpha: float | torch.Tensor,
     mesh_dimensions: tuple[int, int, int] | None = None,
     mesh_spacing: float | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: torch.Tensor | None = None,
     k_vectors: torch.Tensor | None = None,
     k_squared: torch.Tensor | None = None,
@@ -2939,16 +2971,18 @@ def pme_reciprocal_space(
         - float: Same :math:`\alpha` for all systems
         - Tensor shape (B,): Per-system :math:`\alpha` values
     mesh_dimensions : tuple[int, int, int], optional
-        Explicit FFT mesh dimensions (nx, ny, nz). Power-of-2 values are
-        optimal for FFT performance. Either mesh_dimensions or mesh_spacing
+        Explicit FFT mesh dimensions (nx, ny, nz). Smooth dimensions composed
+        of small prime factors typically offer efficient FFTs. Either mesh_dimensions or mesh_spacing
         must be provided.
     mesh_spacing : float, optional
-        Target mesh spacing in same units as cell. Mesh dimensions computed as
-        ceil(cell_length / mesh_spacing). Typical value: ~1 Å. This setup path
+        Target mesh spacing in same units as cell. Per-axis dimensions cover
+        every cell in the batch and are rounded upward to dimensions with prime
+        factors 2, 3, 5, and 7 that cover the assignment support.
+        Typical value: ~1 Å. This setup path
         reads cell lengths into Python integers; pass explicit
         ``mesh_dimensions`` when compiling; implicit sizing emits a
         ``FutureWarning`` and will become an error in a future release.
-    spline_order : int, default=4
+    spline_order : int, default=5
         B-spline interpolation order. Higher orders are more accurate but slower.
         - 4: Cubic B-splines (good balance, most common)
         - 5-6: Higher accuracy for demanding applications
@@ -2966,9 +3000,10 @@ def pme_reciprocal_space(
         When supplied while ``cell.requires_grad`` is true, the cache is
         assumed to correspond to the current ``cell``.
     k_squared : torch.Tensor, shape (nx, ny, nz//2+1), optional
-        Precomputed :math:`|k|^2` values. Must be provided together with k_vectors.
-        PME metadata tensors are setup constants and are detached from public
-        autograd outputs.
+        Precomputed :math:`|k|^2` values. May be supplied without
+        ``k_vectors``. If ``compute_virial=True`` and ``k_vectors`` is omitted,
+        Cartesian vectors are regenerated. PME metadata tensors are setup
+        constants and are detached from public autograd outputs.
     compute_forces : bool, default=False
         Whether to compute explicit component reciprocal-space forces. This
         direct output is kept for no-autograd MD/inference use; use energy
@@ -3139,9 +3174,8 @@ def pme_reciprocal_space(
             missing="`mesh_dimensions`",
             inference="inferring it from `mesh_spacing` and `cell`",
         )
-        cell_lengths = torch.norm(cell[0], dim=1)
-        mesh_dimensions = tuple(
-            int(torch.ceil(length / mesh_spacing).item()) for length in cell_lengths
+        mesh_dimensions = mesh_spacing_to_dimensions(
+            cell, mesh_spacing, spline_order=spline_order
         )
 
     k_vectors = _detach_setup_tensor(k_vectors)
@@ -3294,7 +3328,7 @@ def particle_mesh_ewald(
     alpha: float | torch.Tensor | None = None,
     mesh_spacing: float | None = None,
     mesh_dimensions: tuple[int, int, int] | None = None,
-    spline_order: int = 4,
+    spline_order: int = _DEFAULT_PME_SPLINE_ORDER,
     batch_idx: torch.Tensor | None = None,
     k_vectors: torch.Tensor | None = None,
     k_squared: torch.Tensor | None = None,
@@ -3358,19 +3392,23 @@ def particle_mesh_ewald(
         Ewald splitting parameter controlling real/reciprocal space balance.
         - float: Same :math:`\alpha` for all systems
         - Tensor shape (B,): Per-system :math:`\alpha` values
-        - None: Automatically estimated using Kolafa-Perram formula
+        - None: Estimate alpha and mesh dimensions in the call from ``accuracy``
         Larger :math:`\alpha` shifts more computation to reciprocal space.
     mesh_spacing : float, optional
         Target mesh spacing in same units as cell (typically Å). Mesh dimensions
-        computed as ceil(cell_length / mesh_spacing). Typical value: 0.8-1.2 Å.
+        cover every cell in the batch and are rounded upward to dimensions
+        composed of prime factors 2, 3, 5, and 7, with assignment-order support.
+        Typical value: 0.8-1.2 Å.
         This setup path reads cell lengths into Python integers; pass explicit
         ``mesh_dimensions`` when cell-dependent mesh sizing is not desired.
     mesh_dimensions : tuple[int, int, int], optional
-        Explicit FFT mesh dimensions (nx, ny, nz). Power-of-2 values recommended
-        for optimal FFT performance. If None and mesh_spacing is None, computed
-        from accuracy parameter.
-    spline_order : int, default=4
+        Explicit FFT mesh dimensions (nx, ny, nz). Smooth dimensions composed
+        of small prime factors typically offer efficient FFTs. When both mesh
+        controls are omitted, the mesh is estimated in the call from
+        ``accuracy``.
+    spline_order : int, default=5
         B-spline interpolation order. Higher orders are more accurate but slower.
+        Defaults to 5.
         - 4: Cubic B-splines (standard, good accuracy/speed balance)
         - 5-6: Higher accuracy for demanding applications
     batch_idx : torch.Tensor, shape (N,), dtype=int32, optional
@@ -3386,7 +3424,9 @@ def particle_mesh_ewald(
         ``cell.requires_grad`` is true, the cache is assumed to correspond to
         the current ``cell``.
     k_squared : torch.Tensor, shape (nx, ny, nz//2+1), optional
-        Precomputed :math:`|k|^2` values. Must be provided together with k_vectors.
+        Precomputed :math:`|k|^2` values. May be supplied without
+        ``k_vectors``. If ``compute_virial=True`` and ``k_vectors`` is omitted,
+        Cartesian vectors are regenerated.
     cell_inv_t : torch.Tensor, shape (3, 3) or (B, 3, 3), optional
         Precomputed transposed cell inverse :math:`(M^{-1})^T`. When supplied,
         the reciprocal-space path skips the per-call ``torch.linalg.inv`` of
@@ -3436,9 +3476,8 @@ def particle_mesh_ewald(
             ``W = -dE/d(displacement)``.
             Stress = -virial / volume.
     accuracy : float, default=1e-6
-        Target relative accuracy for automatic parameter estimation (:math:`\alpha`, mesh dims).
-        Only used when alpha or mesh_dimensions is None.
-        Smaller values increase accuracy but also computational cost.
+        Target used by the in-call parameter estimators when ``alpha`` or the
+        mesh controls are omitted.
     hybrid_forces : bool, default=False
         .. deprecated:: 0.4.0
             Deprecated direct-output flag for differentiable training. Compute
@@ -3507,12 +3546,25 @@ def particle_mesh_ewald(
 
     Examples
     --------
-    Automatic parameter estimation (recommended for most cases)::
+    Estimate parameters before constructing the neighbor list::
 
+        >>> from nvalchemiops.torch.interactions.electrostatics import estimate_pme_parameters
+        >>> from nvalchemiops.torch.neighbors import neighbor_list
+        >>> cell_batch = cell.reshape(1, 3, 3)
+        >>> pbc_batch = pbc.reshape(1, 3)
+        >>> batch_idx = torch.zeros(len(positions), dtype=torch.int32, device=positions.device)
+        >>> params = estimate_pme_parameters(
+        ...     positions, cell_batch, batch_idx=batch_idx, accuracy=1e-6,
+        ... )
+        >>> nl, nptr, shifts = neighbor_list(
+        ...     positions, cutoff=float(params.real_space_cutoff.max()), cell=cell_batch, pbc=pbc_batch,
+        ...     batch_idx=batch_idx, method="cell_list_atom_centric",
+        ...     return_neighbor_list=True,
+        ... )
         >>> energies = particle_mesh_ewald(
-        ...     positions, charges, cell,
+        ...     positions, charges, cell_batch, batch_idx=batch_idx,
+        ...     alpha=params.alpha, mesh_dimensions=params.mesh_dimensions,
         ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
-        ...     accuracy=1e-6,
         ... )
         >>> total_energy = energies.sum()
 
@@ -3526,7 +3578,7 @@ def particle_mesh_ewald(
         ... )
         >>> forces = -torch.autograd.grad(energies.sum(), positions, create_graph=True)[0]
 
-    Using mesh spacing for automatic mesh sizing::
+    Using mesh spacing for cell-dependent mesh sizing::
 
         >>> energies = particle_mesh_ewald(
         ...     positions, charges, cell,
@@ -3595,21 +3647,12 @@ def particle_mesh_ewald(
 
     Notes
     -----
-    Automatic Parameter Estimation (when alpha is None):
-        Uses Kolafa-Perram formula:
-
-    .. math::
-
-        \begin{aligned}
-        \eta &= \frac{(V^2 / N)^{1/6}}{\sqrt{2\pi}} \\
-        \alpha &= \frac{1}{2\eta}
-        \end{aligned}
-
-    Mesh dimensions (when mesh_dimensions is None):
-
-    .. math::
-
-        n_x = \left\lceil \frac{2 \alpha L_x}{3 \varepsilon^{1/5}} \right\rceil
+    Call :func:`estimate_pme_parameters` before building the neighbor list,
+    use its ``real_space_cutoff`` for that list, and pass its ``alpha`` and
+    ``mesh_dimensions`` here. Reuse these values while the cell and atom
+    counts remain fixed. Parameter estimation and neighbor-list construction
+    are setup operations outside ``torch.compile``. Explicit parameters work
+    inside compiled functions.
 
     Autograd Support:
         All inputs (positions, charges, cell) support gradient computation.
@@ -3618,8 +3661,7 @@ def particle_mesh_ewald(
     --------
     pme_reciprocal_space : Reciprocal-space component only
     ewald_real_space : Real-space component (used internally)
-    estimate_pme_parameters : Automatic parameter estimation
-    PMEParameters : Container for PME parameters
+    estimate_pme_parameters : Parameter setup before neighbor-list construction
     """
     _validate_energy_reduction(energy_reduction)
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
@@ -3632,21 +3674,24 @@ def particle_mesh_ewald(
                 stacklevel=2,
             )
 
-    ensure_electrostatics_ops_registered()
     num_atoms = positions.shape[0]
 
     # Prepare cell
     cell, num_systems = _prepare_cell(cell)
 
-    if slab_correction:
-        pbc = _prepare_pbc_for_slab(pbc, num_systems, positions.device)
-
-    # Estimate parameters if not provided
+    if spline_order is None:
+        spline_order = _DEFAULT_PME_SPLINE_ORDER
     if alpha is None:
-        params = estimate_pme_parameters(positions, cell, batch_idx, accuracy)
+        params = estimate_pme_parameters(
+            positions, cell, batch_idx, accuracy, spline_order=spline_order
+        )
         alpha = params.alpha
         if mesh_dimensions is None and mesh_spacing is None:
-            mesh_dimensions = tuple(params.mesh_dimensions)  # Unpack the tuple
+            mesh_dimensions = tuple(params.mesh_dimensions)
+    ensure_electrostatics_ops_registered()
+
+    if slab_correction:
+        pbc = _prepare_pbc_for_slab(pbc, num_systems, positions.device)
 
     # Prepare alpha tensor
     alpha = _prepare_alpha(alpha, num_systems, positions.dtype, positions.device)
@@ -3657,10 +3702,16 @@ def particle_mesh_ewald(
     # Determine mesh dimensions
     if mesh_dimensions is None:
         if mesh_spacing is not None:
-            mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+            mesh_dimensions = mesh_spacing_to_dimensions(
+                cell, mesh_spacing, spline_order=spline_order
+            )
         else:
-            # Use accuracy-based estimation
-            mesh_dimensions = estimate_pme_mesh_dimensions(cell, alpha, accuracy)
+            mesh_dimensions = estimate_pme_mesh_dimensions(
+                cell,
+                alpha,
+                accuracy,
+                spline_order=spline_order,
+            )
 
     output_grad_requested = compute_forces or compute_charge_gradients or compute_virial
     differentiable_inputs = (

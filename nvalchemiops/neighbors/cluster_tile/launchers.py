@@ -39,6 +39,7 @@ from nvalchemiops.neighbors.cluster_tile.kernels import (
     _require_f32,
     get_batch_query_cluster_tile_coo_kernel,
     get_batch_query_cluster_tile_kernel,
+    get_prepare_cluster_tile_geometry_kernel,
     get_query_cluster_tile_coo_kernel,
     get_query_cluster_tile_kernel,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "build_cluster_tile_list",
     "get_batch_query_cluster_tile_kernel",
     "get_query_cluster_tile_kernel",
+    "prepare_cluster_tile_geometry",
     "query_cluster_tile_coo",
     "query_cluster_tile",
 ]
@@ -271,6 +273,98 @@ def _require_all_or_none(name_a: str, value_a, name_b: str, value_b) -> bool:
     return present_a
 
 
+def _cluster_geometry_inputs(
+    device: str,
+    *,
+    fixed_cell: bool,
+    qr: wp.array | None,
+    axis_aligned: wp.array | None,
+    fractional_rounding_certified: wp.array | None,
+    qr_height_certified: wp.array | None,
+    bbox_cutoff_bounds: wp.array | None,
+) -> tuple[wp.array, wp.array, wp.array, wp.array, wp.array]:
+    """Resolve cached-geometry arrays or typed dynamic-mode sentinels."""
+    values = (
+        qr,
+        axis_aligned,
+        fractional_rounding_certified,
+        qr_height_certified,
+        bbox_cutoff_bounds,
+    )
+    if fixed_cell and any(value is None for value in values):
+        raise ValueError("fixed_cell requires all prepared cluster geometry arrays")
+    return (
+        qr if qr is not None else _empty_sentinel(2, wp.float32, device),
+        axis_aligned
+        if axis_aligned is not None
+        else _empty_sentinel(1, wp.bool, device),
+        fractional_rounding_certified
+        if fractional_rounding_certified is not None
+        else _empty_sentinel(1, wp.bool, device),
+        qr_height_certified
+        if qr_height_certified is not None
+        else _empty_sentinel(1, wp.bool, device),
+        bbox_cutoff_bounds
+        if bbox_cutoff_bounds is not None
+        else _empty_sentinel(2, wp.float32, device),
+    )
+
+
+def prepare_cluster_tile_geometry(
+    cell: wp.array,
+    inv_cell: wp.array,
+    outer_cutoff_sq: float,
+    qr: wp.array,
+    axis_aligned: wp.array,
+    fractional_rounding_certified: wp.array,
+    qr_height_certified: wp.array,
+    bbox_cutoff_bounds: wp.array,
+    device: str,
+) -> None:
+    """Prepare per-system cluster geometry for reuse with a fixed cell.
+
+    ``inv_cell`` is a readonly backend-owned cache. The caller allocates the
+    outputs; this launcher writes QR factors, image certificates, and bbox
+    reciprocal-norm terms once during preparation.
+
+    Parameters
+    ----------
+    cell, inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33f
+        Cell matrices and their READONLY backend-computed inverses.
+    outer_cutoff_sq : float
+        Effective float32 squared outer cutoff used by the route.
+    qr : wp.array, shape (num_systems, 15), dtype=wp.float32
+        OUTPUT: QR entries in the documented prepared geometry order.
+    axis_aligned, fractional_rounding_certified, qr_height_certified : wp.array
+        OUTPUT: Per-system boolean geometry certificates.
+    bbox_cutoff_bounds : wp.array, shape (num_systems, 3), dtype=wp.float32
+        OUTPUT: Outer cutoff times reciprocal-vector norms.
+    device : str
+        Warp device string.
+
+    Returns
+    -------
+    None
+        The prepared output arrays are modified in place.
+    """
+    wp.launch(
+        get_prepare_cluster_tile_geometry_kernel(),
+        dim=int(cell.shape[0]),
+        inputs=[
+            cell,
+            inv_cell,
+            wp.float32(outer_cutoff_sq),
+            qr,
+            axis_aligned,
+            fractional_rounding_certified,
+            qr_height_certified,
+            bbox_cutoff_bounds,
+        ],
+        device=device,
+        block_dim=TILE_GROUP_SIZE,
+    )
+
+
 def _compute_morton(
     positions: wp.array,
     inv_cell: wp.array,
@@ -414,6 +508,12 @@ def build_cluster_tile_list(
     group_ext_y_buffer: wp.array | None = None,
     group_ext_z_buffer: wp.array | None = None,
     rebuild_flags: wp.array | None = None,
+    fixed_cell: bool = False,
+    qr: wp.array | None = None,
+    axis_aligned: wp.array | None = None,
+    fractional_rounding_certified: wp.array | None = None,
+    qr_height_certified: wp.array | None = None,
+    bbox_cutoff_bounds: wp.array | None = None,
 ) -> None:
     """Enumerate cluster-tile pairs on pre-sorted positions.
 
@@ -508,13 +608,25 @@ def build_cluster_tile_list(
 
     int32_sentinel = _empty_sentinel(1, wp.int32, device)
     bool_sentinel = _empty_sentinel(1, wp.bool, device)
+    geometry_args = _cluster_geometry_inputs(
+        device,
+        fixed_cell=bool(fixed_cell),
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
     selective = rebuild_flags is not None
     rebuild_flags_arg = rebuild_flags if rebuild_flags is not None else bool_sentinel
     if selective:
         _reset_cluster_tile_counts(num_tiles, rebuild_flags_arg, device, selective=True)
     wp.launch_tiled(
         kernel=_get_build_cluster_tiles_kernel(
-            batched=False, segmented=False, selective=selective
+            batched=False,
+            segmented=False,
+            selective=selective,
+            fixed_cell=bool(fixed_cell),
         ),
         dim=[ngroup],
         inputs=[
@@ -528,6 +640,7 @@ def build_cluster_tile_list(
             int32_sentinel,
             cell,
             inv_cell,
+            *geometry_args,
             wp.float32(cutoff * cutoff),
             int(ngroup),
             num_tiles,
@@ -578,6 +691,12 @@ def query_cluster_tile(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
+    fixed_cell: bool = False,
+    qr: wp.array | None = None,
+    axis_aligned: wp.array | None = None,
+    fractional_rounding_certified: wp.array | None = None,
+    qr_height_certified: wp.array | None = None,
+    bbox_cutoff_bounds: wp.array | None = None,
 ) -> None:
     """Convert cluster-tile pairs into a per-atom neighbor matrix.
 
@@ -722,6 +841,15 @@ def query_cluster_tile(
     int32_2d_sentinel = _empty_sentinel(2, wp.int32, device)
     int32_3d_sentinel = _empty_sentinel(3, wp.int32, device)
     bool_sentinel = _empty_sentinel(1, wp.bool, device)
+    geometry_args = _cluster_geometry_inputs(
+        device,
+        fixed_cell=bool(fixed_cell),
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
     tile_segmented = _require_all_or_none(
         "tile_offsets", tile_offsets, "tile_counts", tile_counts
     )
@@ -750,6 +878,7 @@ def query_cluster_tile(
         kernel=get_query_cluster_tile_kernel(
             tile_segmented=tile_segmented,
             selective=selective,
+            fixed_cell=bool(fixed_cell),
             dual_cutoff=dual_cutoff,
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
@@ -763,6 +892,7 @@ def query_cluster_tile(
             sorted_atom_index,
             cell,
             inv_cell,
+            *geometry_args,
             wp.float32(cutoff * cutoff),
             wp.float32(
                 (cutoff2 if cutoff2 is not None else cutoff)
@@ -830,6 +960,12 @@ def query_cluster_tile_coo(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
+    fixed_cell: bool = False,
+    qr: wp.array | None = None,
+    axis_aligned: wp.array | None = None,
+    fractional_rounding_certified: wp.array | None = None,
+    qr_height_certified: wp.array | None = None,
+    bbox_cutoff_bounds: wp.array | None = None,
 ) -> None:
     """Convert cluster-tile pairs into a flat COO pair list.
 
@@ -946,6 +1082,15 @@ def query_cluster_tile_coo(
         )
     int32_1d_sentinel = _empty_sentinel(1, wp.int32, device)
     bool_sentinel = _empty_sentinel(1, wp.bool, device)
+    geometry_args = _cluster_geometry_inputs(
+        device,
+        fixed_cell=bool(fixed_cell),
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
     if coo_segmented:
         _reset_cluster_tile_counts(
             pair_counts,
@@ -987,6 +1132,7 @@ def query_cluster_tile_coo(
             tile_segmented=tile_segmented,
             coo_segmented=coo_segmented,
             selective=selective,
+            fixed_cell=bool(fixed_cell),
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
             pair_fn=pair_fn,
@@ -999,6 +1145,7 @@ def query_cluster_tile_coo(
             sorted_atom_index,
             cell,
             inv_cell,
+            *geometry_args,
             wp.float32(cutoff * cutoff),
             int(natom),
             int(max_pairs),
@@ -1050,6 +1197,12 @@ def batch_build_cluster_tile_list(
     rebuild_flags: wp.array | None = None,
     tile_offsets: wp.array | None = None,
     tile_counts: wp.array | None = None,
+    fixed_cell: bool = False,
+    qr: wp.array | None = None,
+    axis_aligned: wp.array | None = None,
+    fractional_rounding_certified: wp.array | None = None,
+    qr_height_certified: wp.array | None = None,
+    bbox_cutoff_bounds: wp.array | None = None,
 ) -> None:
     """Enumerate per-system cluster-tile pairs on pre-sorted positions.
 
@@ -1165,6 +1318,15 @@ def batch_build_cluster_tile_list(
     tile_offsets_arg = tile_offsets if tile_offsets is not None else int32_sentinel
     tile_counts_arg = tile_counts if tile_counts is not None else int32_sentinel
     rebuild_flags_arg = rebuild_flags if rebuild_flags is not None else bool_sentinel
+    geometry_args = _cluster_geometry_inputs(
+        device,
+        fixed_cell=bool(fixed_cell),
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
     if segmented:
         _reset_cluster_tile_counts(
             tile_counts_arg, rebuild_flags_arg, device, selective=selective
@@ -1172,7 +1334,10 @@ def batch_build_cluster_tile_list(
 
     wp.launch_tiled(
         kernel=_get_build_cluster_tiles_kernel(
-            batched=True, segmented=segmented, selective=selective
+            batched=True,
+            segmented=segmented,
+            selective=selective,
+            fixed_cell=bool(fixed_cell),
         ),
         dim=[ngroup],
         inputs=[
@@ -1186,6 +1351,7 @@ def batch_build_cluster_tile_list(
             group_ptr,
             cell_batch,
             inv_cell_batch,
+            *geometry_args,
             wp.float32(cutoff * cutoff),
             int(ngroup),
             num_tiles,
@@ -1237,6 +1403,12 @@ def batch_query_cluster_tile(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
+    fixed_cell: bool = False,
+    qr: wp.array | None = None,
+    axis_aligned: wp.array | None = None,
+    fractional_rounding_certified: wp.array | None = None,
+    qr_height_certified: wp.array | None = None,
+    bbox_cutoff_bounds: wp.array | None = None,
 ) -> None:
     """Convert batched cluster-tile pairs into a global per-atom neighbor matrix.
 
@@ -1381,6 +1553,15 @@ def batch_query_cluster_tile(
     int32_2d_sentinel = _empty_sentinel(2, wp.int32, device)
     int32_3d_sentinel = _empty_sentinel(3, wp.int32, device)
     bool_sentinel = _empty_sentinel(1, wp.bool, device)
+    geometry_args = _cluster_geometry_inputs(
+        device,
+        fixed_cell=bool(fixed_cell),
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
     tile_segmented = _require_all_or_none(
         "tile_offsets", tile_offsets, "tile_counts", tile_counts
     )
@@ -1413,6 +1594,7 @@ def batch_query_cluster_tile(
         kernel=get_batch_query_cluster_tile_kernel(
             tile_segmented=tile_segmented,
             selective=selective,
+            fixed_cell=bool(fixed_cell),
             dual_cutoff=dual_cutoff,
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
@@ -1426,6 +1608,7 @@ def batch_query_cluster_tile(
             sorted_atom_index,
             cell_batch,
             inv_cell_batch,
+            *geometry_args,
             wp.float32(cutoff * cutoff),
             wp.float32(
                 (cutoff2 if cutoff2 is not None else cutoff)
@@ -1494,6 +1677,12 @@ def batch_query_cluster_tile_coo(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
+    fixed_cell: bool = False,
+    qr: wp.array | None = None,
+    axis_aligned: wp.array | None = None,
+    fractional_rounding_certified: wp.array | None = None,
+    qr_height_certified: wp.array | None = None,
+    bbox_cutoff_bounds: wp.array | None = None,
 ) -> None:
     """Convert batched cluster-tile pairs into a flat COO pair list.
 
@@ -1619,6 +1808,15 @@ def batch_query_cluster_tile_coo(
         )
     int32_1d_sentinel = _empty_sentinel(1, wp.int32, device)
     bool_sentinel = _empty_sentinel(1, wp.bool, device)
+    geometry_args = _cluster_geometry_inputs(
+        device,
+        fixed_cell=bool(fixed_cell),
+        qr=qr,
+        axis_aligned=axis_aligned,
+        fractional_rounding_certified=fractional_rounding_certified,
+        qr_height_certified=qr_height_certified,
+        bbox_cutoff_bounds=bbox_cutoff_bounds,
+    )
     if coo_segmented:
         _reset_cluster_tile_counts(
             pair_counts,
@@ -1660,6 +1858,7 @@ def batch_query_cluster_tile_coo(
             tile_segmented=tile_segmented,
             coo_segmented=coo_segmented,
             selective=selective,
+            fixed_cell=bool(fixed_cell),
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
             pair_fn=pair_fn,
@@ -1672,6 +1871,7 @@ def batch_query_cluster_tile_coo(
             sorted_atom_index,
             cell_batch,
             inv_cell_batch,
+            *geometry_args,
             wp.float32(cutoff * cutoff),
             int(natom),
             int(max_pairs),

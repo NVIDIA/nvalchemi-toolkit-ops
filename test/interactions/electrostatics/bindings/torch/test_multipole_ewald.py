@@ -2262,6 +2262,112 @@ class TestPathAEquivPathB:
         assert abs(delta) < 1e-4, f"α=2.0 Δ={delta:.3e}"
 
 
+class TestEwaldSummationFloat32Backward:
+    """Float32 coordinates must differentiate and track the float64 forces.
+
+    The reciprocal-space gather adjoint receives a float64 cotangent; it has to
+    be brought back to the coordinate dtype before reaching the moment kernels,
+    otherwise a float32 backward fails converting positions to ``vec3d``.
+    """
+
+    @pytest.mark.parametrize("l_max", [1, 2])
+    def test_forces_match_float64(self, device, l_max: int):
+        """Autograd forces in float32 agree with float64 to float32 accuracy."""
+        sigma, alpha = 1.0, 0.4
+        pos64, feats64, cell64, cell_np, pos_np = _build(
+            2, device, seed=61, l_max=l_max, total_charge=-1.0
+        )
+        sigma_c = math.sqrt(sigma**2 + 1.0 / (4.0 * alpha**2))
+        cutoff = 10.0 * sigma_c
+        idx_j_np, nptr_np, sh_np = _neigh(pos_np, cell_np[0, 0], cutoff)
+        td = _torch_device(device)
+        idx_j = torch.from_numpy(idx_j_np).to(td)
+        nptr = torch.from_numpy(nptr_np).to(td)
+        sh = torch.from_numpy(sh_np).to(td)
+
+        def forces(dtype: torch.dtype) -> torch.Tensor:
+            pos = pos64.detach().to(dtype).requires_grad_(True)
+            energy = multipole_ewald_summation(
+                pos,
+                feats64.to(dtype),
+                cell64.to(dtype),
+                idx_j,
+                nptr,
+                sh,
+                sigma=sigma,
+                alpha=alpha,
+                k_cutoff=6.0 / sigma_c,
+            ).sum()
+            (grad,) = torch.autograd.grad(energy, pos)
+            return grad.double()
+
+        grad32 = forces(torch.float32)
+        grad64 = forces(torch.float64)
+        rel = float((grad32 - grad64).norm() / grad64.norm())
+        assert rel < 1e-4, f"l_max={l_max} float32 vs float64 force error {rel:.3e}"
+
+    @pytest.mark.parametrize("l_max", [1, 2])
+    def test_batched_forces_match_float64(self, device, l_max: int):
+        """The batched adjoint takes the same float32 path as the single one."""
+        sigma, alpha = 1.0, 0.4
+        sigma_c = math.sqrt(sigma**2 + 1.0 / (4.0 * alpha**2))
+        cutoff = 10.0 * sigma_c
+        td = _torch_device(device)
+
+        pos_l, feats_l, cell_l, idx_l, nptr_l, sh_l, batch_l = (
+            [],
+            [],
+            [],
+            [],
+            [0],
+            [],
+            [],
+        )
+        atom_off = 0
+        for b, seed in enumerate((61, 67)):
+            pos, feats, cell, cell_np, pos_np = _build(
+                2, device, seed=seed, l_max=l_max, total_charge=-1.0
+            )
+            idx_j_np, nptr_np, sh_np = _neigh(pos_np, cell_np[0, 0], cutoff)
+            pos_l.append(pos)
+            feats_l.append(feats)
+            cell_l.append(cell.reshape(3, 3))
+            idx_l.append(idx_j_np + atom_off)
+            sh_l.append(sh_np)
+            nptr_l.extend((nptr_np[1:] + nptr_l[-1]).tolist())
+            batch_l.append(torch.full((pos.shape[0],), b, dtype=torch.int32))
+            atom_off += pos.shape[0]
+        pos64 = torch.cat(pos_l)
+        feats64 = torch.cat(feats_l)
+        cells64 = torch.stack(cell_l)
+        idx_j = torch.from_numpy(np.concatenate(idx_l).astype(np.int32)).to(td)
+        nptr = torch.tensor(nptr_l, dtype=torch.int32, device=td)
+        sh = torch.from_numpy(np.concatenate(sh_l).astype(np.int32)).to(td)
+        batch_idx = torch.cat(batch_l).to(td)
+
+        def forces(dtype: torch.dtype) -> torch.Tensor:
+            pos = pos64.detach().to(dtype).requires_grad_(True)
+            energy = multipole_ewald_summation(
+                pos,
+                feats64.to(dtype),
+                cells64.to(dtype),
+                idx_j,
+                nptr,
+                sh,
+                sigma=sigma,
+                alpha=alpha,
+                k_cutoff=6.0 / sigma_c,
+                batch_idx=batch_idx,
+            ).sum()
+            (grad,) = torch.autograd.grad(energy, pos)
+            return grad.double()
+
+        grad32 = forces(torch.float32)
+        grad64 = forces(torch.float64)
+        rel = float((grad32 - grad64).norm() / grad64.norm())
+        assert rel < 1e-4, f"l_max={l_max} float32 vs float64 force error {rel:.3e}"
+
+
 class TestBatchedEwaldSummation:
     """Batched ``multipole_ewald_summation`` (``batch_idx`` ≠ None) must equal
     a per-system loop of the single-system variant to the same precision as

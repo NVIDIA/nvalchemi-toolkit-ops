@@ -40,13 +40,13 @@ requires_gpu = [
 ]
 
 try:
-    _ = import_module("vesin")
-    VESIN_AVAILABLE = True
+    VESIN_AVAILABLE = callable(getattr(import_module("vesin"), "NeighborList", None))
 except ModuleNotFoundError:
     VESIN_AVAILABLE = False
 
 requires_vesin = pytest.mark.skipif(
-    not VESIN_AVAILABLE, reason="`vesin` required for consistency checks."
+    not VESIN_AVAILABLE,
+    reason="callable `vesin.NeighborList` required for consistency checks.",
 )
 
 

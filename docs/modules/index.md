@@ -38,6 +38,7 @@ warp/neighbors.rst
 warp/segment_ops.rst
 warp/dispersion.rst
 warp/electrostatics.rst
+warp/lj.rst
 warp/dynamics.rst
 utilities.rst
 ```

@@ -103,6 +103,7 @@ K-Vector Generation
 .. autofunction:: generate_ewald_miller_indices
 .. autofunction:: k_vectors_from_miller_indices
 .. autofunction:: generate_k_vectors_pme
+.. autofunction:: generate_k_squared_pme
 
 Parameter Estimation
 --------------------

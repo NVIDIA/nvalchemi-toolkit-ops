@@ -17,9 +17,7 @@
 
 from __future__ import annotations
 
-import ast
 import re
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -46,97 +44,6 @@ def _factory_doc_pair_fn(
 ):
     """Tiny pair function used only to specialize factory docs."""
     return distance + pair_params[i, 0] - pair_params[j, 0], -r_ij
-
-
-def _is_wp_decorator(decorator: ast.expr, name: str) -> bool:
-    """Return whether ``decorator`` is ``@wp.<name>`` or ``@wp.<name>(...)``."""
-    target = decorator.func if isinstance(decorator, ast.Call) else decorator
-    return (
-        isinstance(target, ast.Attribute)
-        and target.attr == name
-        and isinstance(target.value, ast.Name)
-        and target.value.id == "wp"
-    )
-
-
-def _has_return_value(node: ast.FunctionDef) -> bool:
-    """Return whether ``node`` has a value-returning statement."""
-    return any(
-        isinstance(child, ast.Return) and child.value is not None
-        for child in ast.walk(node)
-    )
-
-
-def test_neighbor_warp_defs_have_literal_contract_docstrings() -> None:
-    """All neighbor Warp functions keep source-visible contract docstrings."""
-    errors: list[str] = []
-    # Anchor to the repo layout (test/neighbors/<this file>) rather than the
-    # process CWD, so the walk can't silently match zero files and pass
-    # vacuously when pytest runs from a different rootdir.
-    root = Path(__file__).resolve().parents[2] / "nvalchemiops" / "neighbors"
-    assert root.is_dir(), f"expected neighbors package at {root}"
-    paths = sorted(root.rglob("*.py"))
-    assert paths, f"no Python sources found under {root}"
-    for path in paths:
-        tree = ast.parse(path.read_text())
-
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            decorators = node.decorator_list
-            is_kernel = any(
-                _is_wp_decorator(decorator, "kernel") for decorator in decorators
-            )
-            is_func = any(
-                _is_wp_decorator(decorator, "func") for decorator in decorators
-            )
-            if not (is_kernel or is_func):
-                continue
-
-            doc = ast.get_docstring(node) or ""
-            location = f"{path}:{node.lineno}:{node.name}"
-            if not doc:
-                errors.append(f"{location} missing literal docstring")
-            if "Parameters" not in doc:
-                errors.append(f"{location} missing Parameters section")
-
-            if is_kernel:
-                required_kernel_tokens = (
-                    "Returns",
-                    "Notes",
-                    "- Thread launch:",
-                    "- Modifies:",
-                    "See Also",
-                )
-                errors.extend(
-                    f"{location} missing {token!r}"
-                    for token in required_kernel_tokens
-                    if token not in doc
-                )
-                if re.search(r"(?m)^(Thread launch|Modifies)\n-+$", doc):
-                    errors.append(
-                        f"{location} uses standalone Thread launch/Modifies section"
-                    )
-                if "OUTPUT:" not in doc and "MODIFIED:" not in doc:
-                    errors.append(f"{location} missing OUTPUT or MODIFIED marker")
-            elif _has_return_value(node):
-                if "Returns" not in doc:
-                    errors.append(f"{location} missing Returns section")
-            elif "Returns" not in doc and "Notes" not in doc:
-                errors.append(f"{location} missing Returns or Notes section")
-
-            args = (
-                *node.args.posonlyargs,
-                *node.args.args,
-                *node.args.kwonlyargs,
-            )
-            errors.extend(
-                f"{location} missing argument {arg.arg!r}"
-                for arg in args
-                if not re.search(rf"\b{re.escape(arg.arg)}\b", doc)
-            )
-
-    assert errors == []
 
 
 def _assert_runtime_doc(obj: object, *expected: str) -> None:

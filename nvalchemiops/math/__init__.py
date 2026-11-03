@@ -39,6 +39,8 @@ spline
 
 from nvalchemiops.math.math import (
     wp_erfc,
+    wp_erfc_f32_fast,
+    wp_erfc_input_precision,
     wp_exp_kernel,
     wp_logistic,
     wp_safe_divide,
@@ -80,6 +82,8 @@ __all__ = [
     "wp_exp_kernel",
     "wpdivmod",
     "wp_erfc",
+    "wp_erfc_f32_fast",
+    "wp_erfc_input_precision",
     "wp_logistic",
     # Individual harmonics
     "spherical_harmonic_00",

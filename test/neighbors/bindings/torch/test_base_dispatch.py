@@ -19,8 +19,12 @@ import math
 
 import pytest
 import torch
+import warp as wp
 
-from nvalchemiops.neighbors.base_dispatch import neighbor_list_strategy_run_args
+from nvalchemiops.neighbors.base_dispatch import (
+    fp64_naive_penalty,
+    neighbor_list_strategy_run_args,
+)
 from nvalchemiops.torch.neighbors import (
     estimate_neighbor_list_costs as report_torch,
 )
@@ -32,6 +36,7 @@ from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 _ENV_KNOBS = (
     "NVALCHEMI_NEIGHLIST_CELL_SHELL",
     "NVALCHEMI_NEIGHLIST_CELL_SETUP",
+    "NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY",
 )
 
 
@@ -68,6 +73,25 @@ def _clean_env(monkeypatch):
 
 class TestReportNeighborListCosts:
     """Exercise Torch guarded naive/cell-list auto-dispatch via report/suggest."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_current_stream_consumes_event_gated_metadata(self, torch_stream_runner):
+        """Selector metadata produced on the current stream is observed."""
+        device = torch.device("cuda")
+        source = torch.tensor([0, 20], dtype=torch.int32, device=device)
+        target = torch.zeros_like(source)
+        cell = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
+        cell = cell * 20.0
+        pbc = torch.zeros((1, 3), dtype=torch.bool, device=device)
+
+        def report_costs(batch_ptr):
+            report = report_torch(batch_ptr, cell, pbc, 5.0)
+            return torch.tensor(
+                [cost for _, cost in report], dtype=torch.float32, device=device
+            )
+
+        _, snapshot, expected = torch_stream_runner(source, target, report_costs)
+        torch.testing.assert_close(snapshot, expected)
 
     def test_one_entry_batch_ptr_is_rejected(self):
         """One-entry batch_ptr is invalid selector metadata."""
@@ -117,7 +141,10 @@ class TestReportNeighborListCosts:
 
     def test_shell_env_override_shifts_naive_cell_boundary(self, monkeypatch):
         """Increasing shell cost can flip a sparse system back to naive."""
-        args = ([5000], [5.0e6])
+        # Free-boundary float32 reports (``_report`` passes an all-False pbc
+        # and a float32 cell), sized so cell_list is genuinely the cheapest
+        # strategy and the env override has something to flip.
+        args = ([50000], [5.0e5])
         assert _base_method(_report(*args, cutoff=5.0)) == "cell_list"
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_CELL_SHELL", "100000.0")
         assert _base_method(_report(*args, cutoff=5.0)) == "naive"
@@ -153,7 +180,7 @@ class TestReportNeighborListCosts:
                 target_indices=torch.arange(100, dtype=torch.int32),
             )
         )
-        # Fewer source rows -> cheaper naive estimate.
+        # Fewer central rows -> cheaper naive estimate.
         assert partial["naive_scalar"] < full["naive_scalar"]
         # target_indices is incompatible with cluster_tile auto.
         assert "cluster_tile" not in partial
@@ -228,11 +255,13 @@ class TestReportNeighborListCosts:
     )
     def test_cuda_dense_periodic_float32_selects_cluster_tile(self):
         """Dense fully periodic float32 geometry can auto-select cluster-tile."""
-        batch_ptr = torch.tensor([0, 4096], dtype=torch.int32, device="cuda")
-        cell = torch.eye(3, dtype=torch.float32, device="cuda").reshape(1, 3, 3) * 20.0
+        # Sized above the naive/cluster_tile crossover, where cluster_tile is
+        # genuinely the fastest strategy.
+        batch_ptr = torch.tensor([0, 16384], dtype=torch.int32, device="cuda")
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").reshape(1, 3, 3) * 22.5
         pbc = torch.ones((1, 3), dtype=torch.bool, device="cuda")
 
-        top = suggest_torch(batch_ptr, cell, pbc, 10.0, positions_dtype=torch.float32)
+        top = suggest_torch(batch_ptr, cell, pbc, 8.0, positions_dtype=torch.float32)
         assert top == "cluster_tile"
 
 
@@ -266,3 +295,31 @@ def test_extreme_cell_to_cutoff_ratio_stays_finite():
     assert rep, "expected at least one feasible strategy"
     assert all(math.isfinite(c) and c >= 0.0 for _, c in rep)
     assert _base_method(rep) in ("naive", "cell_list", "cluster_tile")
+
+
+def test_tiny_cell_huge_cutoff_does_not_overflow_stencil_cost():
+    """A cell far thinner than the cutoff keeps cell-list costs positive and large."""
+    rep = _report([512], [1.0], 1.0e4)
+    assert all(math.isfinite(c) and c >= 0.0 for _, c in rep)
+    cell_costs = [c for name, c in rep if name.startswith("cell_list")]
+    naive_costs = [c for name, c in rep if name.startswith("naive")]
+    if cell_costs and naive_costs:
+        assert min(cell_costs) > min(naive_costs)
+    assert _base_method(rep) == "naive"
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "-1.0", "0", "abc", ""])
+def test_fp64_naive_penalty_ignores_invalid_override(monkeypatch, raw):
+    """A malformed FP64 penalty override falls back to the built-in default."""
+    name = "NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY"
+    device = wp.get_device("cpu")
+    monkeypatch.delenv(name, raising=False)
+    default = fp64_naive_penalty(device)
+    monkeypatch.setenv(name, raw)
+    assert fp64_naive_penalty(device) == default
+
+
+def test_fp64_naive_penalty_accepts_positive_override(monkeypatch):
+    """A finite positive override replaces the built-in FP64 penalty."""
+    monkeypatch.setenv("NVALCHEMI_NEIGHLIST_FP64_NAIVE_PENALTY", "2.5")
+    assert fp64_naive_penalty(wp.get_device("cpu")) == 2.5

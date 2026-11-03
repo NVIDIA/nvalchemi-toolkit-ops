@@ -250,7 +250,12 @@ class BenchmarkDataset(Dataset[dict[str, torch.Tensor]], ABC):
 
         if cache_path.exists() and not self.force_recompute:
             logger.info(f"Loading cached {self.domain} data from {cache_path}")
-            self._cached_data = torch.load(cache_path, map_location=self.device)
+            # The cache holds only dicts of tensors, so load it with
+            # ``weights_only=True``: a replaced cache file must not be able to
+            # execute code through pickle.
+            self._cached_data = torch.load(
+                cache_path, map_location=self.device, weights_only=True
+            )
         else:
             logger.info(f"Computing {self.domain} systems...")
             self._cached_data = {}

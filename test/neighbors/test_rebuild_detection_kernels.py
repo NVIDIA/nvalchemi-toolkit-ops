@@ -28,6 +28,7 @@ from nvalchemiops.neighbors.rebuild import (
     get_cell_list_rebuild_kernel,
     get_neighbor_list_rebuild_kernel,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 from nvalchemiops.torch.neighbors.neighbor_utils import allocate_cell_list
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
@@ -38,6 +39,13 @@ devices = ["cpu"]
 if torch.cuda.is_available():
     devices.append("cuda:0")
 dtypes = [torch.float32, torch.float64]
+
+
+@pytest.fixture
+def warp_stream(device):
+    """Scope Torch setup and raw Warp launches to the active Torch stream."""
+    with scoped_warp_stream(device):
+        yield
 
 
 class TestRebuildDetectionKernelFactory:
@@ -73,6 +81,7 @@ class TestRebuildDetectionKernelFactory:
 
 @pytest.mark.parametrize("device", devices)
 @pytest.mark.parametrize("dtype", dtypes)
+@pytest.mark.usefixtures("warp_stream")
 class TestRebuildDetectionWpLaunchers:
     """Test the public launcher API for rebuild detection."""
 
@@ -331,6 +340,7 @@ class TestRebuildDetectionWpLaunchers:
 
 @pytest.mark.parametrize("device", devices)
 @pytest.mark.parametrize("dtype", dtypes)
+@pytest.mark.usefixtures("warp_stream")
 class TestBatchRebuildDetectionWpLaunchers:
     """Test batch warp launchers for rebuild detection."""
 
@@ -657,6 +667,7 @@ class TestBatchRebuildDetectionWpLaunchers:
 
 @pytest.mark.parametrize("device", devices)
 @pytest.mark.parametrize("dtype", dtypes)
+@pytest.mark.usefixtures("warp_stream")
 class TestPBCRebuildDetection:
     """Tests for PBC-aware rebuild detection kernels."""
 

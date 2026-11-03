@@ -63,6 +63,8 @@ MAKEFILE_GROUPS: tuple[tuple[str, str], ...] = (
     ("test/interactions/electrostatics", "electrostatics"),
     ("test/interactions/dispersion", "dispersion"),
     ("test/interactions", "interactions"),
+    ("test/neighbors/bindings/jax", "neighbors_jax"),
+    ("test/neighbors/bindings/torch", "neighbors_torch"),
     ("test/neighbors", "neighbors"),
     ("test/dynamics", "dynamics"),
     ("test/math", "math"),

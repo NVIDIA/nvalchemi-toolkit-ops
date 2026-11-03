@@ -9,6 +9,7 @@
         "../../.github/",
         "../../.vscode/",
         "../../.tmp/",
+        "../../tmp/",
         "../../benchmarks/results/",
         "../../.pytest_cache/",
         "../../.mypy_cache/"

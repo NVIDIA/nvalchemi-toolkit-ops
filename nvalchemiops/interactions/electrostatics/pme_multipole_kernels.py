@@ -1455,6 +1455,132 @@ def batch_pme_k_squared_launch(
     )
 
 
+@wp.kernel(enable_backward=False)
+def _batch_pme_k_squared_backward_kernel(
+    miller_x: wp.array(dtype=Any),
+    miller_y: wp.array(dtype=Any),
+    miller_z: wp.array(dtype=Any),
+    cell_inv_T: wp.array(dtype=Any),  # (B,) of mat33
+    grad_k_squared: wp.array4d(dtype=Any),  # (B, Nx, Ny, Nz_rfft)
+    grad_cell_inv_T: wp.array3d(dtype=Any),  # (B, 3, 3), atomic output
+):
+    r"""Per-system adjoint of :func:`_batch_pme_k_squared_kernel`.
+
+    Each grid point accumulates only into its own batch member's cell
+    gradient, so systems never share an accumulator.
+
+    Thread launch
+    -------------
+    ``dim = (B, Nx, Ny, Nz_rfft)`` — one thread per system and rfft grid cell.
+
+    Modifies
+    --------
+    ``grad_cell_inv_T``
+        Accumulates the cell-inverse gradient for the thread's system.
+    """
+    system_idx, miller_x_idx, miller_y_idx, miller_z_idx = wp.tid()
+
+    mx = miller_x[miller_x_idx]
+    my = miller_y[miller_y_idx]
+    mz = miller_z[miller_z_idx]
+    M = cell_inv_T[system_idx]
+
+    kx = M[0, 0] * mx + M[0, 1] * my + M[0, 2] * mz
+    ky = M[1, 0] * mx + M[1, 1] * my + M[1, 2] * mz
+    kz = M[2, 0] * mx + M[2, 1] * my + M[2, 2] * mz
+
+    twopi = type(mx)(_TWOPI)
+    eightpi_sq = type(mx)(2.0) * twopi * twopi
+    g = (
+        grad_k_squared[system_idx, miller_x_idx, miller_y_idx, miller_z_idx]
+        * eightpi_sq
+    )
+
+    wp.atomic_add(grad_cell_inv_T, system_idx, 0, 0, g * kx * mx)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 0, 1, g * kx * my)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 0, 2, g * kx * mz)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 1, 0, g * ky * mx)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 1, 1, g * ky * my)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 1, 2, g * ky * mz)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 2, 0, g * kz * mx)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 2, 1, g * kz * my)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 2, 2, g * kz * mz)
+
+
+def _batch_pme_k_squared_backward_sig(v, t):
+    """Signature builder for :func:`_batch_pme_k_squared_backward_kernel`."""
+    mat = wp.mat33d if t == wp.float64 else wp.mat33f
+    return [
+        wp.array(dtype=t),  # miller_x
+        wp.array(dtype=t),  # miller_y
+        wp.array(dtype=t),  # miller_z
+        wp.array(dtype=mat),  # cell_inv_T
+        wp.array(dtype=t, ndim=4),  # grad_k_squared
+        wp.array(dtype=t, ndim=3),  # grad_cell_inv_T (out)
+    ]
+
+
+_batch_pme_k_squared_backward_overloads = register_overloads(
+    _batch_pme_k_squared_backward_kernel, _batch_pme_k_squared_backward_sig
+)
+
+
+def batch_pme_k_squared_backward_launch(
+    miller_x: wp.array,
+    miller_y: wp.array,
+    miller_z: wp.array,
+    cell_inv_T: wp.array,
+    grad_k_squared: wp.array,
+    grad_cell_inv_T: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    r"""Launch the per-system backward for batched ``k_squared``.
+
+    Parameters
+    ----------
+    miller_x : wp.array, shape (Nx,), dtype=wp.float32/float64
+        Miller indices along x.
+    miller_y : wp.array, shape (Ny,), dtype=wp.float32/float64
+        Miller indices along y.
+    miller_z : wp.array, shape (Nz_rfft,), dtype=wp.float32/float64
+        Miller indices along z in the rfft half-space.
+    cell_inv_T : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix.
+    grad_k_squared : wp.array, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Upstream gradient of the batched :math:`k^2` grids.
+    grad_cell_inv_T : wp.array, shape (B, 3, 3), dtype=wp.float32/float64
+        OUTPUT, pre-zeroed gradient with respect to ``cell_inv_T``.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``miller_x.device``.
+
+    ``grad_cell_inv_T`` has shape ``(B, 3, 3)`` and must be zero initialized.
+
+    Thread launch
+    -------------
+    ``dim = (B, Nx, Ny, Nz_rfft)`` — one thread per system and rfft grid cell.
+    """
+    if device is None:
+        device = str(miller_x.device)
+    B, nx, ny, nz_rfft = grad_k_squared.shape
+    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
+    wp.launch(
+        _batch_pme_k_squared_backward_overloads[vec_dtype],
+        dim=(B, nx, ny, nz_rfft),
+        inputs=[
+            miller_x,
+            miller_y,
+            miller_z,
+            cell_inv_T,
+            grad_k_squared,
+        ],
+        outputs=[grad_cell_inv_T],
+        device=device,
+    )
+
+
 # =============================================================================
 # Fused PME convolve kernel
 # =============================================================================

@@ -100,4 +100,3 @@ channels and so the cost of every evaluation that follows.
 
 .. autoclass:: nvalchemiops.interactions.dispersion._c6_decomposition.C6Decomposition
     :members:
-    :undoc-members:

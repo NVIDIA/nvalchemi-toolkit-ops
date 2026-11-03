@@ -29,7 +29,11 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.torch.neighbors import compile_pair_fn
+from nvalchemiops.torch.neighbors import (
+    compile_pair_fn,
+    neighbor_list,
+    prepare_neighbor_list,
+)
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
     batch_query_cell_list,
@@ -632,7 +636,7 @@ def test_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],
@@ -661,6 +665,147 @@ def test_naive_pair_fn_target_indices_compact_rows(device):
 
     assert pe.shape == (2, 4)
     _check_target_pair_outputs(nm, nn, nv, nd, pe, pf, pp, target_indices)
+
+
+@pytest.mark.parametrize(
+    "buffer_name",
+    [
+        "neighbor_matrix",
+        "num_neighbors",
+        "neighbor_matrix_shifts",
+        "neighbor_distances",
+        "neighbor_vectors",
+        "pair_energies",
+        "pair_forces",
+    ],
+)
+@pytest.mark.parametrize("mismatch", ["shape", "dtype"])
+def test_naive_pair_fn_partial_geometry_buffers_validate_before_reset(
+    buffer_name, mismatch
+):
+    """Compact PBC geometry and callback buffers validate before any reset."""
+    positions = torch.tensor(
+        [
+            [0.1, 0.2, 0.3],
+            [0.5, 0.2, 0.3],
+            [2.0, 0.2, 0.3],
+            [2.4, 0.2, 0.3],
+        ],
+        dtype=torch.float32,
+    )
+    targets = torch.tensor([2, 0], dtype=torch.int32)
+    cell = torch.eye(3, dtype=torch.float32).reshape(1, 3, 3) * 4.0
+    pbc = torch.ones((1, 3), dtype=torch.bool)
+    expected_shapes = {
+        "neighbor_matrix": (2, 4),
+        "num_neighbors": (2,),
+        "neighbor_matrix_shifts": (2, 4, 3),
+        "neighbor_distances": (2, 4),
+        "neighbor_vectors": (2, 4, 3),
+        "pair_energies": (2, 4),
+        "pair_forces": (2, 4, 3),
+    }
+    expected_dtypes = {
+        "neighbor_matrix": torch.int32,
+        "num_neighbors": torch.int32,
+        "neighbor_matrix_shifts": torch.int32,
+        "neighbor_distances": torch.float32,
+        "neighbor_vectors": torch.float32,
+        "pair_energies": torch.float32,
+        "pair_forces": torch.float32,
+    }
+    sentinels = {
+        "neighbor_matrix": 101,
+        "num_neighbors": 103,
+        "neighbor_matrix_shifts": 107,
+        "neighbor_distances": 109.25,
+        "neighbor_vectors": 113.25,
+        "pair_energies": 127.25,
+        "pair_forces": 131.25,
+    }
+    outputs = {
+        name: torch.full(
+            shape,
+            sentinels[name],
+            dtype=expected_dtypes[name],
+        )
+        for name, shape in expected_shapes.items()
+    }
+    if mismatch == "shape":
+        bad_shape = {
+            "neighbor_matrix": (2, 3),
+            "num_neighbors": (3,),
+            "neighbor_matrix_shifts": (2, 4, 2),
+            "neighbor_distances": (2, 3),
+            "neighbor_vectors": (2, 4, 2),
+            "pair_energies": (2, 3),
+            "pair_forces": (2, 4, 2),
+        }[buffer_name]
+        outputs[buffer_name] = torch.full(
+            bad_shape,
+            sentinels[buffer_name],
+            dtype=expected_dtypes[buffer_name],
+        )
+    else:
+        bad_dtype = (
+            torch.float64
+            if expected_dtypes[buffer_name] == torch.float32
+            else torch.int64
+        )
+        outputs[buffer_name] = torch.full(
+            expected_shapes[buffer_name],
+            sentinels[buffer_name],
+            dtype=bad_dtype,
+        )
+    before = {name: output.clone() for name, output in outputs.items()}
+
+    with pytest.raises(ValueError, match=buffer_name):
+        naive_neighbor_list(
+            positions,
+            0.75,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            target_indices=targets,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_matrix=outputs["neighbor_matrix"],
+            num_neighbors=outputs["num_neighbors"],
+            neighbor_matrix_shifts=outputs["neighbor_matrix_shifts"],
+            neighbor_distances=outputs["neighbor_distances"],
+            neighbor_vectors=outputs["neighbor_vectors"],
+            pair_fn=_sum_pair_fn,
+            pair_params=torch.ones((4, 1), dtype=torch.float32),
+            pair_energies=outputs["pair_energies"],
+            pair_forces=outputs["pair_forces"],
+        )
+
+    for name, output in outputs.items():
+        assert torch.equal(output, before[name]), name
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_naive_pair_fn_partial_tile_rejected() -> None:
+    """Topology-only partial tile rejects inline pair callbacks."""
+    device = "cuda:0"
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+    targets = torch.tensor([1], dtype=torch.int32, device=device)
+    pair_params = torch.ones((2, 1), dtype=torch.float32, device=device)
+    with pytest.raises(NotImplementedError, match="topology-only target_indices"):
+        naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=4,
+            target_indices=targets,
+            pair_fn=_sum_pair_fn,
+            pair_params=pair_params,
+            strategy="tile",
+        )
 
 
 def test_naive_pair_fn_target_indices_fullgraph_rejected(device):
@@ -976,6 +1121,154 @@ def test_compiled_pair_fn_batch_naive_pbc_fullgraph_matrix(device):
         positions, nm, nms, nn, nv, nd, pe, pf
     )
     _check_pair_outputs(nm_out, nn_out, nv_out, nd_out, pe_out, pf_out, pp)
+
+
+def test_compiled_pair_fn_batch_naive_pbc_target_indices_fullgraph_matrix(device):
+    """Compiled batch PBC pair functions accept compact targets without max atoms."""
+    _skip_without_cuda(device)
+    positions, cell, pbc = _single_system_pbc(device)
+    batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, positions.shape[0]], dtype=torch.int32, device=device)
+    target_indices = torch.tensor([0, 2], dtype=torch.int32, device=device)
+    cutoff = 0.75
+    max_neighbors = 8
+    cpf = _compiled_pair_fn("batch_naive_pbc_target_fullgraph")
+    nm, nms, nn, nv, nd, pe, pf, pp = _alloc_target_pair_buffers(
+        positions.shape[0], target_indices.shape[0], max_neighbors, device
+    )
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, cutoff, pbc)
+
+    @torch.compile(fullgraph=True)
+    def run(positions, nm, nms, nn, nv, nd, pe, pf):
+        return batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            num_neighbors=nn,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+            target_indices=target_indices,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_vectors=nv,
+            neighbor_distances=nd,
+            pair_fn=cpf,
+            pair_params=pp,
+            pair_energies=pe,
+            pair_forces=pf,
+        )
+
+    nm_out, nn_out, _shifts, nd_out, nv_out, pe_out, pf_out = run(
+        positions, nm, nms, nn, nv, nd, pe, pf
+    )
+    _check_target_pair_outputs(
+        nm_out,
+        nn_out,
+        nv_out,
+        nd_out,
+        pe_out,
+        pf_out,
+        pp,
+        target_indices,
+    )
+
+
+@pytest.mark.gpu
+def test_prepared_fixed_cell_compiled_pair_fn_naive_pbc(device):
+    """Prepared fixed-cell single naive invokes a compiled pair callback."""
+    _skip_without_cuda(device)
+    positions, cell, pbc = _single_system_pbc(device)
+    max_neighbors = 8
+    pair_fn = _compiled_pair_fn("prepared_fixed_naive_pbc")
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        fixed_cell=True,
+        max_neighbors=max_neighbors,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=pair_fn,
+    )
+    pair_params = (
+        (torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0)
+        * 0.5
+    ).reshape(-1, 1)
+
+    neighbor_list(positions, state=state, pair_params=pair_params)
+
+    assert state.neighbor_matrix is not None
+    assert state.num_neighbors is not None
+    assert state.neighbor_vectors is not None
+    assert state.neighbor_distances is not None
+    assert state.pair_energies is not None
+    assert state.pair_forces is not None
+    _check_pair_outputs(
+        state.neighbor_matrix,
+        state.num_neighbors,
+        state.neighbor_vectors,
+        state.neighbor_distances,
+        state.pair_energies,
+        state.pair_forces,
+        pair_params,
+    )
+
+
+@pytest.mark.gpu
+def test_prepared_fixed_cell_compiled_pair_fn_batch_naive_pbc(device):
+    """Prepared fixed-cell batch naive invokes a compiled pair callback."""
+    _skip_without_cuda(device)
+    one_system, one_cell, one_pbc = _single_system_pbc(device)
+    positions = torch.cat((one_system, one_system + 1.5))
+    cell = one_cell.repeat(2, 1, 1)
+    pbc = one_pbc.repeat(2, 1)
+    batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device=device)
+    max_neighbors = 8
+    pair_fn = _compiled_pair_fn("prepared_fixed_batch_naive_pbc")
+    state = prepare_neighbor_list(
+        positions,
+        0.75,
+        cell=cell,
+        pbc=pbc,
+        batch_ptr=batch_ptr,
+        method="batch_naive",
+        fixed_cell=True,
+        max_neighbors=max_neighbors,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=pair_fn,
+    )
+    pair_params = (
+        (torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0)
+        * 0.5
+    ).reshape(-1, 1)
+
+    neighbor_list(positions, state=state, pair_params=pair_params)
+
+    assert state.neighbor_matrix is not None
+    assert state.num_neighbors is not None
+    assert state.neighbor_vectors is not None
+    assert state.neighbor_distances is not None
+    assert state.pair_energies is not None
+    assert state.pair_forces is not None
+    _check_pair_outputs(
+        state.neighbor_matrix,
+        state.num_neighbors,
+        state.neighbor_vectors,
+        state.neighbor_distances,
+        state.pair_energies,
+        state.pair_forces,
+        pair_params,
+    )
 
 
 def test_compiled_pair_fn_cell_list_fullgraph_matrix(device):
@@ -1346,6 +1639,50 @@ def test_naive_pair_fn_coo_outputs_aligned(device):
     assert torch.allclose(pe_coo, expected_e, rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+@pytest.mark.parametrize("batched", [False, True])
+def test_naive_pair_fn_nonpositive_cutoff_rejected_before_writes(cutoff, batched):
+    """Single and batch pair calls reject before touching caller buffers."""
+    positions = torch.zeros((4, 3))
+    max_neighbors = 2
+    matrix = torch.full((4, max_neighbors), 17, dtype=torch.int32)
+    counts = torch.full((4,), 19, dtype=torch.int32)
+    distances = torch.full((4, max_neighbors), 23.0)
+    vectors = torch.full((4, max_neighbors, 3), 29.0)
+    energies = torch.full((4, max_neighbors), 31.0)
+    forces = torch.full((4, max_neighbors, 3), 37.0)
+    kwargs = {}
+    call = naive_neighbor_list
+    if batched:
+        call = batch_naive_neighbor_list
+        kwargs["batch_ptr"] = torch.tensor([0, 2, 4], dtype=torch.int32)
+
+    with pytest.raises(ValueError, match="cutoff must be positive"):
+        call(
+            positions,
+            cutoff,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            neighbor_distances=distances,
+            neighbor_vectors=vectors,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn,
+            pair_params=torch.ones((4, 1)),
+            pair_energies=energies,
+            pair_forces=forces,
+            **kwargs,
+        )
+
+    assert torch.equal(matrix, torch.full_like(matrix, 17))
+    assert torch.equal(counts, torch.full_like(counts, 19))
+    assert torch.equal(distances, torch.full_like(distances, 23))
+    assert torch.equal(vectors, torch.full_like(vectors, 29))
+    assert torch.equal(energies, torch.full_like(energies, 31))
+    assert torch.equal(forces, torch.full_like(forces, 37))
+
+
 def test_batch_cell_list_pair_fn_runs_and_matches(device):
     """High-level batched ``batch_cell_list`` with ``pair_fn`` (regression).
 
@@ -1440,7 +1777,7 @@ def test_batch_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_batch_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch batch_naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch batch_naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],

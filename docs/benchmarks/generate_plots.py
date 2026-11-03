@@ -46,15 +46,23 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.plotting.styles import (  # noqa: E402
+    AXIS_LABEL_SIZE,
     BACKEND_COLORS,
     DATA_LINE_WIDTH,
     DATA_MARKER_SIZE,
+    DEFAULT_MARKER_FILLSTYLE,
+    GRID_STYLE,
     LINE_ALPHA,
     NAIVE_ORANGE,
     NVIDIA_BLUE,
     NVIDIA_GREEN,
     PNG_EXPORT_DPI,
     SECONDARY_LINESTYLE,
+    SINGLE_PANEL_SIZE,
+    TICK_LABEL_SIZE,
+    format_num,
+    log_scale_formatter,
+    setup_log2_xaxis,
     setup_plot_style,
 )
 
@@ -132,12 +140,24 @@ def plot_series(
     caption
         Caption text below the plot.
     """
+    series = {
+        label: (xs, ys)
+        for label, (xs, ys) in series.items()
+        if xs is not None and ys is not None and len(xs) and len(ys)
+    }
+    if not series:
+        # Every row failed or carried no data: say so on the figure rather
+        # than plotting a fabricated axis.
+        _write_no_data_placeholder(
+            output_path,
+            title or "No benchmark data",
+            "No successful benchmark rows for this panel.",
+        )
+        return
     setup_plot_style()
     num_series = len(series)
 
-    # Determine figure size based on number of series (accommodate legend)
-    fig_width = 10 if num_series > 3 else 8
-    fig, ax = plt.subplots(figsize=(fig_width, 5.5), constrained_layout=True)
+    fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_SIZE)
 
     palette = [NVIDIA_GREEN, NVIDIA_BLUE, NAIVE_ORANGE, "#440154", "#555555"]
     markers = ["o", "s", "^", "D", "P"]
@@ -174,64 +194,61 @@ def plot_series(
             markersize=DATA_MARKER_SIZE,
             label=label,
             color=color,
+            fillstyle=DEFAULT_MARKER_FILLSTYLE,
             dash_capstyle="round",
             markeredgewidth=0.9,
             markeredgecolor=color,
+            markerfacecolor="none",
             alpha=LINE_ALPHA,
         )
 
-    # Axis labels and scales
-    ax.set_xlabel(x_label, fontsize=12)
-    ax.set_ylabel(y_label, fontsize=12)
-    ax.set_xscale("log")
+    # Axes match the suite panels: log2 x with SI atom-count labels, log10 y
+    # with labels at 1-2-3-5 subdivisions per decade.
+    ax.set_ylabel(y_label, fontsize=AXIS_LABEL_SIZE)
     ax.set_yscale("log")
-
-    # Ensure sufficient tick marks on both axes
-    # Use LogLocator with numticks parameter for better control
-    ax.xaxis.set_major_locator(ticker.LogLocator(base=10.0, numticks=10))
-    ax.yaxis.set_major_locator(ticker.LogLocator(base=10.0, numticks=10))
-
-    # Add minor ticks for additional reference points
-    ax.xaxis.set_minor_locator(
-        ticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=20)
+    ax.yaxis.set_major_locator(
+        ticker.LogLocator(base=10.0, subs=tuple(np.arange(1, 10) * 1.0), numticks=20)
     )
-    ax.yaxis.set_minor_locator(
-        ticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=20)
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(log_scale_formatter))
+    ax.yaxis.set_minor_formatter(ticker.NullFormatter())
+    all_x = np.concatenate(
+        [np.asarray(xs) for xs, _ in series.values() if xs is not None and len(xs)]
+    )
+    lo_exp = int(np.floor(np.log2(all_x.min())))
+    hi_exp = int(np.ceil(np.log2(all_x.max())))
+    x_ticks = [2**k for k in range(lo_exp, hi_exp + 1)]
+    setup_log2_xaxis(
+        ax,
+        ticks=x_ticks,
+        limits=(all_x.min(), all_x.max()),
+        label=x_label,
     )
 
-    # Enhance tick labels
-    ax.tick_params(axis="both", which="major", labelsize=12)
-    ax.tick_params(axis="both", which="minor", labelsize=10)
+    ax.grid(True, which="both", **GRID_STYLE)
 
-    # Title with proper spacing
     if title is not None:
-        ax.set_title(title, fontsize=14, pad=12)
+        ax.set_title(title)
 
-    # Refined grid
-    ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.3)
-    ax.grid(False, which="minor")
-
-    # Legend placement: outside plot area to avoid overlap
+    # Legend styled like the suite panels: framed box in the upper right.
     if num_series <= 4:
-        # Few series: place inside upper left
         ax.legend(
-            frameon=False,
-            fontsize=12,
-            loc="upper left",
+            loc="upper right",
+            fontsize=TICK_LABEL_SIZE,
+            frameon=True,
+            fancybox=True,
             framealpha=0.95,
             edgecolor="gray",
-            fancybox=False,
         )
     else:
-        # Many series: place outside to the right
+        # Many series: framed box outside to the right
         ax.legend(
-            frameon=False,
-            fontsize=11,
             loc="center left",
             bbox_to_anchor=(1.02, 0.5),
+            fontsize=TICK_LABEL_SIZE,
+            frameon=True,
+            fancybox=True,
             framealpha=0.95,
             edgecolor="gray",
-            fancybox=False,
         )
 
     # Caption if provided
@@ -246,6 +263,7 @@ def plot_series(
             style="italic",
         )
 
+    plt.tight_layout()
     plt.savefig(output_path.as_posix(), dpi=PNG_EXPORT_DPI, bbox_inches="tight")
     plt.close()
 
@@ -284,7 +302,7 @@ def plot_throughput(
         output_path,
         title=title,
         x_label="Number of atoms",
-        y_label="Throughput (atoms/s)",
+        y_label="Throughput [atoms/s]",
         caption=caption,
     )
 
@@ -314,7 +332,7 @@ def plot_memory(
         output_path,
         title=title,
         x_label="Number of atoms",
-        y_label="Peak memory (MB)",
+        y_label="Peak memory [MB]",
         caption=caption,
     )
 
@@ -466,9 +484,9 @@ def _generate_dynamics_comparison_plots(
     plot_series(
         series,
         output_path,
-        title=f"{benchmark_type.upper()} {system_type.title()} Scaling Comparison",
+        title=f"Dynamics | {benchmark_type.upper()} | {system_type.title()} | Scaling Comparison",
         x_label="Number of atoms",
-        y_label="Avg step time (ms)",
+        y_label="Avg step time [ms]",
     )
     print(f"      Generated: {output_path.name}")
 
@@ -489,9 +507,9 @@ def _generate_dynamics_comparison_plots(
     plot_series(
         series,
         output_path,
-        title=f"{benchmark_type.upper()} {system_type.title()} Throughput Comparison",
+        title=f"Dynamics | {benchmark_type.upper()} | {system_type.title()} | Throughput Comparison",
         x_label="Number of atoms",
-        y_label="Atom-steps/s",
+        y_label="Throughput [atom-steps/s]",
     )
     print(f"      Generated: {output_path.name}")
 
@@ -512,9 +530,9 @@ def _generate_dynamics_comparison_plots(
         plot_series(
             series,
             output_path,
-            title=f"{benchmark_type.upper()} Batch Scaling Comparison",
+            title=f"Dynamics | {benchmark_type.upper()} | Batch Scaling Comparison",
             x_label="Batch size",
-            y_label="System-steps/s",
+            y_label="Throughput [system-steps/s]",
         )
         print(f"      Generated: {output_path.name}")
 
@@ -561,9 +579,9 @@ def _generate_dynamics_backend_plots(
         plot_series(
             series,
             output_path,
-            title=f"{benchmark_type.upper()} {system_type.title()} Scaling ({backend})",
+            title=f"Dynamics | {benchmark_type.upper()} | {system_type.title()} Scaling | {backend}",
             x_label=x_label,
-            y_label="Avg step time (ms)",
+            y_label="Avg step time [ms]",
         )
         print(f"      Generated: {output_path.name}")
 
@@ -582,9 +600,9 @@ def _generate_dynamics_backend_plots(
         plot_series(
             series,
             output_path,
-            title=f"{benchmark_type.upper()} {system_type.title()} Throughput ({backend})",
+            title=f"Dynamics | {benchmark_type.upper()} | {system_type.title()} Throughput | {backend}",
             x_label=x_label,
-            y_label="Atom-steps/s",
+            y_label="Throughput [atom-steps/s]",
         )
         print(f"      Generated: {output_path.name}")
 
@@ -627,7 +645,13 @@ def _suite_csv_dirs(
         marker.read_text(encoding="ascii").strip() if marker.is_file() else None
     )
     try:
-        validate_result_files(csv_paths, expected_run_id=expected_run_id)
+        # Bundled results can refresh one complete method while preserving the
+        # other measured methods. Fresh externally supplied suites remain one run.
+        validate_result_files(
+            csv_paths,
+            expected_run_id=expected_run_id if override else None,
+            per_method=not override,
+        )
         validate_reportable_case_matrix(csv_paths, {"torch", "jax", "warp"})
     except ValueError as exc:
         raise RuntimeError(f"Invalid benchmark results in {suite_dir}: {exc}") from exc

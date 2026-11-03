@@ -47,6 +47,9 @@ from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     get_ewald_recip_kernel,
 )
 from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream as _scoped_stream
+from nvalchemiops.torch.interactions.electrostatics._ewald_real_chain import (
+    _resolve_real_space_core_scalar,
+)
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -132,6 +135,7 @@ def _real_space_direct_op(
         cell_grad=want_virial,
         order="forward",
         tiled=use_matrix,
+        core_scalar=_resolve_real_space_core_scalar(wp_scalar, positions.device),
     )
     energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
     wp_batch = _wp(batch_idx, wp.int32) if batched else sentinels["batch_id"]
