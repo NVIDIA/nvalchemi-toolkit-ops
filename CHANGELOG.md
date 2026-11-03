@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Added
+
+- Multipole PME and Ewald accept an optional `total_charge` for the
+  uniform-background correction, so a caller holding part of a system can pass
+  the globally reduced charge. The batched PME and Ewald entry points also take
+  `source_weights` (scales each atom's contribution to the spread or structure
+  factor only) and `reduce_partial` (combines the partial mesh or structure
+  factor across holders of the system before the energy is evaluated). Omitting
+  the new arguments keeps the previous behavior.
+- Multipole Ewald reciprocal space accepts a caller-retained half-space
+  `miller_indices` topology, so the k-grid is built without data-dependent
+  sizes and the path can be traced by `torch.compile`.
+- `fire2_step_coord` accepts `reduce_partials` and `reduce_max_norm`, and the
+  variable-cell mix phase accepts `reduce_partials` and `global_atom_counts`,
+  so a caller holding part of each system, such as one rank of a
+  domain-decomposed run, gets whole-system values in the mixing and step clamp.
+  Omitting them keeps the previous behavior.
+
+### Fixed
+
+- Multipole PME used the transposed inverse cell for the k-grid, which gave
+  wrong energies, forces and stress for triclinic cells.
+- Multipole PME position and cell gradients at `l >= 1` were silently wrong
+  under `torch.compile` because Inductor dropped the Hermitian RFFT doubling
+  from the generated backward.
+- Multipole Ewald `miller_indices` validation now matches `ewald_summation`:
+  it is rejected together with `k_cutoff` or `k_vectors`, and a cell/topology
+  device mismatch raises instead of moving the topology.
+- The multipole real-space cell-gradient autograd Function stays traceable
+  under dynamic shapes.
+
 ### Changed
 
 - The per-(order, lmax) PME multipole kernel modules no longer generate
