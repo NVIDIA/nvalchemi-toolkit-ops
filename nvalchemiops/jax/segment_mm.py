@@ -241,18 +241,18 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
 
     Parameters
     ----------
-    a : jax.Array, shape (capacity, K)
-        Input features, float32 or bfloat16, on a CUDA device.
-    b : jax.Array, shape (R, K, N)
-        Per-segment matrices with the same dtype and device as ``a``.
+    a : jax.Array, shape (capacity, K), dtype float32 or bfloat16
+        Packed input features on a CUDA device.
+    b : jax.Array, shape (R, K, N), dtype matches a
+        Weight matrices for ``R`` segments, on the same device as ``a``.
     seglen : jax.Array, shape (R,), dtype int32
         Runtime CUDA segment lengths. Values must be nonnegative and sum
-        to at most capacity. Zero-length segments are supported.
+        to at most ``capacity``. Zero-length segments are supported.
 
     Returns
     -------
-    jax.Array, shape (capacity, N)
-        Newly allocated contiguous output with the same dtype as ``a``.
+    jax.Array, shape (capacity, N), dtype matches a
+        Newly allocated contiguous output on the same device as ``a``.
 
     Raises
     ------
@@ -282,8 +282,8 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     Replicated floating operands receive summed gradients across the relevant
     mesh axes. Operands with unreduced or reduced manual-axis types must be
     converted to ordinary local operands before this call. Automatically
-    partitioning globally packed rows or splitting
-    one system across devices is not supported.
+    partitioning globally packed rows or splitting one system across devices
+    is not supported.
 
     For mixed precision with float32 parameters, explicitly cast both operands
     to bfloat16 inside the differentiated function. The operation and its
@@ -293,10 +293,20 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     precision. Casting weights before passing them to the differentiated
     function instead makes those bfloat16 arrays the differentiation inputs.
 
+    See Also
+    --------
+    nvalchemiops.segment_mm.segment_mm : Shared Warp forward operation.
+    nvalchemiops.segment_mm.segment_mm_backward : Explicit operand gradients.
+    nvalchemiops.torch.segment_mm.segment_mm : Differentiable PyTorch binding.
+
     Examples
     --------
-    Keep parameters in float32 and compile explicit casts with the loss:
+    On a CUDA device, keep parameters in float32 and compile explicit casts
+    with the loss. This batch has one empty segment and one padding row:
 
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> from nvalchemiops.jax.segment_mm import segment_mm
     >>> @jax.jit
     ... def loss(a_fp32, weights_fp32, lengths):
     ...     out = segment_mm(
@@ -306,14 +316,23 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     ...     )
     ...     return jnp.sum(out.astype(jnp.float32) ** 2)
     >>> loss_and_grad = jax.value_and_grad(loss, argnums=(0, 1))
+    >>> with jax.default_device(jax.devices("gpu")[0]):
+    ...     a = jnp.ones((6, 4), dtype=jnp.float32)
+    ...     b = jnp.ones((3, 4, 2), dtype=jnp.float32)
+    ...     lengths = jnp.array([2, 0, 3], dtype=jnp.int32)
+    >>> value, (grad_a, grad_b) = loss_and_grad(a, b, lengths)
+    >>> grad_a.shape, grad_b.shape
+    ((6, 4), (3, 4, 2))
 
-    With a caller-created one-dimensional mesh named ``"systems"``, use global
+    With a one-dimensional mesh named ``"systems"``, use global
     inputs of shapes ``(devices, capacity, K)``, ``(devices, R, K, N)``, and
     ``(devices, R)``. All devices have equal static capacities, while active
     lengths may differ and change at runtime. ``shard_map`` preserves rank,
     so the mapped body removes and restores the singleton device dimension:
 
-    >>> from jax.sharding import PartitionSpec as P
+    >>> import numpy as np
+    >>> from jax.sharding import Mesh, PartitionSpec as P
+    >>> mesh = Mesh(np.asarray(jax.devices("gpu")), ("systems",))
     >>> distributed_segment_mm = jax.jit(
     ...     jax.shard_map(
     ...         lambda a, b, lengths: segment_mm(a[0], b[0], lengths[0])[None],
@@ -324,10 +343,6 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     ...     )
     ... )
 
-    See Also
-    --------
-    nvalchemiops.segment_mm.segment_mm : Shared Warp forward operation.
-    nvalchemiops.segment_mm.segment_mm_backward : Explicit operand gradients.
     """
     _validate_inputs(a, b, seglen)
     return _bind_product(_forward_p, a, b, seglen)

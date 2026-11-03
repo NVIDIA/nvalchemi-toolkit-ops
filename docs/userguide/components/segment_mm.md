@@ -4,23 +4,22 @@
 
 # Segmented Matrix Multiplication
 
-`segment_mm(a, b, lengths)` multiplies each contiguous segment of packed rows
+`segment_mm(a, b, seglen)` multiplies each contiguous segment of packed rows
 by its own matrix. Use it when systems have different row counts but share
 input and output channel sizes.
 
-The implementation targets CUDA GPUs. Current validation covers Ada, RTX
-Blackwell, and H100; B200 qualification is pending.
+Segmented matrix multiplication requires CUDA.
 
-## Packed-row contract
+## Packed-Row Contract
 
 | Input | Shape | Meaning |
 | --- | --- | --- |
 | `a` | `(capacity, K)` | Feature rows packed in segment order |
 | `b` | `(R, K, N)` | One matrix per segment |
-| `lengths` | `(R,)` | Runtime CUDA `int32` row counts |
+| `seglen` | `(R,)` | Runtime CUDA `int32` row counts |
 | Output | `(capacity, N)` | Packed products followed by zero padding |
 
-For `offsets = [0, cumsum(lengths)]`, segment `g` computes
+For `offsets = [0, cumsum(seglen)]`, segment `g` computes
 `a[offsets[g]:offsets[g + 1]] @ b[g]`. These are **lengths**, unlike the
 per-row `idx` arrays used by [segment reductions](segment_ops.md).
 The caller must provide nonnegative lengths whose sum is at most `capacity`;
@@ -44,6 +43,7 @@ contiguous output buffer; the framework wrappers allocate the output.
 
 ```python
 import torch
+
 from nvalchemiops.torch.segment_mm import segment_mm
 
 a = torch.randn(8, 4, device="cuda", requires_grad=True)
@@ -71,7 +71,7 @@ module loaded and unchanged until all graph replays finish and the graphs are
 discarded. Warm up and recapture after unloading, reloading, or changing module
 options.
 
-### DDP and force-loss training
+### DDP and Force-Loss Training
 
 With `DistributedDataParallel`, each rank owns complete systems and passes
 ordinary local CUDA tensors to `segment_mm`. DDP synchronizes replicated model
@@ -80,11 +80,26 @@ selection, system assignment, packing, and loss weighting across ranks.
 
 For a force loss, compute the position derivative **inside the module's
 `forward`**, with `create_graph=True`, and use ordinary `loss.backward()`
-outside the DDP wrapper. After initializing one process per device and setting
-its current CUDA device, the pattern is:
+outside the DDP wrapper. The following pattern assumes an initialized process
+group, a current CUDA device selected for each process, and these local inputs:
+
+| Variable | Shape or type | Meaning |
+| --- | --- | --- |
+| `local_rank` | `int` | CUDA device index within the process's node |
+| `weights_fp32` | `(R, K, N)` | FP32 weights, initialized identically on each rank |
+| `positions` | `(capacity, K)` | FP32 local input features used to form the energy |
+| `target_forces` | `(capacity, K)` | FP32 derivative targets, zero on padded rows |
+| `lengths` | `(R,)` | Local segment lengths as CUDA `int32` |
+
+All tensors must be on the process's CUDA device. This example uses a toy
+energy to illustrate differentiating through the input gradient.
 
 ```python
+import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+from nvalchemiops.torch.segment_mm import segment_mm
+
 
 class ForceModel(torch.nn.Module):
     def __init__(self, weights_fp32):
@@ -97,8 +112,7 @@ class ForceModel(torch.nn.Module):
             energy = out.float().square().sum()
         return -torch.autograd.grad(energy, positions, create_graph=True)[0]
 
-# weights_fp32 has shape (R, K, N); local positions has shape (capacity, K).
-# All batch tensors are on this rank's device; padded force targets are zero.
+
 device = torch.device("cuda", local_rank)
 model = DDP(ForceModel(weights_fp32).to(device), device_ids=[local_rank])
 forces = model(positions.requires_grad_(), lengths)
@@ -119,7 +133,9 @@ For mixed precision, cast both operands inside the differentiated function:
 ```python
 import jax
 import jax.numpy as jnp
+
 from nvalchemiops.jax.segment_mm import segment_mm
+
 
 @jax.jit
 def loss(a_fp32, weights_fp32, lengths):
@@ -130,22 +146,37 @@ def loss(a_fp32, weights_fp32, lengths):
     )
     return jnp.sum(out.astype(jnp.float32) ** 2)
 
+
+gpu = jax.devices("gpu")[0]
+with jax.default_device(gpu):
+    a = jnp.ones((8, 4), dtype=jnp.float32)
+    b = jnp.ones((3, 4, 5), dtype=jnp.float32)
+    lengths = jnp.array([3, 0, 2], dtype=jnp.int32)
+
 loss_and_grad = jax.value_and_grad(loss, argnums=(0, 1))
-# Call with FP32 CUDA a/weights and CUDA int32 lengths.
+value, (grad_a, grad_b) = loss_and_grad(a, b, lengths)
+# grad_a.shape == (8, 4); grad_b.shape == (3, 4, 5).
+# Both gradients are FP32; padded rows and empty segments have zero gradients.
 ```
 
 The casts return gradients to FP32 parameters in their original dtype, with
 BF16 numerical precision. Casting weights before passing them to
 `loss_and_grad` instead makes those BF16 arrays the differentiation inputs.
 
-### Whole-system sharding
+### Whole-System Sharding
 
 Call `segment_mm` inside `jax.shard_map` with complete local systems. For a
-caller-created one-dimensional mesh named `"systems"`, use global shapes
+one-dimensional mesh named `"systems"`, use global shapes
 `(devices, capacity, K)`, `(devices, R, K, N)`, and `(devices, R)`:
 
 ```python
-from jax.sharding import PartitionSpec as P
+import jax
+import numpy as np
+from jax.sharding import Mesh, PartitionSpec as P
+
+from nvalchemiops.jax.segment_mm import segment_mm
+
+mesh = Mesh(np.array(jax.devices("gpu")), ("systems",))
 
 distributed_segment_mm = jax.jit(
     jax.shard_map(
@@ -167,7 +198,7 @@ operands. The caller owns mesh construction and data placement. Automatic
 redistribution of globally packed rows, DTensor integration, and splitting a
 system across devices are outside this interface.
 
-## API reference
+## API Reference
 
 - {doc}`PyTorch </modules/torch/segment_mm>`
 - {doc}`JAX </modules/jax/segment_mm>`

@@ -325,11 +325,11 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
 
     Parameters
     ----------
-    a : torch.Tensor, shape (capacity, K)
-        CUDA input features with dtype float32 or bfloat16.
-    b : torch.Tensor, shape (R, K, N)
-        Per-segment weights on the same CUDA device as ``a``. The dtype must
-        match ``a`` unless CUDA bfloat16 autocast is enabled.
+    a : torch.Tensor, shape (capacity, K), dtype float32 or bfloat16
+        Packed input features on a CUDA device.
+    b : torch.Tensor, shape (R, K, N), dtype float32 or bfloat16
+        Weight matrices for ``R`` segments, on the same CUDA device as ``a``.
+        The dtype must match ``a`` unless CUDA bfloat16 autocast is enabled.
     seglen : torch.Tensor, shape (R,), dtype torch.int32
         Runtime lengths on the same CUDA device. Values must be nonnegative
         and sum to at most ``capacity``. Zero-length segments are supported.
@@ -381,6 +381,24 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     --------
     nvalchemiops.segment_mm.segment_mm : Shared Warp forward implementation.
     nvalchemiops.segment_mm.segment_mm_backward : Explicit first-order backward.
+    nvalchemiops.jax.segment_mm.segment_mm : Differentiable JAX binding.
+
+    Examples
+    --------
+    Multiply a batch with one empty segment and one padding row, then
+    differentiate with respect to both operands on a CUDA device:
+
+    >>> import torch
+    >>> from nvalchemiops.torch.segment_mm import segment_mm
+    >>> a = torch.ones((6, 4), device="cuda", requires_grad=True)
+    >>> b = torch.ones((3, 4, 2), device="cuda", requires_grad=True)
+    >>> lengths = torch.tensor([2, 0, 3], device="cuda", dtype=torch.int32)
+    >>> out = segment_mm(a, b, lengths)
+    >>> tuple(out.shape)
+    (6, 2)
+    >>> grad_a, grad_b = torch.autograd.grad(out.square().sum(), (a, b))
+    >>> tuple(grad_a.shape), tuple(grad_b.shape)
+    ((6, 4), (3, 4, 2))
     """
     _validate_inputs(a, b, seglen)
     if torch.is_autocast_enabled("cuda"):
