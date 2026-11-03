@@ -82,7 +82,7 @@ license:  ## Check license headers
 FULL_GROUPS := types math neighbors_jax neighbors neighbors_torch dynamics batch_utils warp_dispatch \
 	torch_boundary segment_ops segment_ops_backward segment_ops_torch \
 	segment_ops_jax interactions dispersion electrostatics electrostatics_jax \
-	electrostatics_torch electrostatics_shared benchmarks
+	electrostatics_torch electrostatics_shared benchmarks segment_mm segment_mm_jax segment_mm_torch
 
 ARGS_types                := test/test_types.py
 ARGS_math                 := test/math
@@ -100,6 +100,9 @@ ARGS_segment_ops          := test/test_segment_ops.py
 ARGS_segment_ops_backward := test/test_segment_ops_backward.py
 ARGS_segment_ops_torch    := test/test_segment_ops_torch.py
 ARGS_segment_ops_jax      := test/test_segment_ops_jax.py
+ARGS_segment_mm           := test/test_segment_mm.py
+ARGS_segment_mm_jax       := test/bindings/jax
+ARGS_segment_mm_torch     := test/bindings/torch
 ARGS_interactions         := test/interactions --ignore=test/interactions/electrostatics --ignore=test/interactions/dispersion
 ARGS_dispersion           := test/interactions/dispersion
 ARGS_electrostatics       := test/interactions/electrostatics --ignore=test/interactions/electrostatics/bindings
