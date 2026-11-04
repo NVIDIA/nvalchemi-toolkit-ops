@@ -35,6 +35,10 @@ nose_hoover
     Deterministic, time-reversible extended Lagrangian dynamics.
     Based on Martyna-Tobias-Klein equations with Yoshida-Suzuki integration.
 
+csvr
+    Stochastic velocity rescaling (Bussi-Donadio-Parrinello) thermostat
+    for NVT ensemble.
+
 npt
     NPT (isothermal-isobaric) integrator using Nosé-Hoover chains.
     Coupled thermostat and barostat for constant pressure/temperature.
@@ -131,6 +135,12 @@ Usage Examples
 For detailed documentation and mathematical formulations, see the :ref:`dynamics_userguide`.
 """
 
+from nvalchemiops.dynamics.integrators.csvr import (
+    # Mutating
+    csvr_thermostat,
+    # Non-mutating
+    csvr_thermostat_out,
+)
 from nvalchemiops.dynamics.integrators.langevin import (
     langevin_baoab_finalize,
     langevin_baoab_finalize_out,
@@ -220,6 +230,10 @@ __all__ = [
     # Langevin - Non-mutating
     "langevin_baoab_half_step_out",
     "langevin_baoab_finalize_out",
+    # CSVR - Mutating
+    "csvr_thermostat",
+    # CSVR - Non-mutating
+    "csvr_thermostat_out",
     # Velocity Rescaling - Mutating
     "velocity_rescale",
     # Velocity Rescaling - Non-mutating
