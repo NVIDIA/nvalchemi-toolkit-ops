@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- The per-(order, lmax) PME multipole kernel modules no longer generate
+  Warp adjoint code. Gradients are computed with hand-written backward
+  kernels, and skipping the adjoint removes most of the cold
+  whole-package compile time.
+
 ### Fixed
 
 - JAX `batch_query_cell_list` with `rebuild_flags` needed temporary memory

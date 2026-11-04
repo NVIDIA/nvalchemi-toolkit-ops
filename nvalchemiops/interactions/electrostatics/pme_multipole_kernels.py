@@ -4053,6 +4053,10 @@ def _pme_multipole_per_order_lmax_module(
         f"nvalchemiops.interactions.electrostatics.pme_multipole_per_order."
         f"{kind}_order{order}_l{lmax}_{dtype_tag}"
     )
+    # Backward is registered via a separate autograd-Function pair, so the
+    # kernel itself needs no Warp adjoint — skipping it cuts ~70% of
+    # generated code on these heavily-unrolled kernels.
+    mod.options["enable_backward"] = False
     return mod
 
 
