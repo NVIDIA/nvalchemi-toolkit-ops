@@ -43,6 +43,7 @@ import torch
 
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.interactions.electrostatics.multipole_autograd_kernels import (
     ReceiverPhiHatFunction,
@@ -224,6 +225,7 @@ def prepare_multipole_scf_cache(
     receiver_sigmas: list[float] | tuple[float, ...] | torch.Tensor,
     k_cutoff: float | None = None,
     k_vectors: torch.Tensor | None = None,
+    miller_indices: torch.Tensor | None = None,
     l_max: int = 1,
     feature_max_l: int = 1,
     density_normalize: NormMode | int | str = NormMode.MULTIPOLES,
@@ -265,7 +267,17 @@ def prepare_multipole_scf_cache(
         ``k_cutoff`` to generate the k-grid internally (with origin
         prepended), or pass a pre-generated ``k_vectors`` tensor
         (``(N_k, 3)`` float64 with origin at row 0). The batched build
-        (``cell`` ``(B, 3, 3)``) requires ``k_cutoff``.
+        (``cell`` ``(B, 3, 3)``) requires ``k_cutoff`` or ``miller_indices``.
+    miller_indices : torch.Tensor, optional
+        Caller-retained half-space Miller topology ``(K, 3)`` (see
+        :func:`~nvalchemiops.torch.interactions.electrostatics.k_vectors.generate_ewald_miller_indices`).
+        The k-grid is ``k_vectors_from_miller_indices(cell, miller_indices)``
+        with the origin prepended, so it stays differentiable in ``cell``
+        (stress) while its shape is static: no data-dependent grid size, host
+        synchronization, or per-system loop, which makes the build
+        ``torch.compile``-traceable. The topology must conservatively cover
+        every cell it is used with. Cannot be combined with ``k_vectors`` or
+        ``k_cutoff``.
     l_max : int
         Source multipole order the cache is being built for. ``0`` or
         ``1``. Only affects the ``feature_overlap_constants`` layout
@@ -302,6 +314,7 @@ def prepare_multipole_scf_cache(
             sigma=sigma,
             receiver_sigmas=receiver_sigmas,
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             l_max=l_max,
             feature_max_l=feature_max_l,
             density_normalize=density_normalize,
@@ -321,10 +334,18 @@ def prepare_multipole_scf_cache(
         raise ValueError(f"feature_max_l must be 0, 1, or 2, got {feature_max_l}")
     if alpha is not None and alpha <= 0.0:
         raise ValueError(f"alpha, when given, must be positive, got {alpha}")
-    if k_vectors is None and (k_cutoff is None or k_cutoff <= 0.0):
+    if k_vectors is not None and miller_indices is not None:
+        raise ValueError("k_vectors cannot be combined with miller_indices")
+    if k_cutoff is not None and miller_indices is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
+    if (
+        k_vectors is None
+        and miller_indices is None
+        and (k_cutoff is None or k_cutoff <= 0.0)
+    ):
         raise ValueError(
-            "Either k_vectors must be supplied, or k_cutoff must be a "
-            f"positive float (got k_cutoff={k_cutoff})."
+            "Either k_vectors or miller_indices must be supplied, or k_cutoff "
+            f"must be a positive float (got k_cutoff={k_cutoff})."
         )
 
     if isinstance(receiver_sigmas, torch.Tensor):
@@ -347,9 +368,14 @@ def prepare_multipole_scf_cache(
     # --- k-vectors ----------------------------------------------------------
     if k_vectors is None:
         cell_on_device = cell.to(device)
-        k_vectors_half = generate_k_vectors_ewald_summation(
-            cell_on_device, float(k_cutoff)
-        )
+        if miller_indices is not None:
+            k_vectors_half = k_vectors_from_miller_indices(
+                cell_on_device, miller_indices
+            )
+        else:
+            k_vectors_half = generate_k_vectors_ewald_summation(
+                cell_on_device, float(k_cutoff)
+            )
         if k_vectors_half.ndim != 2:
             raise ValueError(
                 "Batched cell shapes are not supported yet; pass a single (3, 3) cell."
@@ -538,7 +564,8 @@ def _prepare_multipole_scf_cache_batch(
     *,
     sigma: float,
     receiver_sigmas: list[float] | tuple[float, ...] | torch.Tensor,
-    k_cutoff: float,
+    k_cutoff: float | None,
+    miller_indices: torch.Tensor | None = None,
     l_max: int = 1,
     feature_max_l: int = 1,
     density_normalize: NormMode | int | str = NormMode.MULTIPOLES,
@@ -594,8 +621,12 @@ def _prepare_multipole_scf_cache_batch(
         raise ValueError(f"l_max must be 0, 1, or 2, got {l_max}")
     if feature_max_l not in (0, 1, 2):
         raise ValueError(f"feature_max_l must be 0, 1, or 2, got {feature_max_l}")
-    if k_cutoff is None or k_cutoff <= 0.0:
-        raise ValueError(f"k_cutoff must be a positive float, got {k_cutoff}")
+    if miller_indices is not None and k_cutoff is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
+    if miller_indices is None and (k_cutoff is None or k_cutoff <= 0.0):
+        raise ValueError(
+            f"k_cutoff must be a positive float (or miller_indices given), got {k_cutoff}"
+        )
 
     if isinstance(receiver_sigmas, torch.Tensor):
         sigmas_list = receiver_sigmas.detach().cpu().to(torch.float64).tolist()
@@ -616,29 +647,45 @@ def _prepare_multipole_scf_cache_batch(
 
     cells_dev = cells.to(device=device, dtype=torch.float64)
 
-    # Each system has its own valid-k count K_b; pad to K_max for uniform shapes.
-    per_system_k: list[torch.Tensor] = []
-    for b in range(batch_size):
-        k_half_b = generate_k_vectors_ewald_summation(cells_dev[b], float(k_cutoff))
-        if k_half_b.ndim != 2:
-            raise ValueError(
-                f"generate_k_vectors_ewald_summation returned rank-{k_half_b.ndim} "
-                f"for system {b}; expected 2-D (N_k, 3)."
-            )
-        k_full_b = _prepend_origin(k_half_b).to(dtype=torch.float64)
-        per_system_k.append(k_full_b)
+    if miller_indices is not None:
+        # Caller-retained topology: static (B, 1 + K, 3) grid, differentiable in
+        # the cells, no per-system loop / data-dependent size / host sync.
+        k_half = k_vectors_from_miller_indices(cells_dev, miller_indices).reshape(
+            batch_size, -1, 3
+        )
+        k_vectors = torch.cat([torch.zeros_like(k_half[:, :1]), k_half], dim=1).to(
+            dtype=torch.float64
+        )
+        k_max = int(k_vectors.shape[1])
+        valid_k_counts = torch.full(
+            (batch_size,), k_max, dtype=torch.int32, device=device
+        )
+    else:
+        # Each system has its own valid-k count K_b; pad to K_max for uniform shapes.
+        per_system_k: list[torch.Tensor] = []
+        for b in range(batch_size):
+            k_half_b = generate_k_vectors_ewald_summation(cells_dev[b], float(k_cutoff))
+            if k_half_b.ndim != 2:
+                raise ValueError(
+                    f"generate_k_vectors_ewald_summation returned rank-{k_half_b.ndim} "
+                    f"for system {b}; expected 2-D (N_k, 3)."
+                )
+            k_full_b = _prepend_origin(k_half_b).to(dtype=torch.float64)
+            per_system_k.append(k_full_b)
 
-    # Per-system k-counts are Python ints (materialized-tensor .shape[0]), so
-    # take K_max host-side — no device round trip / .item() sync.
-    k_counts = [int(k.shape[0]) for k in per_system_k]
-    valid_k_counts = torch.tensor(k_counts, dtype=torch.int32, device=device)
-    k_max = max(k_counts)
+        # Per-system k-counts are Python ints (materialized-tensor .shape[0]), so
+        # take K_max host-side — no device round trip / .item() sync.
+        k_counts = [int(k.shape[0]) for k in per_system_k]
+        valid_k_counts = torch.tensor(k_counts, dtype=torch.int32, device=device)
+        k_max = max(k_counts)
 
-    # Pad rows are zero so they contribute nothing to any k-weighted sum.
-    k_vectors = torch.zeros((batch_size, k_max, 3), dtype=torch.float64, device=device)
-    for b in range(batch_size):
-        k_b = per_system_k[b]
-        k_vectors[b, : k_b.shape[0]] = k_b
+        # Pad rows are zero so they contribute nothing to any k-weighted sum.
+        k_vectors = torch.zeros(
+            (batch_size, k_max, 3), dtype=torch.float64, device=device
+        )
+        for b in range(batch_size):
+            k_b = per_system_k[b]
+            k_vectors[b, : k_b.shape[0]] = k_b
 
     k_norm2 = (k_vectors * k_vectors).sum(dim=-1)  # (B, K_max)
     volume = torch.det(cells_dev).abs()  # (B,)

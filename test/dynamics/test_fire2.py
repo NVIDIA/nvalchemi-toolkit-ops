@@ -4548,3 +4548,235 @@ class TestFire2ComputeReductions:
         torch.testing.assert_close(vd, vr, rtol=rtol, atol=rtol)
         torch.testing.assert_close(dd, dr, rtol=rtol, atol=rtol)
         torch.testing.assert_close(ad, ar, rtol=rtol, atol=rtol)
+
+
+class TestFire2PartialSystems:
+    """A caller that holds part of each system reproduces the whole-system step.
+
+    Two shards stand in for two ranks: each holds half of every system's atoms
+    plus its own copy of the replicated state (``alpha``, ``dt``, ``nsteps_inc``,
+    cell and cell velocity). Each hook sums or maxes the partials the other
+    shard contributes, as a collective would.
+    """
+
+    HP = dict(
+        delaystep=0,
+        dtgrow=1.05,
+        dtshrink=0.75,
+        alphashrink=0.985,
+        alpha0=0.09,
+        tmax=0.08,
+        tmin=0.005,
+        maxstep=0.02,
+    )
+
+    @staticmethod
+    def _system(device, *, with_cell, seed=7):
+        rng = np.random.default_rng(seed)
+        M, per = 2, 8
+        N = M * per
+        dtype = torch.float64
+
+        def t(a):
+            return torch.tensor(a, dtype=dtype, device=device)
+
+        data = {
+            "positions": t(rng.random((N, 3)) * 5.0),
+            "velocities": t(rng.standard_normal((N, 3)) * 0.05),
+            "forces": t(rng.standard_normal((N, 3))),
+            "batch_idx": torch.arange(
+                M, device=device, dtype=torch.int32
+            ).repeat_interleave(per),
+            "alpha": torch.full((M,), 0.09, dtype=dtype, device=device),
+            "dt": t(np.array([0.05, 0.03])),
+            "nsteps_inc": torch.zeros(M, dtype=torch.int32, device=device),
+        }
+        if with_cell:
+            data["cell"] = t(_make_lower_triangular_cell(M, np.float64, scale=6.0))
+            data["cell_velocities"] = t(rng.standard_normal((M, 3, 3)) * 0.01)
+            data["cell_force"] = t(rng.standard_normal((M, 3, 3)) * 0.5)
+        return data
+
+    @staticmethod
+    def _shard(data, keep):
+        """Rows ``keep`` of every per-atom field; replicated fields are cloned."""
+        per_atom = ("positions", "velocities", "forces", "batch_idx")
+        return {
+            k: (v[keep].clone() if k in per_atom else v.clone())
+            for k, v in data.items()
+        }
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_coordinate_step_matches_whole_system(self, device):
+        full = self._system(device, with_cell=False)
+        ref = {k: v.clone() for k, v in full.items()}
+        fire2_step_coord(
+            ref["positions"],
+            ref["velocities"],
+            ref["forces"],
+            ref["batch_idx"],
+            ref["alpha"],
+            ref["dt"],
+            ref["nsteps_inc"],
+            **self.HP,
+        )
+
+        idx = torch.arange(full["positions"].shape[0], device=device)
+        keeps = [idx[idx % 2 == 0], idx[idx % 2 == 1]]
+
+        def run(shard, partials, max_norm):
+            """One shard's step; ``partials`` / ``max_norm`` come from the peers."""
+            seen = {}
+
+            def sum_partials(vf, vv, ff):
+                seen["local"] = (vf.clone(), vv.clone(), ff.clone())
+                for buf, other in zip((vf, vv, ff), partials):
+                    buf += other
+
+            def max_reduce(mn):
+                seen["max"] = mn.clone()
+                if max_norm is not None:
+                    torch.maximum(mn, max_norm, out=mn)
+
+            fire2_step_coord(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+                reduce_partials=sum_partials,
+                reduce_max_norm=max_reduce,
+                **self.HP,
+            )
+            return seen
+
+        zero = tuple(
+            torch.zeros(2, dtype=torch.float64, device=device) for _ in range(3)
+        )
+        # Pass 1 on clones: each shard's local partials, then the maxima that
+        # follow from the combined partials.
+        local = [run(self._shard(full, k), zero, None)["local"] for k in keeps]
+        combined = tuple(local[0][q] + local[1][q] for q in range(3))
+        peers = [tuple(combined[q] - loc[q] for q in range(3)) for loc in local]
+        maxima = [
+            run(self._shard(full, k), peers[i], None)["max"]
+            for i, k in enumerate(keeps)
+        ]
+        global_max = torch.maximum(*maxima)
+        shards = [self._shard(full, k) for k in keeps]
+        for i, shard in enumerate(shards):
+            run(shard, peers[i], global_max)
+
+        for key in ("positions", "velocities"):
+            merged = torch.empty_like(ref[key])
+            for shard, keep in zip(shards, keeps):
+                merged[keep] = shard[key]
+            torch.testing.assert_close(merged, ref[key], rtol=1e-12, atol=1e-12)
+        for shard in shards:
+            for key in ("alpha", "dt", "nsteps_inc"):
+                torch.testing.assert_close(shard[key], ref[key], rtol=1e-12, atol=1e-12)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_variable_cell_step_matches_whole_system(self, device):
+        full = self._system(device, with_cell=True)
+        ref = {k: v.clone() for k, v in full.items()}
+        fire2_step_coord_cell(
+            ref["positions"],
+            ref["velocities"],
+            ref["forces"],
+            ref["cell"],
+            ref["cell_velocities"],
+            ref["cell_force"],
+            ref["batch_idx"],
+            ref["alpha"],
+            ref["dt"],
+            ref["nsteps_inc"],
+            **self.HP,
+        )
+
+        n_atoms = full["positions"].shape[0]
+        idx = torch.arange(n_atoms, device=device)
+        keeps = [idx[idx % 2 == 0], idx[idx % 2 == 1]]
+        counts = torch.bincount(full["batch_idx"].long(), minlength=2)
+
+        def mix(shard, partials):
+            seen = {}
+
+            def sum_partials(vf, vv, ff):
+                seen["local"] = (vf.clone(), vv.clone(), ff.clone())
+                for buf, other in zip((vf, vv, ff), partials):
+                    buf += other
+
+            vf = torch.zeros(2, dtype=torch.float64, device=device)
+            vv, ff, mn = (
+                torch.zeros_like(vf),
+                torch.zeros_like(vf),
+                torch.zeros_like(vf),
+            )
+            fire2_step_coord_cell_mix(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["cell_force"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+                vf=vf,
+                v_sumsq=vv,
+                f_sumsq=ff,
+                max_norm=mn,
+                reduce_partials=sum_partials,
+                global_atom_counts=counts,
+                **{k: v for k, v in self.HP.items() if k != "maxstep"},
+            )
+            seen["vf"], seen["max_norm"] = vf, mn
+            return seen
+
+        zero = tuple(
+            torch.zeros(2, dtype=torch.float64, device=device) for _ in range(3)
+        )
+        local = [mix(self._shard(full, k), zero)["local"] for k in keeps]
+        combined = tuple(local[0][q] + local[1][q] for q in range(3))
+        peers = [tuple(combined[q] - loc[q] for q in range(3)) for loc in local]
+
+        shards = [self._shard(full, k) for k in keeps]
+        seen = [mix(shard, peers[i]) for i, shard in enumerate(shards)]
+        for shard, s in zip(shards, seen):
+            fire2_step_coord_cell_couple(
+                shard["positions"],
+                shard["velocities"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["dt"],
+                s["vf"],
+                shard["batch_idx"],
+                s["max_norm"],
+            )
+        global_max = torch.maximum(seen[0]["max_norm"], seen[1]["max_norm"])
+        for shard, s in zip(shards, seen):
+            s["max_norm"].copy_(global_max)
+            fire2_step_coord_cell_apply(
+                shard["positions"],
+                shard["velocities"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["dt"],
+                s["vf"],
+                shard["batch_idx"],
+                s["max_norm"],
+                maxstep=self.HP["maxstep"],
+            )
+
+        for key in ("positions", "velocities"):
+            merged = torch.empty_like(ref[key])
+            for shard, keep in zip(shards, keeps):
+                merged[keep] = shard[key]
+            torch.testing.assert_close(merged, ref[key], rtol=1e-11, atol=1e-11)
+        for shard in shards:
+            for key in ("cell", "cell_velocities", "alpha", "dt", "nsteps_inc"):
+                torch.testing.assert_close(shard[key], ref[key], rtol=1e-11, atol=1e-11)

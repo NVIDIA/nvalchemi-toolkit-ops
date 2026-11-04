@@ -43,6 +43,7 @@ Public autograd.Function classes
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
@@ -1919,7 +1920,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         neighbor_ptr,
         unit_shifts,
         batch_idx,
-        num_systems,
         l_max,
         half_neighbor_list,
     ):
@@ -1941,7 +1941,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
             neighbor_ptr,
             unit_shifts,
             batch_idx,
-            num_systems,
             l_max,
             half_neighbor_list,
         ) = inputs
@@ -1958,8 +1957,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
             batch_idx if batch_idx is not None else cell.new_zeros(0),
         )
         ctx.has_batch = batch_idx is not None
-        ctx.num_systems = num_systems
-        ctx.num_atoms = output.shape[0]
         ctx.l_max = l_max
         ctx.half_neighbor_list = half_neighbor_list
 
@@ -1981,11 +1978,14 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         grad_cell = None
         if ctx.needs_input_grad[1]:
             batch_idx = batch_idx_saved if ctx.has_batch else None
+            # Sizes come from the saved tensors, not ctx: an int() of a symbolic
+            # size made in the caller does not belong to the traced Function graph.
+            num_systems = cell.shape[0] if (ctx.has_batch and cell.dim() == 3) else 1
             grad_system, _ = _energy_cotangents(
                 grad_energy,
                 batch_idx,
-                ctx.num_atoms,
-                ctx.num_systems,
+                positions.shape[0],
+                num_systems,
                 "atom",
             )
             if ctx.has_batch:
@@ -2047,7 +2047,6 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         return (
             grad_energy,
             grad_cell,
-            None,
             None,
             None,
             None,
@@ -2148,9 +2147,6 @@ def multipole_real_space_energy_with_stress(
     if l_max == 2:
         # l=2 already differentiates cell through its per-atom-weighted cell-grad op.
         return per_atom
-    num_systems = (
-        int(cell.shape[0]) if (batch_idx is not None and cell.dim() == 3) else 1
-    )
     dipoles_in = (
         dipoles_cart
         if dipoles_cart is not None
@@ -2170,7 +2166,6 @@ def multipole_real_space_energy_with_stress(
         neighbor_ptr,
         unit_shifts,
         batch_idx,
-        num_systems,
         l_max,
         half_neighbor_list,
     )
@@ -4945,6 +4940,7 @@ def _multipole_ewald_background_energy_per_atom(
     *,
     batch_idx: torch.Tensor | None = None,
     n_systems: int | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return the positive per-atom uniform-background correction.
 
@@ -4965,6 +4961,10 @@ def _multipole_ewald_background_energy_per_atom(
     n_systems : int, optional
         Number of packed systems. It is required for compile-safe batched
         calls; eager calls infer it from ``batch_idx`` when omitted.
+    total_charge : torch.Tensor, optional
+        Per-system total charge, ``(1,)`` or ``(B,)``, for callers whose
+        ``source_feats`` hold only part of the system. Summed from the
+        monopole channel when omitted.
 
     Returns
     -------
@@ -4998,6 +4998,7 @@ def _multipole_ewald_background_energy_per_atom(
         volume,
         batch_idx=batch_idx,
         n_systems=n_systems,
+        total_charge=total_charge,
     )
 
 
@@ -5017,6 +5018,10 @@ def multipole_ewald_summation(
     cost_ratio: float = 1.0,
     half_neighbor_list: bool = False,
     cache: MultipoleSCFCache | None = None,
+    miller_indices: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Full GTO-Ewald multipole electrostatic total energy.
 
@@ -5075,7 +5080,7 @@ def multipole_ewald_summation(
         Maximum :math:`|k|` for the reciprocal sum. Auto-estimated from the
         Kolafa-Perram balance when ``None`` (single mode); batched mode always
         builds its own k-grid per system. Unnecessary when a ``cache`` is
-        supplied (the cache already encodes the k-grid).
+        supplied; cannot be combined with ``miller_indices``.
     batch_idx : torch.Tensor, optional
         :math:`(N_\text{total},)` int32. ``None`` selects single-system mode.
     accuracy : float, default 1e-6
@@ -5104,6 +5109,14 @@ def multipole_ewald_summation(
         the reciprocal term — pass ``cache=None`` for stress / cell-gradient
         training. Forces (``grad(E, positions)``) are unaffected.
 
+    total_charge : torch.Tensor, optional
+        Per-system total charge for the background correction, ``(1,)`` single
+        or ``(B,)`` batched. Supply it when the moments are one shard of a
+        distributed system; summed from ``multipole_moments`` when omitted.
+    source_weights, reduce_partial : optional
+        Structure-factor weights and reduction for callers holding part of a
+        system; see :func:`multipole_scf_step_energy` (batched path only).
+
     Returns
     -------
     torch.Tensor
@@ -5116,11 +5129,17 @@ def multipole_ewald_summation(
     """
     if sigma <= 0.0:
         raise ValueError(f"sigma must be positive, got {sigma}")
+    if batch_idx is None and (source_weights is not None or reduce_partial is not None):
+        raise ValueError(
+            "source_weights and reduce_partial require the batched path (batch_idx)."
+        )
 
     # A prebuilt reciprocal cache already encodes alpha + the k-grid, so the
     # estimator is unnecessary: take alpha from the cache when not given and
     # skip the Kolafa-Perram balance entirely (the cache supplies k_cutoff
     # implicitly). See the cache= note in the docstring for the stress caveat.
+    if miller_indices is not None and k_cutoff is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
     if cache is not None and alpha is None:
         alpha = float(cache.alpha)
 
@@ -5128,7 +5147,9 @@ def multipole_ewald_summation(
     # balance if either is missing. We only run the estimator once per
     # call (single-system mode); batched callers that want per-system
     # parameters should pass them in explicitly.
-    if cache is None and (alpha is None or k_cutoff is None):
+    if cache is None and (
+        alpha is None or (k_cutoff is None and miller_indices is None)
+    ):
         from nvalchemiops.torch.interactions.electrostatics.parameters import (
             estimate_multipole_ewald_parameters,
         )
@@ -5159,7 +5180,7 @@ def multipole_ewald_summation(
                         "each system separately."
                     )
                 alpha = alpha_min
-        if k_cutoff is None:
+        if k_cutoff is None and miller_indices is None:
             kcut_tensor = params.reciprocal_space_cutoff
             k_cutoff = float(kcut_tensor.max().item())
 
@@ -5192,6 +5213,7 @@ def multipole_ewald_summation(
         volume,
         batch_idx=batch_idx,
         n_systems=cell.shape[0] if is_batch else None,
+        total_charge=total_charge,
     )
 
     # l_max=2 path: full Ewald total = real-space + direct-k reciprocal − self.
@@ -5211,7 +5233,7 @@ def multipole_ewald_summation(
                 raise ValueError(
                     f"batched mode requires cell shape (B, 3, 3); got {tuple(cell.shape)}"
                 )
-            if cache is None and k_cutoff is None:
+            if cache is None and k_cutoff is None and miller_indices is None:
                 raise ValueError(
                     "batched mode requires k_cutoff (batched reciprocal "
                     "builds its own k-grid per system) unless a prebuilt "
@@ -5243,7 +5265,10 @@ def multipole_ewald_summation(
                 sigma=sigma,
                 alpha=alpha,
                 k_cutoff=k_cutoff,
+                miller_indices=miller_indices,
                 cache=cache,
+                source_weights=source_weights,
+                reduce_partial=reduce_partial,
             )
             atom_self = _multipole_ewald_self_energy_per_atom(
                 source_feats,
@@ -5281,6 +5306,7 @@ def multipole_ewald_summation(
             sigma=sigma,
             alpha=alpha,
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             cache=cache,
         )
         e_self = _multipole_ewald_self_energy_per_atom(
@@ -5311,7 +5337,7 @@ def multipole_ewald_summation(
         sigmas = torch.full((B,), sigma, dtype=input_dtype, device=device)
         alphas = torch.full((B,), alpha, dtype=input_dtype, device=device)
 
-        if cache is None and k_cutoff is None:
+        if cache is None and k_cutoff is None and miller_indices is None:
             raise ValueError(
                 "batched mode requires k_cutoff (batched reciprocal "
                 "builds its own k-grid per system) unless a prebuilt cache= "
@@ -5337,7 +5363,10 @@ def multipole_ewald_summation(
             sigma=sigma,
             alpha=alpha,
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             cache=cache,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
         )
         atom_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
         return (e_real + e_recip - atom_self - atom_background).to(torch.float64)
@@ -5363,6 +5392,7 @@ def multipole_ewald_summation(
         sigma=sigma,
         alpha=alpha,
         k_cutoff=k_cutoff,
+        miller_indices=miller_indices,
         cache=cache,
     )
     e_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)

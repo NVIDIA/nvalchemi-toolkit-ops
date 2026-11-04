@@ -36,6 +36,7 @@ variants reuse an Ewald cache for the reciprocal-space term.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 
@@ -150,6 +151,8 @@ def multipole_scf_step_energy(
     batch_idx: torch.Tensor | None = None,
     include_self_interaction: bool = False,
     quadrupoles: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Per-atom PBC electrostatic energies for a single or batched SCF step.
 
@@ -191,6 +194,15 @@ def multipole_scf_step_energy(
         (requires a cache built with source ``l_max>=2``). ``None`` (default)
         is the :math:`l_{max} \le 1` path.
 
+    source_weights : torch.Tensor, optional, shape (N_total,)
+        Per-atom weights applied to each atom's contribution to the structure
+        factor only (batched path). With ``reduce_partial`` this lets a caller
+        holding part of a system, plus copies of atoms it does not own, count
+        each atom once: weight owned atoms 1 and copies 0.
+    reduce_partial : callable, optional
+        Applied to the structure factor ``rho`` of shape ``(B, K, 2)`` to sum
+        the partials held by several callers (batched path).
+
     Returns
     -------
     torch.Tensor
@@ -210,6 +222,12 @@ def multipole_scf_step_energy(
             batch_idx,
             include_self_interaction=include_self_interaction,
             quadrupoles=quadrupoles,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
+        )
+    if source_weights is not None or reduce_partial is not None:
+        raise ValueError(
+            "source_weights and reduce_partial require the batched path (batch_idx)."
         )
 
     if positions.ndim != 2 or positions.shape[-1] != 3:
@@ -528,6 +546,8 @@ def _multipole_scf_step_energy_batch(
     *,
     include_self_interaction: bool = False,
     quadrupoles: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Batched branch of :func:`multipole_scf_step_energy`.
 
@@ -579,9 +599,16 @@ def _multipole_scf_step_energy_batch(
     # (AOT-traced) backward are opaque custom ops -> 0 torch.compile breaks.
     import nvalchemiops.torch.interactions.electrostatics.multipole_autograd_batch  # noqa: F401
 
+    # ``source_weights`` scale each atom's contribution to ``rho`` only; the
+    # gathers and self terms below keep using every atom's own moments.
+    if source_weights is not None:
+        w = source_weights.to(charges.dtype)
+        q_src, dip_src = charges * w, dip * w[:, None]
+    else:
+        q_src, dip_src = charges, dip
     rho = torch.ops.nvalchemiops.batch_multipole_rho(
-        charges,
-        dip,
+        q_src,
+        dip_src,
         positions,
         cache.source_phi_hat,
         cache.k_vectors,
@@ -599,14 +626,21 @@ def _multipole_scf_step_energy_batch(
             raise ValueError(
                 f"quadrupoles must be (N_total, 3, 3); got {tuple(quadrupoles.shape)}"
             )
+        quad_src = (
+            quadrupoles
+            if source_weights is None
+            else quadrupoles * source_weights.to(quadrupoles.dtype)[:, None, None]
+        )
         rho = rho + torch.ops.nvalchemiops.batch_multipole_rho_q(
-            quadrupoles,
+            quad_src,
             positions,
             cache.source_coeff2,
             cache.k_vectors,
             cache.volume,
             batch_idx,
         )
+    if reduce_partial is not None:
+        rho = reduce_partial(rho)
     # Per-system value-preserving volume ratio (== 1) so dE/dcell captures
     # rho's 1/V_b dependence. rho is (B, K, 2).
     vol_ratio = cache.volume.detach() / cache.volume  # (B,)

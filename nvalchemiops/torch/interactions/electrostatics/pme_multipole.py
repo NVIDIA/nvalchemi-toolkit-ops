@@ -33,6 +33,7 @@ Design:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import torch
 import warp as wp
@@ -682,6 +683,19 @@ def _batch_convolve_double_backward_fake(  # pragma: no cover
     )
 
 
+def _convolve_backward_args(grad_outputs, forward_inputs):
+    """Order the convolve backward args, materializing the cotangent under compile.
+
+    Inductor otherwise drops the Hermitian RFFT interior-frequency weighting
+    (``slice * 2`` scatter) that precedes this opaque complex consumer, giving
+    wrong position/cell gradients at ``l_max >= 1``.
+    """
+    grad_convolved = grad_outputs[0]
+    if torch.compiler.is_compiling():
+        grad_convolved = grad_convolved * 1.0
+    return (grad_convolved, *forward_inputs)
+
+
 _CONVOLVE_DBWD_SCHEMA = (
     "(Tensor? gg_mesh_fft, Tensor? gg_k_squared, Tensor? gg_volume, "
     "Tensor grad_convolved, Tensor mesh_fft, Tensor k_squared, "
@@ -700,6 +714,7 @@ register_warp_op_chain(
     # mesh_fft (0), k_squared (1), volume (7) — cell-grad.
     diff_input_positions=(0, 1, 7),
     n_forward_inputs=8,
+    backward_args=_convolve_backward_args,
     # create_graph (force-loss + stress-loss). Backward inputs:
     # grad_convolved=0, mesh_fft=1, k_squared=2, ..., volume=8. The double-back
     # covers grad_convolved (force-loss) AND the k_squared/volume cotangent
@@ -724,6 +739,7 @@ register_warp_op_chain(
     # cell-grad) through the convolve.
     diff_input_positions=(0, 1, 7),
     n_forward_inputs=8,
+    backward_args=_convolve_backward_args,
     # create_graph force-loss + stress-loss (batched).
     double_backward=_batch_multipole_pme_convolve_double_backward,
     double_backward_fake=_batch_convolve_double_backward_fake,
@@ -4305,6 +4321,7 @@ def _multipole_background_energy_per_atom(
     *,
     batch_idx: torch.Tensor | None = None,
     n_systems: int | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return the positive uniform-background correction per atom.
 
@@ -4325,6 +4342,11 @@ def _multipole_background_energy_per_atom(
     n_systems : int, optional
         Number of packed systems. It is required for compile-safe batched
         calls; eager calls infer it from ``batch_idx`` when omitted.
+    total_charge : torch.Tensor, optional
+        Per-system total charge ``Q_b``, shape ``(1,)`` or ``(B,)``. Supply it
+        when ``charges`` holds only part of the system (a distributed shard),
+        so ``Q_b`` is the global sum rather than the sum of the rows seen.
+        When omitted it is summed from ``charges``.
 
     Returns
     -------
@@ -4349,30 +4371,33 @@ def _multipole_background_energy_per_atom(
     charges_f64 = charges.to(torch.float64)
     c_bg_no_v = _multipole_background_coefficient(alpha)
     if batch_idx is None:
-        total_charge = charges_f64.sum()
-        return (
-            c_bg_no_v
-            * charges_f64
-            * total_charge
-            / volume.to(torch.float64).reshape(())
+        q_total = (
+            charges_f64.sum()
+            if total_charge is None
+            else total_charge.to(torch.float64).reshape(())
         )
+        return c_bg_no_v * charges_f64 * q_total / volume.to(torch.float64).reshape(())
 
-    if n_systems is None:
-        _warn_compile_missing_argument_inference(
-            missing="`n_systems`",
-            inference="inferring it from `batch_idx`",
-        )
-        n_systems = int(batch_idx.max().item()) + 1
-    total_charge = torch.zeros(
-        n_systems, dtype=torch.float64, device=charges.device
-    ).scatter_add(0, batch_idx, charges_f64)
+    if total_charge is not None:
+        q_total = total_charge.to(torch.float64).reshape(-1)
+        n_systems = q_total.shape[0]
+    else:
+        if n_systems is None:
+            _warn_compile_missing_argument_inference(
+                missing="`n_systems`",
+                inference="inferring it from `batch_idx`",
+            )
+            n_systems = int(batch_idx.max().item()) + 1
+        q_total = torch.zeros(
+            n_systems, dtype=torch.float64, device=charges.device
+        ).scatter_add(0, batch_idx, charges_f64)
     vol_per_system = volume.to(torch.float64).reshape(-1)
     if vol_per_system.numel() == 1 and n_systems > 1:
         vol_per_system = vol_per_system.expand(n_systems)
     return (
         c_bg_no_v
         * charges_f64
-        * total_charge.index_select(0, batch_idx)
+        * q_total.index_select(0, batch_idx)
         / vol_per_system.index_select(0, batch_idx)
     )
 
@@ -4558,6 +4583,7 @@ def multipole_pme_energy_corrections_per_atom(
     batch_idx: torch.Tensor | None = None,
     quadrupoles: torch.Tensor | None = None,
     n_systems: int | None = None,
+    total_charge: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Per-atom GTO-Ewald multipole self + background corrections.
 
@@ -4585,8 +4611,11 @@ def multipole_pme_energy_corrections_per_atom(
     elementwise (twice-differentiable for free) — matches the
     ``multipole_pme_corrections`` Warp op's reduced value/grads to machine eps.
 
-    Parameters mirror :func:`multipole_pme_energy_corrections`. Returns a
-    ``float64`` tensor of shape ``(N,)`` (single) or ``(N_total,)`` (batched).
+    Parameters mirror :func:`multipole_pme_energy_corrections`, plus
+    ``total_charge`` (``(1,)`` or ``(B,)``): the per-system total charge in the
+    background term, for callers whose ``charges`` hold only part of the system.
+    Returns a ``float64`` tensor of shape ``(N,)`` (single) or ``(N_total,)``
+    (batched).
     """
     if dipoles is not None and dipoles.shape != (charges.shape[0], 3):
         raise ValueError(
@@ -4616,6 +4645,7 @@ def multipole_pme_energy_corrections_per_atom(
         volume,
         batch_idx=batch_idx,
         n_systems=n_systems,
+        total_charge=total_charge,
     )
 
     return self_e + bg
@@ -5797,10 +5827,13 @@ def _build_pme_k_grids(
     miller_z = torch.fft.rfftfreq(nz, d=1.0 / nz, device=device, dtype=dtype)
 
     cell_2d = cell if cell.dim() == 2 else cell.squeeze(0)
-    inv_cell_t = torch.linalg.inv_ex(cell_2d.T)[0].to(dtype).unsqueeze(0).contiguous()
+    # The kernel contracts k = M @ m, and for lattice vectors stored as rows the
+    # reciprocal vector is inv(cell) @ m, so M is inv(cell), not its transpose
+    # (the two only agree for a symmetric cell).
+    inv_cell = torch.linalg.inv_ex(cell_2d)[0].to(dtype).unsqueeze(0).contiguous()
 
     return torch.ops.nvalchemiops.multipole_pme_k_squared(
-        inv_cell_t,
+        inv_cell,
         miller_x,
         miller_y,
         miller_z,
@@ -5824,6 +5857,9 @@ def multipole_pme_reciprocal_space(
     volume: torch.Tensor | None = None,
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Compute the multipole-PME reciprocal-space energy.
 
@@ -5903,6 +5939,18 @@ def multipole_pme_reciprocal_space(
         (single-system) or ``(B, Nx, Ny, Nz_rfft)`` (batched). Cacheable
         across MD steps when the cell is fixed; when ``None`` it is built
         from ``cell`` and ``mesh_dimensions``.
+    total_charge : torch.Tensor or None, optional
+        Per-system total charge for the background correction, ``(1,)`` single
+        or ``(B,)`` batched. Supply it when the moments are one shard of a
+        distributed system; when ``None`` it is summed from the charges given.
+    source_weights : torch.Tensor or None, optional
+        Per-atom weights ``(N,)`` applied to each atom's contribution to the
+        spread only (batched path). With ``reduce_partial`` this lets a caller
+        that holds part of a system, plus copies of atoms it does not own,
+        spread each atom once: weight owned atoms 1 and copies 0.
+    reduce_partial : callable or None, optional
+        Applied to the spread mesh ``(B, nx, ny, nz)`` before the FFT, to sum
+        partial meshes held by several callers (batched path).
 
     Returns
     -------
@@ -5935,8 +5983,15 @@ def multipole_pme_reciprocal_space(
             moduli=moduli,
             k_squared=k_squared,
             quadrupoles=quadrupoles,
+            total_charge=total_charge,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
         )
 
+    if source_weights is not None or reduce_partial is not None:
+        raise ValueError(
+            "source_weights and reduce_partial require the batched path (batch_idx)."
+        )
     cell_inv_t_resolved = _resolve_cell_inv_t(cell, cell_inv_t)
     cell_2d = cell if cell.dim() == 2 else cell.squeeze(0)
     if volume is None:
@@ -6066,6 +6121,7 @@ def multipole_pme_reciprocal_space(
         alpha,
         volume,
         quadrupoles=quadrupoles,
+        total_charge=total_charge,
     )
     return e_recip_per_atom - corrections
 
@@ -6094,6 +6150,9 @@ def multipole_particle_mesh_ewald(
     volume: torch.Tensor | None = None,
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Total multipole PME energy (real + reciprocal − self − background).
 
@@ -6179,6 +6238,13 @@ def multipole_particle_mesh_ewald(
         (single-system) or ``(B, Nx, Ny, Nz_rfft)`` (batched), cacheable
         across MD steps when the cell is fixed. When ``None`` it is built
         from ``cell`` and ``mesh_dimensions``.
+
+    total_charge : torch.Tensor or None, optional
+        Per-system total charge for the background correction; see
+        :func:`multipole_pme_reciprocal_space`.
+    source_weights, reduce_partial : optional
+        Spread weights and mesh reduction for callers holding part of a system;
+        see :func:`multipole_pme_reciprocal_space` (batched path only).
 
     Returns
     -------
@@ -6281,6 +6347,9 @@ def multipole_particle_mesh_ewald(
             volume=volume,
             moduli=moduli,
             k_squared=k_squared,
+            total_charge=total_charge,
+            source_weights=source_weights,
+            reduce_partial=reduce_partial,
         )
 
         return (e_real + e_recip_minus_corr).to(torch.float64)
@@ -6313,6 +6382,7 @@ def multipole_particle_mesh_ewald(
         volume=volume,
         moduli=moduli,
         k_squared=k_squared,
+        total_charge=total_charge,
     )
 
     return (e_real + e_recip_minus_corr).to(torch.float64)
@@ -6334,9 +6404,10 @@ def _build_batch_pme_k_grids(
     miller_y = torch.fft.fftfreq(ny, d=1.0 / ny, device=device, dtype=dtype)
     miller_z = torch.fft.rfftfreq(nz, d=1.0 / nz, device=device, dtype=dtype)
     nz_rfft = nz // 2 + 1
-    inv_cell_t = torch.linalg.inv_ex(cells.transpose(-1, -2))[0].to(dtype).contiguous()
+    # k = inv(cell) @ m for row-stored lattice vectors; see _build_pme_k_grids.
+    inv_cell = torch.linalg.inv_ex(cells)[0].to(dtype).contiguous()
     return torch.ops.nvalchemiops.multipole_pme_k_squared_batch(
-        inv_cell_t,
+        inv_cell,
         miller_x,
         miller_y,
         miller_z,
@@ -6362,6 +6433,9 @@ def _batch_multipole_pme_reciprocal_space_impl(
     moduli: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     k_squared: torch.Tensor | None = None,
     quadrupoles: torch.Tensor | None = None,
+    total_charge: torch.Tensor | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Batched body of :func:`multipole_pme_reciprocal_space`.
 
@@ -6433,11 +6507,20 @@ def _batch_multipole_pme_reciprocal_space_impl(
         .unsqueeze(0)
         .expand(B, 3, 3)
     )
+    # ``source_weights`` scales each atom's contribution to the spread only (the
+    # gather and corrections below still use every atom); ``reduce_partial``
+    # combines the resulting mesh with the other holders of the system.
+    q_src, df_src, qf_src = charges, df_frac, qf_frac
+    if source_weights is not None:
+        w = source_weights.to(positions.dtype)
+        q_src = charges * w
+        df_src = df_frac * w[:, None]
+        qf_src = qf_frac * w[:, None, None]
     rho_grid = torch.ops.nvalchemiops.multipole_pme_spread_unified_batch(
         p_frac,
-        charges,
-        df_frac,
-        qf_frac,
+        q_src,
+        df_src,
+        qf_src,
         batch_idx,
         identity_cell,
         nx,
@@ -6446,6 +6529,8 @@ def _batch_multipole_pme_reciprocal_space_impl(
         spline_order,
         lmax,
     )  # (B, nx, ny, nz)
+    if reduce_partial is not None:
+        rho_grid = reduce_partial(rho_grid)
 
     # Step 2: forward FFT along spatial dims. ``.contiguous()`` so torch.compile
     # plans the convolve custom op's output contiguously (matching the real op);
@@ -6505,5 +6590,6 @@ def _batch_multipole_pme_reciprocal_space_impl(
         batch_idx=batch_idx,
         quadrupoles=quadrupoles,
         n_systems=B,
+        total_charge=total_charge,
     )
     return e_recip_per_atom - corrections
