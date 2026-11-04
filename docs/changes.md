@@ -2,6 +2,12 @@
 
 # Change Log
 
+## Unreleased
+
+### Changed
+
+- **Unused Warp adjoint generation:** The per-(order, lmax) PME multipole kernel modules no longer generate Warp adjoint code, because gradients are computed with hand-written backward kernels. Skipping the adjoint removes most of the cold whole-package compile time.
+
 ## 0.5.0
 
 ### Added
