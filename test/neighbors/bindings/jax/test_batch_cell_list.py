@@ -1715,6 +1715,74 @@ class TestBatchCellListSelectiveRebuildFlags:
             "num_neighbors must be unchanged when all rebuild_flags are False"
         )
 
+    def test_selective_query_does_not_copy_retained_lists(self, dtype):
+        """Retained rows stay in the in-out buffers; no list-sized temporaries."""
+        num_systems, atoms_per_system, box, cutoff, max_neighbors = (
+            4,
+            256,
+            12.0,
+            4.0,
+            64,
+        )
+        total_atoms = num_systems * atoms_per_system
+        positions = (
+            jax.random.uniform(jax.random.key(0), (total_atoms, 3), dtype=dtype) * box
+        )
+        batch_idx = jnp.repeat(
+            jnp.arange(num_systems, dtype=jnp.int32), atoms_per_system
+        )
+        batch_ptr = jnp.arange(num_systems + 1, dtype=jnp.int32) * atoms_per_system
+        cells = jnp.broadcast_to(jnp.eye(3, dtype=dtype) * box, (num_systems, 3, 3))
+        pbcs = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+        built = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+        )
+
+        def query(current_positions, matrix, counts, shifts, flags):
+            return batch_query_cell_list(
+                current_positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cutoff=cutoff,
+                cell=cells,
+                pbc=pbcs,
+                cells_per_dimension=built[0],
+                atom_periodic_shifts=built[1],
+                atom_to_cell_mapping=built[2],
+                atoms_per_cell_count=built[3],
+                cell_atom_start_indices=built[4],
+                cell_atom_list=built[5],
+                neighbor_search_radius=built[6],
+                max_neighbors=max_neighbors,
+                neighbor_matrix=matrix,
+                num_neighbors=counts,
+                neighbor_matrix_shifts=shifts,
+                rebuild_flags=flags,
+                strategy="atom_centric",
+            )
+
+        compiled = (
+            jax.jit(query, donate_argnums=(1, 2, 3))
+            .lower(
+                positions,
+                jnp.full((total_atoms, max_neighbors), total_atoms, jnp.int32),
+                jnp.zeros((total_atoms,), jnp.int32),
+                jnp.zeros((total_atoms, max_neighbors, 3), jnp.int32),
+                jnp.arange(num_systems) % 2 == 0,
+            )
+            .compile()
+        )
+        memory = compiled.memory_analysis()
+        if memory is None:
+            pytest.skip("backend does not report compiled memory usage")
+        matrix_bytes = total_atoms * max_neighbors * 4
+        assert memory.temp_size_in_bytes < matrix_bytes
+
     def test_mixed_rebuild_fixed_coo_keeps_retained_rows_aligned(self, dtype):
         """Mixed rebuild flags update one system and retain the other in fixed COO."""
         system_positions = jnp.array(
