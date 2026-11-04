@@ -9,6 +9,13 @@
   kernels, and skipping the adjoint removes most of the cold
   whole-package compile time.
 
+### Fixed
+
+- JAX `batch_query_cell_list` with `rebuild_flags` needed temporary memory
+  for a second neighbor list and was slower than a full query. The previous
+  neighbor matrix, counts and shifts were merged back with `jnp.where`,
+  although the kernel already leaves rows of unflagged systems untouched.
+
 ## 0.5.0
 
 ### Added

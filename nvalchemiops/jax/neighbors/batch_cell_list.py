@@ -1551,11 +1551,6 @@ def _batch_query_cell_list_with_diagnostics(
     elif rebuild_flags is None:
         neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
 
-    if rebuild_flags is not None:
-        retained_neighbor_matrix = neighbor_matrix
-        retained_num_neighbors = num_neighbors
-        retained_neighbor_matrix_shifts = neighbor_matrix_shifts
-
     if atoms_per_cell_count is None:
         max_total_cells = cell_atom_start_indices.shape[0]
         atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
@@ -1862,23 +1857,6 @@ def _batch_query_cell_list_with_diagnostics(
         rf,
         launch_dims=(total_atoms,),
     )
-
-    if rebuild_flags is not None:
-        neighbor_matrix = jnp.where(
-            atom_rebuild[:, None],
-            neighbor_matrix,
-            retained_neighbor_matrix,
-        )
-        num_neighbors = jnp.where(
-            atom_rebuild,
-            num_neighbors,
-            retained_num_neighbors,
-        )
-        neighbor_matrix_shifts = jnp.where(
-            atom_rebuild[:, None, None],
-            neighbor_matrix_shifts,
-            retained_neighbor_matrix_shifts,
-        )
 
     result = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
     return result, num_neighbors, jnp.ones((), dtype=jnp.bool_)
