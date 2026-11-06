@@ -58,6 +58,9 @@ import coverage
 # first so the jax and torch bindings win over the broader entries containing
 # them. Anything unmatched falls back to its measurement group.
 MAKEFILE_GROUPS: tuple[tuple[str, str], ...] = (
+    ("test/bindings/jax", "segment_mm_jax"),
+    ("test/bindings/torch", "segment_mm_torch"),
+    ("test/test_segment_mm.py", "segment_mm"),
     ("test/interactions/electrostatics/bindings/jax", "electrostatics_jax"),
     ("test/interactions/electrostatics/bindings/torch", "electrostatics_torch"),
     ("test/interactions/electrostatics", "electrostatics"),

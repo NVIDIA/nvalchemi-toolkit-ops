@@ -67,6 +67,8 @@ before proceeding.
   and relax structures with [geometry optimization](components/dynamics.md#geometry-optimization).
 - [Segment Operations](components/segment_ops) — reduce and transform data
   grouped by system or segment.
+- [Segmented Matrix Multiplication](components/segment_mm) — multiply packed
+  systems by their per-system matrices using runtime segment lengths.
 
 ## Developer Resources
 
@@ -97,6 +99,7 @@ components/electrostatics
 components/dispersion
 components/dynamics
 components/segment_ops
+components/segment_mm
 ```
 
 ```{toctree}

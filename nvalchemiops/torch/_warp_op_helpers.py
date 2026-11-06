@@ -41,6 +41,9 @@ Helper groups:
   * ``_capture_safe_inverse(...)`` — avoid synchronization while checking
     cell-matrix inverses during compilation and CUDA graph capture.
 
+  * ``scoped_warp_capture(...)`` — register an externally captured CUDA stream
+    with Warp so captured scratch allocations retain their required lifetime.
+
 The autograd registration helpers assume the codebase-wide convention "backward op takes
 ``(*cotangents, *forward_inputs)``" — unless ``backward_arg_order`` is
 overridden for ops that break that convention.
@@ -50,7 +53,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from functools import update_wrapper, wraps
 from typing import Any
 
@@ -62,6 +65,7 @@ __all__ = [
     "register_noop_fake",
     "register_warp_op_chain",
     "scoped_torch_warp_stream",
+    "scoped_warp_capture",
     "scoped_warp_stream",
     "torch_custom_op",
 ]
@@ -101,6 +105,36 @@ def scoped_warp_stream(
         wp.stream_from_torch(torch_stream),
         sync_enter=False,
     )
+
+
+def scoped_warp_capture(device: torch.device | str) -> AbstractContextManager:
+    """Retain Warp scratch used inside an externally owned CUDA capture.
+
+    Parameters
+    ----------
+    device : torch.device or str
+        Launch device. Enter ``scoped_warp_stream(device)`` first when Torch
+        owns the stream, so capture registration uses the aligned Warp stream.
+
+    Returns
+    -------
+    context manager
+        External Warp capture registration when needed, otherwise a no-op.
+        CPU devices and streams already registered with Warp require no action.
+
+    Notes
+    -----
+    Raw Torch capture does not notify Warp's allocator. External registration
+    attaches scratch lifetime to the owning CUDA graph without pausing or
+    resuming capture or changing the owner's capture error mode.
+    """
+    torch_device = torch.device(device)
+    if torch_device.type != "cuda":
+        return nullcontext()
+    stream = wp.get_stream(str(torch_device))
+    if stream.is_capturing and stream not in stream.device.captures:
+        return wp.ScopedCapture(stream=stream, external=True)
+    return nullcontext()
 
 
 def scoped_torch_warp_stream(function: Callable[..., Any]) -> Callable[..., Any]:

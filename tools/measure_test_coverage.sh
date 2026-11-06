@@ -41,6 +41,9 @@ MODULES=(
   "segment_ops_backward:test/test_segment_ops_backward.py"
   "segment_ops_torch:test/test_segment_ops_torch.py"
   "segment_ops_jax:test/test_segment_ops_jax.py"
+  "segment_mm:test/test_segment_mm.py"
+  "segment_mm_jax:test/bindings/jax"
+  "segment_mm_torch:test/bindings/torch"
   "interactions:test/interactions"
 )
 
