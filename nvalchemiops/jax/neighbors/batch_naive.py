@@ -877,7 +877,9 @@ def _batch_naive_pair_outputs_forward(
         per_atom_cell_offsets = empty_offsets
         if should_wrap_positions:
             inv_cell = (
-                fixed_inverse if fixed_inverse is not None else jnp.linalg.inv(cell)
+                fixed_inverse
+                if fixed_inverse is not None
+                else _compute_cell_inverse(cell, jnp.empty_like(cell))
             )
             positions_wrapped = jnp.zeros_like(positions)
             per_atom_cell_offsets = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
@@ -1890,7 +1892,9 @@ def batch_naive_neighbor_list(
 
         if wrap_positions:
             inv_cell = (
-                inv_cell_buffer if inv_cell_buffer is not None else jnp.linalg.inv(cell)
+                inv_cell_buffer
+                if inv_cell_buffer is not None
+                else _compute_cell_inverse(cell, jnp.empty_like(cell))
             )
             positions_wrapped = (
                 positions_wrapped_buffer
