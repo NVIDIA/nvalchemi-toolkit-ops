@@ -13,20 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CUDA integration tests for JAX segment_mm and higher-order autodiff."""
+"""CPU and CUDA integration tests for JAX segment_mm and higher-order autodiff."""
 
 import numpy as np
 import pytest
+import warp as wp
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 
-if not any(device.platform == "gpu" for device in jax.devices()):
-    pytest.skip("segment_mm requires CUDA JAX", allow_module_level=True)
+from nvalchemiops.jax.segment_mm import _row_offsets, segment_mm  # noqa: E402
 
-from nvalchemiops.jax.segment_mm import segment_mm  # noqa: E402
 
-pytestmark = pytest.mark.gpu
+@pytest.fixture(
+    params=["cpu", pytest.param("gpu", marks=pytest.mark.gpu)], autouse=True
+)
+def execution_device(request):
+    """Exercise small integration cases on CPU and each available CUDA backend."""
+    devices = (
+        jax.devices("cpu")
+        if request.param == "cpu"
+        else [device for device in jax.devices() if device.platform == "gpu"]
+    )
+    if not devices:
+        pytest.skip("Requires CUDA JAX")
+    with jax.default_device(devices[0]):
+        yield devices[0]
 
 
 def _inputs(dtype=jnp.float32, capacity=19, groups=4):
@@ -160,6 +172,25 @@ class TestSegmentMM:
         for value in (out, ga, gb):
             np.testing.assert_array_equal(np.asarray(value), 0)
 
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_empty_large_channels_need_no_gradient_workspace(self, compiled):
+        """Empty BF16 gradients do not require a hypothetical FP32 workspace."""
+        channels = 23171
+        a = jnp.empty((0, channels), jnp.bfloat16)
+        b = jnp.empty((0, channels, channels), jnp.bfloat16)
+        lengths = jnp.empty((0,), jnp.int32)
+
+        def evaluate(a, b, lengths):
+            out, pullback = jax.vjp(lambda a, b: segment_mm(a, b, lengths), a, b)
+            return out, *pullback(jnp.zeros_like(out))
+
+        out, grad_a, grad_b = (jax.jit(evaluate) if compiled else evaluate)(
+            a, b, lengths
+        )
+        assert out.shape == grad_a.shape == a.shape
+        assert grad_b.shape == b.shape
+        assert out.dtype == grad_a.dtype == grad_b.dtype == jnp.bfloat16
+
     def test_nan_padding_and_transposed_inputs(self):
         """Padding is zero even for NaNs; JAX transpose layouts are accepted."""
         a, b, g = _inputs()
@@ -208,13 +239,82 @@ class TestSegmentMM:
         with pytest.raises(ValueError, match=match):
             jax.jit(segment_mm)(a, b, lengths)
 
-    def test_cpu_rejected(self):
-        """The public CUDA-only API rejects concrete CPU inputs."""
+    def test_cpu_placement_overrides_default_device(self):
+        """Committed CPU inputs stay on CPU even when the default device is CUDA."""
         cpu = jax.devices("cpu")[0]
         a, b, _ = _inputs()
         lengths = jnp.array([3, 0, 9, 2], jnp.int32)
-        with pytest.raises(RuntimeError, match="CUDA"):
-            segment_mm(*(jax.device_put(x, cpu) for x in (a, b, lengths)))
+        a, b, lengths = (jax.device_put(x, cpu) for x in (a, b, lengths))
+        actual = segment_mm(a, b, lengths)
+        assert actual.devices() == {cpu}
+        _assert_close(actual, _reference(a, b, lengths))
+
+    @pytest.mark.parametrize("groups", [4, 128, 129])
+    def test_bounded_lengths_without_x64(self, groups):
+        """Negative and overflowing lengths remain bounded with 32-bit JAX enabled."""
+        with jax.enable_x64(False):
+            a, b, g = _inputs(groups=groups)
+            lengths = jnp.array(
+                [-2147483648, 3, 2147483647, 2147483647] + [0] * (groups - 4),
+                jnp.int32,
+            )
+
+            def evaluate(a, b, lengths, g):
+                out, pullback = jax.vjp(lambda a, b: segment_mm(a, b, lengths), a, b)
+                return out, *pullback(g)
+
+            actual = jax.jit(evaluate)(a, b, lengths, g)
+            expected, pullback = jax.vjp(
+                lambda a, b: _reference(a, b[:4], jnp.array([0, 3, 16, 0], jnp.int32)),
+                a,
+                b,
+            )
+            for value, ref in zip(actual, (expected, *pullback(g)), strict=True):
+                _assert_close(value, ref)
+
+    def test_large_capacity_prefix_without_x64(self):
+        """Wide hypothetical row counts saturate without allocating feature rows."""
+        capacity = 2**30 + 17
+        with jax.enable_x64(False):
+            lengths = jnp.array([13, capacity - 5, 2147483647, -7], jnp.int32)
+            offsets = jax.jit(lambda values: _row_offsets(values, capacity))(lengths)
+            assert offsets.dtype == jnp.int32
+            np.testing.assert_array_equal(
+                np.asarray(offsets), [0, 13, capacity, capacity, capacity]
+            )
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+    @pytest.mark.parametrize("groups", [129, 1024, 1025])
+    def test_callback_scratch_is_framework_owned(self, dtype, groups, monkeypatch):
+        """Fresh forward/backward calls need no Warp allocation or native scan."""
+        capacity = groups * 256 + 1
+        a = jnp.full((capacity, 1), 0.5, dtype)
+        b = jnp.ones((groups, 1, 1), dtype)
+        g = jnp.ones((capacity, 1), dtype)
+
+        @jax.jit
+        def evaluate(a, b, lengths, g):
+            out, pullback = jax.vjp(lambda a, b: segment_mm(a, b, lengths), a, b)
+            return out, *pullback(g)
+
+        lengths = jnp.array([4] + [0] * (groups - 1), jnp.int32)
+        jax.block_until_ready(evaluate(a, b, lengths, g))
+
+        def reject_warp_scratch(*args, **kwargs):
+            raise AssertionError("JAX callbacks must use framework-owned scratch")
+
+        monkeypatch.setattr(wp, "empty", reject_warp_scratch)
+        monkeypatch.setattr(wp.utils, "array_scan", reject_warp_scratch)
+        current_a, current_b = a + jnp.asarray(0.25, dtype), b * jnp.asarray(2, dtype)
+        for active_rows in (0, 3):
+            current_lengths = jnp.array([active_rows] + [0] * (groups - 1), jnp.int32)
+            out, grad_a, grad_b = evaluate(current_a, current_b, current_lengths, g)
+            np.testing.assert_array_equal(np.asarray(out[:active_rows]), 1.5)
+            np.testing.assert_array_equal(np.asarray(out[active_rows:]), 0)
+            np.testing.assert_array_equal(np.asarray(grad_a[:active_rows]), 2)
+            np.testing.assert_array_equal(np.asarray(grad_a[active_rows:]), 0)
+            np.testing.assert_array_equal(np.asarray(grad_b[0]), active_rows * 0.75)
+            np.testing.assert_array_equal(np.asarray(grad_b[1:]), 0)
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
     @pytest.mark.parametrize("compiled", [False, True])

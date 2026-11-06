@@ -24,38 +24,60 @@ from jax.extend import core
 from jax.interpreters import ad, batching, mlir
 from warp import JaxCallableGraphMode
 
-from nvalchemiops.segment_mm import segment_mm as _warp_segment_mm
-from nvalchemiops.segment_mm import segment_mm_backward_b as _warp_segment_mm_backward_b
+from nvalchemiops.segment_mm import (
+    _INDEX_LIMIT,
+    _TILE_M,
+    _grad_b_launch_config,
+    _launch_forward,
+    _launch_grad_b,
+    _validate_array,
+)
 
 __all__ = ["segment_mm"]
 
 
-@lru_cache(maxsize=2)
-def _callables(dtype: str):
-    """Build typed FFI callables lazily, with Warp owning graph capture."""
+@lru_cache(maxsize=4)
+def _callables(dtype: str, graph_mode: JaxCallableGraphMode):
+    """Build typed FFI callbacks whose buffers are all supplied by XLA."""
     wp_dtype = {"float32": wp.float32, "bfloat16": wp.bfloat16}[dtype]
 
     def forward(
         a: wp.array2d(dtype=wp_dtype),
         b: wp.array3d(dtype=wp_dtype),
-        seglen: wp.array(dtype=wp.int32),
+        row_offsets: wp.array(dtype=wp.int32),
+        tile_offsets: wp.array(dtype=wp.int32),
         out: wp.array2d(dtype=wp_dtype),
     ):
-        _warp_segment_mm(a, b, seglen, out)
+        for name, array, ndim in (("a", a, 2), ("b", b, 3), ("out", out, 2)):
+            _validate_array(array, name, ndim)
+        _launch_forward(a, b, row_offsets, tile_offsets, out)
 
     def weight_product(
         a: wp.array2d(dtype=wp_dtype),
         grad_out: wp.array2d(dtype=wp_dtype),
-        seglen: wp.array(dtype=wp.int32),
+        row_offsets: wp.array(dtype=wp.int32),
+        splits: wp.int32,
         grad_b: wp.array3d(dtype=wp_dtype),
+        partials: wp.array3d(dtype=wp.float32),
     ):
-        _warp_segment_mm_backward_b(a, seglen, grad_out, grad_b)
+        for name, array, ndim in (
+            ("a", a, 2),
+            ("grad_out", grad_out, 2),
+            ("grad_b", grad_b, 3),
+        ):
+            _validate_array(array, name, ndim)
+        _launch_grad_b(
+            a,
+            row_offsets,
+            grad_out,
+            grad_b,
+            grad_b if splits == 1 else partials,
+            int(splits),
+        )
 
     return (
-        wp.jax_callable(forward, num_outputs=1, graph_mode=JaxCallableGraphMode.WARP),
-        wp.jax_callable(
-            weight_product, num_outputs=1, graph_mode=JaxCallableGraphMode.WARP
-        ),
+        wp.jax_callable(forward, num_outputs=1, graph_mode=graph_mode),
+        wp.jax_callable(weight_product, num_outputs=2, graph_mode=graph_mode),
     )
 
 
@@ -64,6 +86,8 @@ def _validate_inputs(a, b, seglen):
     for name, array, ndim in (("a", a, 2), ("b", b, 3), ("seglen", seglen, 1)):
         if not isinstance(array, (jax.Array, jax.core.Tracer)) or array.ndim != ndim:
             raise ValueError(f"{name} must be a {ndim}D JAX array")
+        if array.size > _INDEX_LIMIT:
+            raise ValueError(f"{name} array size exceeds the int32 index range")
     if a.dtype not in (jnp.float32, jnp.bfloat16) or b.dtype != a.dtype:
         raise ValueError("a and b must have the same float32 or bfloat16 dtype")
     if seglen.dtype != jnp.int32:
@@ -80,36 +104,90 @@ def _validate_inputs(a, b, seglen):
     concrete = [x for x in (a, b, seglen) if not isinstance(x, jax.core.Tracer)]
     devices = [x.devices() for x in concrete]
     if any(len(device_set) != 1 for device_set in devices):
-        raise ValueError("All arrays must be on the same single CUDA device")
-    if any(device.platform != "gpu" for device_set in devices for device in device_set):
-        raise RuntimeError("segment_mm requires a CUDA device")
+        raise ValueError("All arrays must be on the same single CPU or CUDA device")
+    if any(
+        device.platform not in ("cpu", "gpu")
+        for device_set in devices
+        for device in device_set
+    ):
+        raise RuntimeError("segment_mm requires a CPU or CUDA device")
     if devices and any(device_set != devices[0] for device_set in devices[1:]):
-        raise ValueError("All arrays must be on the same CUDA device")
+        raise ValueError("All arrays must be on the same device")
 
 
-def _forward(a, b, seglen):
-    """Allocate the statically shaped output through Warp's JAX FFI."""
-    forward, _ = _callables(str(a.dtype))
-    (out,) = forward(a, b, seglen, output_dims={"out": (a.shape[0], b.shape[2])})
+def _row_offsets(seglen, capacity):
+    """Build XLA-owned bounded prefixes without requiring 64-bit JAX arithmetic."""
+    lengths = jnp.clip(seglen, 0, capacity)
+    if seglen.shape[0] * capacity <= 2**31 - 1:
+        # Clipping each length proves every partial sum fits int32, including
+        # malformed inputs. Use XLA's optimized cumulative-sum lowering.
+        offsets = jnp.minimum(jnp.cumsum(lengths, dtype=jnp.int32), capacity)
+    else:
+        # Saturating addition is associative on [0, capacity]. Subtract before
+        # adding so even invalid int32 lengths cannot overflow an intermediate.
+        offsets = jax.lax.associative_scan(
+            lambda left, right: left + jnp.minimum(right, capacity - left), lengths
+        )
+    return jnp.concatenate((jnp.zeros((1,), dtype=jnp.int32), offsets))
+
+
+def _forward(a, b, seglen, *, graph_mode):
+    """Pass XLA-owned prefixes and output storage to the shared launch leaf."""
+    row_offsets = _row_offsets(seglen, a.shape[0])
+    lengths = jnp.diff(row_offsets)
+    tile_counts = lengths // _TILE_M + (lengths % _TILE_M != 0).astype(jnp.int32)
+    tile_offsets = jnp.concatenate(
+        (jnp.zeros((1,), dtype=jnp.int32), jnp.cumsum(tile_counts, dtype=jnp.int32))
+    )
+    forward, _ = _callables(str(a.dtype), graph_mode)
+    (out,) = forward(
+        a,
+        b,
+        row_offsets,
+        tile_offsets,
+        output_dims={"out": (a.shape[0], b.shape[2])},
+    )
     return out
 
 
-def _weight_product(a, grad_out, seglen):
-    """Compute segmented outer-product sums through the shared weight kernel."""
-    _, weight_product = _callables(str(a.dtype))
-    (grad_b,) = weight_product(
+def _weight_product(a, grad_out, seglen, *, graph_mode):
+    """Allocate split-gradient scratch as an internal XLA-owned FFI result."""
+    capacity, k = a.shape
+    groups, n = seglen.shape[0], grad_out.shape[1]
+    splits = 1
+    if capacity and groups:
+        splits, _ = _grad_b_launch_config(capacity, groups, k, n, a.dtype.itemsize)
+    row_offsets = _row_offsets(seglen, capacity)
+    _, weight_product = _callables(str(a.dtype), graph_mode)
+    grad_b, _ = weight_product(
         a,
         grad_out,
-        seglen,
-        output_dims={"grad_b": (seglen.shape[0], a.shape[1], grad_out.shape[1])},
+        row_offsets,
+        splits,
+        output_dims={
+            "grad_b": (groups, k, n),
+            "partials": (groups * splits if splits > 1 else 0, k, n),
+        },
     )
     return grad_b
 
 
+def _eager_product(implementation, a, b, seglen):
+    """Place eager temporaries and select graph mode from the actual operands."""
+    device = next(iter(a.devices()))
+    graph_mode = (
+        JaxCallableGraphMode.NONE
+        if device.platform == "cpu"
+        else JaxCallableGraphMode.WARP
+    )
+    with jax.default_device(device):
+        return implementation(a, b, seglen, graph_mode=graph_mode)
+
+
 _forward_p = core.Primitive("nvalchemiops_segment_mm")
-_forward_p.def_impl(_forward)
+_forward_p.def_impl(partial(_eager_product, _forward))
 _weight_p = core.Primitive("nvalchemiops_segment_mm_weight_product")
-_weight_p.def_impl(_weight_product)
+_weight_p.def_impl(partial(_eager_product, _weight_product))
 
 
 def _bind_product(primitive, a, b, seglen):
@@ -148,12 +226,21 @@ def _abstract_product(a, b, seglen, *, weight_product):
 
 _forward_p.def_abstract_eval(partial(_abstract_product, weight_product=False))
 _weight_p.def_abstract_eval(partial(_abstract_product, weight_product=True))
-mlir.register_lowering(
-    _forward_p, mlir.lower_fun(_forward, multiple_results=False), platform="cuda"
-)
-mlir.register_lowering(
-    _weight_p, mlir.lower_fun(_weight_product, multiple_results=False), platform="cuda"
-)
+for _platform, _graph_mode in (
+    ("cpu", JaxCallableGraphMode.NONE),
+    ("cuda", JaxCallableGraphMode.WARP),
+):
+    for _primitive, _implementation in (
+        (_forward_p, _forward),
+        (_weight_p, _weight_product),
+    ):
+        mlir.register_lowering(
+            _primitive,
+            mlir.lower_fun(
+                partial(_implementation, graph_mode=_graph_mode), multiple_results=False
+            ),
+            platform=_platform,
+        )
 
 
 def _bilinear_jvp(primals, tangents, *, primitive):
@@ -242,11 +329,11 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     Parameters
     ----------
     a : jax.Array, shape (capacity, K), dtype float32 or bfloat16
-        Packed input features on a CUDA device.
+        Packed input features on a CPU or CUDA device.
     b : jax.Array, shape (R, K, N), dtype matches a
         Weight matrices for ``R`` segments, on the same device as ``a``.
     seglen : jax.Array, shape (R,), dtype int32
-        Runtime CUDA segment lengths. Values must be nonnegative and sum
+        Runtime device segment lengths. Values must be nonnegative and sum
         to at most ``capacity``. Zero-length segments are supported.
 
     Returns
@@ -259,7 +346,7 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     ValueError
         If input ranks, shapes, dtypes, or concrete device placement disagree.
     RuntimeError
-        If concrete inputs are not on CUDA.
+        If concrete inputs are not on CPU or CUDA.
 
     Notes
     -----
@@ -273,7 +360,9 @@ def segment_mm(a: jax.Array, b: jax.Array, seglen: jax.Array) -> jax.Array:
     compiled signature; lengths may change at runtime. Batched transforms
     map independent products sequentially. Derivative products use the same
     native dtype and FP32 accumulation as the primal operation.
-    Execution uses Warp-owned CUDA graph capture through ``jax_callable``.
+    Inputs, outputs, and scratch remain owned by JAX/XLA. CUDA execution uses
+    Warp-owned graph capture through ``jax_callable``; CPU callbacks execute
+    without graph capture using the same tile kernels.
 
     For whole-system sharding, call this operation inside ``jax.shard_map``.
     Each device receives its own packed rows, per-system weights, and runtime

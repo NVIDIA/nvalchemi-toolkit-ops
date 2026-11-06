@@ -1005,11 +1005,99 @@ class TestSegmentMMValidation:
         with pytest.raises(ValueError, match="strides"):
             segmm.segment_mm(**arrays, out=out)
 
-    def test_cpu_is_rejected(self):
-        """The GPU-only tile operation must fail clearly on a CPU device."""
-        a = wp.empty((8, 4), device="cpu")
-        b = wp.empty((2, 4, 4), device="cpu")
-        lengths = wp.zeros(2, dtype=wp.int32, device="cpu")
-        out = wp.empty((8, 4), device="cpu")
-        with pytest.raises(RuntimeError, match="CUDA"):
-            segmm.segment_mm(a, b, lengths, out)
+
+class TestSegmentMMCPU:
+    """Exercise complete tiles and explicit gradients with one CPU lane."""
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("groups", [4, 129])
+    @pytest.mark.parametrize("strided", [False, True])
+    def test_forward_and_gradients(self, dtype, groups, strided):
+        """Write every tile element, skip empty groups, and exclude padded NaNs."""
+        rng = np.random.default_rng(73)
+        values = np.pad(np.array([0, 33, 0, 37], dtype=np.int32), (0, groups - 4))
+        a_np = rng.integers(-4, 5, (75, 35)).astype(np.float32) / 8
+        b_np = rng.integers(-4, 5, (groups, 35, 67)).astype(np.float32) / 8
+        g_np = rng.integers(-4, 5, (75, 67)).astype(np.float32) / 8
+        a_np[70:] = g_np[70:] = np.nan
+        b_np[values == 0] = np.nan
+        a, b, g = (_device_array(x, dtype, "cpu") for x in (a_np, b_np, g_np))
+        lengths = wp.array(values, dtype=wp.int32, device="cpu")
+        if strided:
+            a = _device_array(a_np.T.copy(), dtype, "cpu").transpose()
+            b = _device_array(b_np.transpose(0, 2, 1).copy(), dtype, "cpu").transpose(
+                (0, 2, 1)
+            )
+            g = _device_array(g_np.T.copy(), dtype, "cpu").transpose()
+            lengths = wp.array(np.repeat(values, 2), device="cpu")[::2]
+        out, da, db, db_only = (
+            _device_array(np.full(shape, np.nan), dtype, "cpu")
+            for shape in (g.shape, a.shape, b.shape, b.shape)
+        )
+
+        segmm.segment_mm(a, b, lengths, out)
+        segmm.segment_mm_backward(a, b, lengths, g, da, db)
+        segmm.segment_mm_backward_b(a, lengths, g, db_only)
+
+        expected_a, expected_b = _backward_reference(a_np, b_np, values, g_np, dtype)
+        np.testing.assert_array_equal(
+            _numpy(out), _reference(a_np, b_np, values, dtype)
+        )
+        np.testing.assert_array_equal(_numpy(da), expected_a)
+        np.testing.assert_array_equal(_numpy(db), expected_b)
+        np.testing.assert_array_equal(_numpy(db_only), expected_b)
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("capacity,groups", [(0, 3), (11, 0), (0, 0)])
+    def test_empty(self, dtype, capacity, groups):
+        """Empty CPU inputs overwrite preallocated outputs without tile launches."""
+        a = wp.empty((capacity, 4), dtype=dtype, device="cpu")
+        b = wp.empty((groups, 4, 3), dtype=dtype, device="cpu")
+        g = wp.empty((capacity, 3), dtype=dtype, device="cpu")
+        lengths = wp.zeros(groups, dtype=wp.int32, device="cpu")
+        out, da, db = (
+            _device_array(np.full(shape, np.nan), dtype, "cpu")
+            for shape in (g.shape, a.shape, b.shape)
+        )
+        segmm.segment_mm(a, b, lengths, out)
+        segmm.segment_mm_backward(a, b, lengths, g, da, db)
+        np.testing.assert_array_equal(_numpy(out), 0)
+        np.testing.assert_array_equal(_numpy(da), 0)
+        np.testing.assert_array_equal(_numpy(db), 0)
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    def test_launch_leaves_use_caller_owned_scratch(self, dtype, monkeypatch):
+        """Framework callbacks can compute split gradients without Warp allocation."""
+        a_np = np.ones((1031, 3), dtype=np.float32)
+        g_np = np.ones((1031, 5), dtype=np.float32) / 8
+        values = np.array([0, 1025, 0], dtype=np.int32)
+        a_np[1025:] = g_np[1025:] = np.nan
+        b_np = np.ones((3, 3, 5), dtype=np.float32) / 4
+        a, b, g = (_device_array(x, dtype, "cpu") for x in (a_np, b_np, g_np))
+        lengths = wp.array(values, device="cpu")
+        rows, tiles = segmm._segment_offsets(lengths, a.shape[0])
+        out = wp.empty(g.shape, dtype=dtype, device="cpu")
+        db = wp.empty(b.shape, dtype=dtype, device="cpu")
+        splits, _ = segmm._grad_b_launch_config(
+            1031, 3, 3, 5, 2 if dtype == wp.bfloat16 else 4
+        )
+        partials = wp.empty((3 * splits, 3, 5), dtype=wp.float32, device="cpu")
+        # Warm compilation before enforcing the callback's storage contract.
+        segmm._launch_forward(a, b, rows, tiles, out)
+        segmm._launch_grad_b(a, rows, g, db, partials, splits)
+
+        def reject_allocation(*args, **kwargs):
+            """Detect storage created inside either otherwise-real launch leaf."""
+            pytest.fail("launch leaves must use caller-owned storage")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(wp, "empty", reject_allocation)
+            patch.setattr(wp, "zeros", reject_allocation)
+            segmm._launch_forward(a, b, rows, tiles, out)
+            segmm._launch_grad_b(a, rows, g, db, partials, splits)
+
+        np.testing.assert_array_equal(
+            _numpy(out), _reference(a_np, b_np, values, dtype)
+        )
+        expected_b = _backward_reference(a_np, b_np, values, g_np, dtype)[1]
+        np.testing.assert_array_equal(_numpy(db), expected_b)

@@ -8,25 +8,46 @@
 by its own matrix. Use it when systems have different row counts but share
 input and output channel sizes.
 
-Segmented matrix multiplication requires CUDA.
+FP32 and BF16 inputs are supported on CPU and CUDA. Each local call operates
+on one device; all its tensors must be placed on that device.
 
 ## Packed-Row Contract
 
 | Input | Shape | Meaning |
 | --- | --- | --- |
-| `a` | `(capacity, K)` | Feature rows packed in segment order |
+| `a` | `(row_capacity, K)` | Allocated feature rows, packed in segment order |
 | `b` | `(R, K, N)` | One matrix per segment |
-| `seglen` | `(R,)` | Runtime CUDA `int32` row counts |
-| Output | `(capacity, N)` | Packed products followed by zero padding |
+| `seglen` | `(R,)` | Runtime `int32` row counts on the input device |
+| Output | `(row_capacity, N)` | Packed products followed by zero padding |
+
+`R` is the number of segments, `K` is the number of input channels, and `N`
+is the number of output channels. `row_capacity` is the allocated number of
+rows in `a` and the output. The number of **active rows** is `sum(seglen)`;
+it may be smaller than `row_capacity`. Each segment can have a different row
+count, including zero. `row_capacity` is shared storage for all segments,
+not a per-segment row count.
+
+For example, `a.shape == (8, 4)`, `b.shape == (3, 4, 5)`, and
+`seglen == [3, 0, 2]` describe three segments and five active rows:
+
+| Segment | Feature rows | Product |
+| --- | --- | --- |
+| `0` | `a[0:3]` | `a[0:3] @ b[0]` |
+| `1` | `a[3:3]` (empty) | No active output rows |
+| `2` | `a[3:5]` | `a[3:5] @ b[2]` |
+
+The output has shape `(8, 5)`. Its final three rows, `out[5:8]`, are padding
+and are zero. Changing lengths can change the active row count without
+changing the allocated shapes.
 
 For `offsets = [0, cumsum(seglen)]`, segment `g` computes
 `a[offsets[g]:offsets[g + 1]] @ b[g]`. These are **lengths**, unlike the
 per-row `idx` arrays used by [segment reductions](segment_ops.md).
-The caller must provide nonnegative lengths whose sum is at most `capacity`;
-values stay on the GPU and are not validated on the host. As a bounds-safety
+The caller must provide nonnegative lengths whose sum is at most `row_capacity`;
+CUDA values stay on the GPU and are not validated on the host. As a bounds-safety
 fallback, negative lengths count as zero and segment ranges are truncated at
-`capacity`. This fallback does not report an input error. All operands of a
-local call must be on the same CUDA device, and `K` and `N` must be positive.
+`row_capacity`. This fallback does not report an input error. All operands of a
+local call must be on the same CPU or CUDA device, and `K` and `N` must be positive.
 
 Zero-length segments, an empty segment list, and zero row capacity are
 supported. Unused output rows are zero even when input padding contains NaNs.
@@ -60,6 +81,9 @@ CUDA BF16 autocast converts both operands before the operation. Outside
 autocast they must already have the same supported dtype; CUDA FP16 autocast
 is unsupported. The FP32 parameter gradients in this example retain the
 numerical precision of the BF16 derivative products.
+CPU execution uses the explicit operand dtype; CPU autocast does not convert
+the operands. Place `a`, `b`, and `lengths` on CPU to use the same packed-row
+interface there.
 
 Eager autograd, `torch.compile(fullgraph=True)`, forward AD, `torch.func.jvp`,
 and higher derivatives are supported. For compiled higher derivatives,
@@ -87,8 +111,8 @@ group, a current CUDA device selected for each process, and these local inputs:
 | --- | --- | --- |
 | `local_rank` | `int` | CUDA device index within the process's node |
 | `weights_fp32` | `(R, K, N)` | FP32 weights, initialized identically on each rank |
-| `positions` | `(capacity, K)` | FP32 local input features used to form the energy |
-| `target_forces` | `(capacity, K)` | FP32 derivative targets, zero on padded rows |
+| `positions` | `(row_capacity, K)` | FP32 local input features used to form the energy |
+| `target_forces` | `(row_capacity, K)` | FP32 derivative targets, zero on padded rows |
 | `lengths` | `(R,)` | Local segment lengths as CUDA `int32` |
 
 All tensors must be on the process's CUDA device. This example uses a toy
@@ -128,6 +152,7 @@ accumulation in `backward()` so DDP's reduction hooks run.
 `jax.jit`, `jax.lax.scan`, JVP, VJP, and higher-order differentiation are
 supported for either or both floating operands. Integer lengths are
 nondifferentiable. Batched transforms map independent products sequentially.
+CPU and CUDA use the same public interface and derivative rules.
 For mixed precision, cast both operands inside the differentiated function:
 
 ```python
@@ -167,7 +192,7 @@ BF16 numerical precision. Casting weights before passing them to
 
 Call `segment_mm` inside `jax.shard_map` with complete local systems. For a
 one-dimensional mesh named `"systems"`, use global shapes
-`(devices, capacity, K)`, `(devices, R, K, N)`, and `(devices, R)`:
+`(devices, row_capacity, K)`, `(devices, R, K, N)`, and `(devices, R)`:
 
 ```python
 import jax

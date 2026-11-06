@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import torch
 import warp as wp
 
@@ -27,6 +25,7 @@ from nvalchemiops.segment_mm import segment_mm_backward as _warp_segment_mm_back
 from nvalchemiops.segment_mm import segment_mm_backward_b as _warp_segment_mm_backward_b
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_warp_capture,
     scoped_warp_stream,
 )
 
@@ -40,8 +39,8 @@ def _validate_inputs(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> 
             raise ValueError(f"{name} must be a {ndim}D tensor")
     if b.device != a.device or seglen.device != a.device:
         raise ValueError("All tensors must be on the same device")
-    if a.device.type != "cuda":
-        raise RuntimeError("segment_mm requires a CUDA device")
+    if a.device.type not in ("cpu", "cuda"):
+        raise RuntimeError("segment_mm requires a CPU or CUDA device")
     if a.dtype not in (torch.float32, torch.bfloat16) or b.dtype not in (
         torch.float32,
         torch.bfloat16,
@@ -57,20 +56,9 @@ def _validate_inputs(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> 
         raise ValueError("seglen must contain one length per segment in b")
 
 
-def _capture_scope(device: torch.device):
-    """Register externally captured launches so Warp retains captured scratch safely."""
-    stream = wp.get_stream(str(device))
-    if stream.is_capturing and stream not in stream.device.captures:
-        # Raw Torch capture does not notify Warp's allocator. External capture
-        # registration attaches scratch lifetime to the owning CUDA graph.
-        # SegMM does not pause/resume capture; Warp leaves the owner's mode intact.
-        return wp.ScopedCapture(stream=stream, external=True)
-    return nullcontext()
-
-
 def _forward(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.Tensor:
-    """Wrap strided tensor storage and launch on the current Torch CUDA stream."""
-    with scoped_warp_stream(a.device), _capture_scope(a.device):
+    """Wrap strided storage and use the current Torch stream on CUDA."""
+    with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         out = a.new_empty((a.shape[0], b.shape[2]))
         _warp_segment_mm(
             wp.from_torch(a, requires_grad=False),
@@ -95,7 +83,7 @@ def _backward(
     seglen: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Allocate contiguous gradients and invoke the explicit first-order backward."""
-    with scoped_warp_stream(a.device), _capture_scope(a.device):
+    with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         grad_a = a.new_empty(a.shape)
         grad_b = b.new_empty(b.shape)
         _warp_segment_mm_backward(
@@ -123,7 +111,7 @@ def _weight_product(
     a: torch.Tensor, grad_out: torch.Tensor, seglen: torch.Tensor
 ) -> torch.Tensor:
     """Compute only the segmented weight product, retaining native operand dtype."""
-    with scoped_warp_stream(a.device), _capture_scope(a.device):
+    with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         grad_b = a.new_empty((seglen.shape[0], a.shape[1], grad_out.shape[1]))
         _warp_segment_mm_backward_b(
             wp.from_torch(a, requires_grad=False),
@@ -199,6 +187,9 @@ def _backward_vjp(grad_out, a, b, seglen, grad_grad_a, grad_grad_b):
     return grad_grad_out, grad_a, grad_b, None
 
 
+# The shared registration helper owns opaque execution and fake metadata.
+# These analytical Functions add JVPs and compose explicit derivative products
+# at higher orders; the tape-backed warp_custom_op utility supports neither.
 class _SegmentMMFunction(torch.autograd.Function):
     """Expose the opaque forward to PyTorch function transforms and forward AD."""
 
@@ -326,12 +317,12 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     Parameters
     ----------
     a : torch.Tensor, shape (capacity, K), dtype float32 or bfloat16
-        Packed input features on a CUDA device.
+        Packed input features on a CPU or CUDA device.
     b : torch.Tensor, shape (R, K, N), dtype float32 or bfloat16
-        Weight matrices for ``R`` segments, on the same CUDA device as ``a``.
+        Weight matrices for ``R`` segments, on the same device as ``a``.
         The dtype must match ``a`` unless CUDA bfloat16 autocast is enabled.
     seglen : torch.Tensor, shape (R,), dtype torch.int32
-        Runtime lengths on the same CUDA device. Values must be nonnegative
+        Runtime lengths on the same device. Values must be nonnegative
         and sum to at most ``capacity``. Zero-length segments are supported.
         These value constraints are caller preconditions, not host checks.
 
@@ -347,15 +338,15 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     ValueError
         If ranks, shapes, dtypes, devices, or core stride/index limits are invalid.
     RuntimeError
-        If tensors are not on CUDA.
+        If tensors are not on CPU or CUDA.
 
     Notes
     -----
     K and N must be positive. Inputs are wrapped without copying unless autocast
     requires dtype conversion; transposed, sliced, and broadcast views with
     nonnegative int32 byte strides are supported.
-    Segment lengths and prefix sums remain on the GPU. Work, including temporary
-    allocation, uses the current PyTorch CUDA stream.
+    Segment lengths and prefix sums remain on the input device. CUDA work,
+    including temporary allocation, uses the current PyTorch CUDA stream.
 
     CUDA bfloat16 autocast converts float32 or bfloat16 operands to bfloat16
     before the custom autograd function. Gradients propagate through these
@@ -363,6 +354,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     gradients therefore retain BF16 numerical precision. CUDA float16 autocast
     is unsupported and raises ValueError. Outside autocast, or inside a nested
     disabled context, both operands must have the same supported dtype.
+    CPU operands use their explicit dtype; CPU autocast does not convert them.
 
     Reverse-mode gradients are supported for either or both operands in eager
     mode and ``torch.compile(fullgraph=True)``. Gradients have the input
@@ -401,7 +393,7 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     ((6, 4), (3, 4, 2))
     """
     _validate_inputs(a, b, seglen)
-    if torch.is_autocast_enabled("cuda"):
+    if a.device.type == "cuda" and torch.is_autocast_enabled("cuda"):
         if torch.get_autocast_dtype("cuda") != torch.bfloat16:
             raise ValueError("segment_mm supports CUDA autocast only with bfloat16")
         a, b = a.to(torch.bfloat16), b.to(torch.bfloat16)

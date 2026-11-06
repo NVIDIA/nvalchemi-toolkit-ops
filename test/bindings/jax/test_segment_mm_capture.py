@@ -25,7 +25,13 @@ from nvalchemiops.jax.segment_mm import segment_mm  # noqa: E402
 
 from .test_segment_mm import _assert_close  # noqa: E402
 
-pytestmark = pytest.mark.gpu
+pytestmark = [
+    pytest.mark.gpu,
+    pytest.mark.skipif(
+        not any(device.platform == "gpu" for device in jax.devices()),
+        reason="Requires CUDA JAX",
+    ),
+]
 
 
 def _length_cases(groups):

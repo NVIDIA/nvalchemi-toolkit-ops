@@ -428,7 +428,7 @@ class TestSegmentMM:
         g = torch.randn(10, 9, device="cuda", dtype=dtype)
         u = torch.randn_like(a)
         row_products = []
-        launch = core.wp.launch
+        launch = core.wp.launch_tiled
 
         def observe(kernel, *args, **kwargs):
             if any(
@@ -445,7 +445,7 @@ class TestSegmentMM:
                 segment_mm(a, b, lengths), a, g, create_graph=True
             )[0]
             with monkeypatch.context() as patch:
-                patch.setattr(core.wp, "launch", observe)
+                patch.setattr(core.wp, "launch_tiled", observe)
                 actual = torch.autograd.grad(da, (g, b), u)
             ref_da = torch.autograd.grad(
                 _differentiable_reference(a, b, (3, 0, 4)), a, g, create_graph=True
@@ -459,7 +459,7 @@ class TestSegmentMM:
             with torch.autograd.forward_ad.dual_level():
                 dual_a = torch.autograd.forward_ad.make_dual(a, u)
                 with monkeypatch.context() as patch:
-                    patch.setattr(core.wp, "launch", observe)
+                    patch.setattr(core.wp, "launch_tiled", observe)
                     dual_da, dual_db = binding._apply_backward(g, dual_a, b, lengths)
                 actual_da = torch.autograd.forward_ad.unpack_dual(dual_da)
                 actual_db = torch.autograd.forward_ad.unpack_dual(dual_db)
@@ -654,8 +654,8 @@ class TestSegmentMM:
         with pytest.raises(ValueError, match=match):
             segment_mm(a, b, lengths)
 
-    def test_cpu_rejected(self):
-        """The CUDA-only contract reports unsupported CPU execution clearly."""
+    def test_unsupported_device_rejected(self):
+        """Unsupported devices fail before attempting a Warp launch."""
         a, b, lengths = _inputs()
-        with pytest.raises(RuntimeError, match="CUDA"):
-            segment_mm(a.cpu(), b.cpu(), lengths.cpu())
+        with pytest.raises(RuntimeError, match="CPU or CUDA"):
+            segment_mm(a.to("meta"), b.to("meta"), lengths.to("meta"))

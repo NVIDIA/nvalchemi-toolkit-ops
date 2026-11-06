@@ -20,6 +20,12 @@ from typing import Any
 import warp as wp
 from warp._src.types import type_size_in_bytes
 
+from nvalchemiops.batch_utils import (
+    _segment_counts,
+    _segment_offsets_clamped,
+    _segment_offsets_small,
+    _zero_padding_overloads,
+)
 from nvalchemiops.warp_dispatch import register_overloads
 
 __all__ = ["segment_mm", "segment_mm_backward", "segment_mm_backward_b"]
@@ -32,163 +38,6 @@ _TILE_K = wp.constant(32)
 _BLOCK_DIM = wp.constant(128)
 _DTYPES = (wp.float32, wp.bfloat16)
 _INDEX_LIMIT = 2**31 - 1 - max(_TILE_M, _TILE_N, _TILE_K)
-
-
-@wp.kernel(enable_backward=False)
-def _segment_counts(
-    seglen: wp.array(dtype=wp.int32),
-    row_counts: wp.array(dtype=wp.int64),
-):
-    """Write nonnegative row counts for an overflow-safe inclusive device scan.
-
-    Parameters
-    ----------
-    seglen : wp.array, shape (R,), dtype int32
-        Runtime segment lengths. Negative values are treated as zero.
-    row_counts : wp.array, shape (R + 1,), dtype int64
-        OUTPUT: Pre-allocated row counts with a leading zero, followed by
-        the nonnegative lengths.
-
-    Notes
-    -----
-    Thread launch: ``R + 1`` threads, one per output element.
-    Modifies: every element of ``row_counts``.
-
-    Apply an inclusive scan to ``row_counts`` before passing it to
-    ``_segment_offsets_clamped``.
-
-    See Also
-    --------
-    _segment_offsets_clamped : Convert scanned row counts to bounded offsets.
-    """
-    index = wp.tid()
-    if index == 0:
-        row_counts[0] = wp.int64(0)
-    else:
-        row_counts[index] = wp.int64(wp.max(seglen[index - 1], 0))
-
-
-@wp.kernel(enable_backward=False)
-def _segment_offsets_small(
-    seglen: wp.array(dtype=wp.int32),
-    capacity: int,
-    row_offsets: wp.array(dtype=wp.int32),
-    tile_offsets: wp.array(dtype=wp.int32),
-):
-    """Build capacity-bounded prefix arrays directly for at most 128 segments.
-
-    Parameters
-    ----------
-    seglen : wp.array, shape (R,), dtype int32
-        Runtime segment lengths, with ``R <= 128``. Negative values are
-        treated as zero.
-    capacity : int
-        Maximum number of active rows, stored as an int32 scalar.
-    row_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated cumulative row offsets, bounded by ``capacity``.
-    tile_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated cumulative counts of ``_TILE_M``-row tiles.
-        Both offset arrays start with zero.
-
-    Notes
-    -----
-    Thread launch: ``R + 1`` threads, one per prefix element.
-    Each thread sums at most 128 preceding segments.
-    Modifies: every element of ``row_offsets`` and ``tile_offsets``.
-
-    See Also
-    --------
-    _segment_offsets_clamped : Build offsets from scanned row counts.
-    _segment_mm_kernel : Consume the row and tile offsets.
-    """
-    index = wp.tid()
-    rows = int(0)
-    tiles = int(0)
-    for group in range(index):
-        length = wp.min(wp.max(seglen[group], 0), capacity - rows)
-        rows += length
-        tiles += length / _TILE_M + int(length % _TILE_M != 0)
-    row_offsets[index] = rows
-    tile_offsets[index] = tiles
-
-
-@wp.kernel(enable_backward=False)
-def _segment_offsets_clamped(
-    row_prefix: wp.array(dtype=wp.int64),
-    capacity: int,
-    row_offsets: wp.array(dtype=wp.int32),
-    tile_offsets: wp.array(dtype=wp.int32),
-):
-    """Clamp wide row prefixes to capacity and count tiles over the clipped ranges.
-
-    Parameters
-    ----------
-    row_prefix : wp.array, shape (R + 1,), dtype int64
-        Inclusive scan of nonnegative segment lengths with a leading zero.
-    capacity : int
-        Maximum number of active rows, stored as an int32 scalar.
-    row_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated cumulative row offsets, bounded by ``capacity``.
-    tile_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated per-segment counts of ``_TILE_M``-row tiles,
-        preceded by zero. Apply an inclusive scan before using as offsets.
-
-    Notes
-    -----
-    Thread launch: ``R + 1`` threads, one per prefix element.
-    Modifies: every element of ``row_offsets`` and ``tile_offsets``.
-
-    See Also
-    --------
-    _segment_counts : Prepare nonnegative lengths for the row-prefix scan.
-    _segment_mm_kernel : Consume row offsets and scanned tile counts.
-    """
-    index = wp.tid()
-    row = int(wp.min(row_prefix[index], wp.int64(capacity)))
-    row_offsets[index] = row
-    if index == 0:
-        tile_offsets[0] = 0
-    else:
-        previous = int(wp.min(row_prefix[index - 1], wp.int64(capacity)))
-        length = row - previous
-        tile_offsets[index] = length / _TILE_M + int(length % _TILE_M != 0)
-
-
-@wp.func
-def _find_segment(tile_offsets: wp.array(dtype=wp.int32), task: int) -> int:
-    """Find the nonempty segment owning a row-tile task.
-
-    Parameters
-    ----------
-    tile_offsets : wp.array, shape (R + 1,), dtype int32
-        Nondecreasing cumulative tile counts with a leading zero.
-    task : int
-        Int32 tile index satisfying ``0 <= task < tile_offsets[R]``.
-
-    Returns
-    -------
-    int
-        Segment index ``g`` such that
-        ``tile_offsets[g] <= task < tile_offsets[g + 1]``.
-
-    Notes
-    -----
-    Thread launch: called within each active output-tile block.
-    Modifies: no input arrays.
-
-    See Also
-    --------
-    _segment_mm_kernel : Assign tile tasks to segments.
-    """
-    lower = int(0)
-    upper = tile_offsets.shape[0] - 1
-    while lower < upper:
-        middle = lower + (upper - lower) / 2
-        if tile_offsets[middle + 1] <= task:
-            lower = middle + 1
-        else:
-            upper = middle
-    return lower
 
 
 @wp.kernel(enable_backward=False)
@@ -216,23 +65,25 @@ def _segment_mm_kernel(
 
     Notes
     -----
-    Thread launch: ``(row_tasks, column_tiles, _BLOCK_DIM)`` with one
+    Thread launch: tiled ``(row_tasks, column_tiles)`` with one
     cooperative block per output tile. Excess row tasks perform no work.
     ``row_tasks`` must cover ``tile_offsets[R]``, and ``column_tiles`` is
-    ``ceil(N / _TILE_N)``. Launch with ``block_dim=_BLOCK_DIM``.
+    ``ceil(N / _TILE_N)``. Launch with ``block_dim=_BLOCK_DIM``; CPU execution
+    uses one lane.
     Modifies: active rows of ``out``; padding is handled separately.
 
     See Also
     --------
-    _find_segment : Map a row-tile task to its segment.
-    _zero_padding : Zero rows outside the active segments.
+    nvalchemiops.batch_utils._zero_padding : Zero rows outside the active segments.
     """
     task, column_tile, lane = wp.tid()
     groups = b.shape[0]
     if task < tile_offsets[groups]:
-        group = _find_segment(tile_offsets, task)
+        # First boundary greater than task skips empty segments at that boundary.
+        group = wp.lower_bound(tile_offsets, task + 1) - 1
         row = row_offsets[group] + (task - tile_offsets[group]) * _TILE_M
         column = column_tile * _TILE_N
+        # BF16 tile_matmul requires an FP32 accumulator; round only at the store.
         accumulator = wp.tile_zeros(shape=(_TILE_M, _TILE_N), dtype=wp.float32)
         reduction_tiles = a.shape[1] / _TILE_K + int(a.shape[1] % _TILE_K != 0)
         for reduction_tile in range(reduction_tiles):
@@ -243,8 +94,8 @@ def _segment_mm_kernel(
             )
             wp.tile_matmul(a_tile, b_tile, accumulator)
 
-        for step in range((_TILE_M * _TILE_N) / _BLOCK_DIM):
-            element = lane + step * _BLOCK_DIM
+        for step in range((_TILE_M * _TILE_N) / wp.block_dim()):
+            element = lane + step * wp.block_dim()
             local_row = element / _TILE_N
             local_column = element % _TILE_N
             if (
@@ -254,35 +105,6 @@ def _segment_mm_kernel(
                 out[row + local_row, column + local_column] = out.dtype(
                     wp.tile_extract(accumulator, local_row, local_column)
                 )
-
-
-@wp.kernel(enable_backward=False)
-def _zero_padding(
-    row_offsets: wp.array(dtype=wp.int32),
-    out: wp.array2d(dtype=Any),
-):
-    """Zero output rows outside the active segments without reading input padding.
-
-    Parameters
-    ----------
-    row_offsets : wp.array, shape (R + 1,), dtype int32
-        Cumulative active row counts; the last entry is the total active count.
-    out : wp.array, shape (capacity, N), dtype float32 or bfloat16
-        OUTPUT: Pre-allocated output buffer whose padding rows are zeroed.
-        Active rows are unchanged.
-
-    Notes
-    -----
-    Thread launch: ``(capacity, N)``, one thread per output element.
-    Modifies: rows at or beyond the total active row count in ``out``.
-
-    See Also
-    --------
-    _segment_mm_kernel : Write the active output rows.
-    """
-    row, column = wp.tid()
-    if row >= row_offsets[row_offsets.shape[0] - 1]:
-        out[row, column] = out.dtype(0)
 
 
 @wp.func
@@ -375,8 +197,8 @@ def _segment_mm_grad_b_kernel(
 
     Notes
     -----
-    Thread launch: ``(R * splits, channel_tiles, _BLOCK_DIM)`` with
-    ``block_dim=_BLOCK_DIM``. Each block computes one channel tile for one
+    Thread launch: tiled ``(R * splits, channel_tiles)`` with
+    ``block_dim=_BLOCK_DIM`` (one lane on CPU). Each block computes one channel tile for one
     segment split; ``channel_tiles = ceil(K / _TILE_K) * ceil(N / _TILE_N)``.
     Activation tiles are transposed in shared memory without copying all of A.
     Products accumulate in FP32; a single split writes the final output dtype.
@@ -426,8 +248,8 @@ def _segment_mm_grad_b_kernel(
         grad_tile = wp.tile_map(_keep_reduction_row, grad_tile, grad_rows, valid_rows)
         wp.tile_matmul(a_tile, grad_tile, accumulator)
 
-    for step in range((_TILE_K * _TILE_N) / _BLOCK_DIM):
-        element = lane + step * _BLOCK_DIM
+    for step in range((_TILE_K * _TILE_N) / wp.block_dim()):
+        element = lane + step * wp.block_dim()
         local_row = element / _TILE_N
         local_column = element % _TILE_N
         if (
@@ -483,11 +305,6 @@ _segment_mm_overloads = register_overloads(
     ],
     dtypes=_DTYPES,
 )
-_zero_padding_overloads = register_overloads(
-    _zero_padding,
-    lambda dtype: [wp.array(dtype=wp.int32), wp.array2d(dtype=dtype)],
-    dtypes=_DTYPES,
-)
 _segment_mm_grad_b_overloads = register_overloads(
     _segment_mm_grad_b_kernel,
     lambda input_dtype, output_dtype: [
@@ -527,8 +344,6 @@ def _validate_inputs(a: wp.array, b: wp.array, seglen: wp.array) -> None:
         _validate_array(array, name, ndim)
     if b.device != a.device or seglen.device != a.device:
         raise ValueError("All arrays must be on the same device")
-    if not a.device.is_cuda:
-        raise RuntimeError("segment_mm requires a CUDA device")
     if a.dtype not in _DTYPES or b.dtype != a.dtype:
         raise ValueError("a and b must have the same float32 or bfloat16 dtype")
     if seglen.dtype != wp.int32:
@@ -578,7 +393,12 @@ def _validate_output(
 
 
 def _segment_offsets(seglen: wp.array, capacity: int) -> tuple[wp.array, wp.array]:
-    """Build capacity-bounded offsets without reading device lengths on the host."""
+    """Allocate row offsets and cumulative counts of SegMM row-tile tasks.
+
+    Each segment contributes ``ceil(clipped_length / _TILE_M)`` tasks.
+    Lengths and prefixes remain on the device. The small-segment path uses
+    one launch; larger inputs use an overflow-safe int64 row scan.
+    """
     groups = seglen.shape[0]
     row_offsets = wp.empty(groups + 1, dtype=wp.int32, device=seglen.device)
     tile_offsets = wp.empty(groups + 1, dtype=wp.int32, device=seglen.device)
@@ -586,7 +406,7 @@ def _segment_offsets(seglen: wp.array, capacity: int) -> tuple[wp.array, wp.arra
         wp.launch(
             _segment_offsets_small,
             dim=groups + 1,
-            inputs=[seglen, capacity, row_offsets, tile_offsets],
+            inputs=[seglen, capacity, _TILE_M, row_offsets, tile_offsets],
             device=seglen.device,
         )
     else:
@@ -603,13 +423,50 @@ def _segment_offsets(seglen: wp.array, capacity: int) -> tuple[wp.array, wp.arra
         wp.launch(
             _segment_offsets_clamped,
             dim=groups + 1,
-            inputs=[row_prefix, capacity, row_offsets, tile_offsets],
+            inputs=[row_prefix, capacity, _TILE_M, row_offsets, tile_offsets],
             device=seglen.device,
         )
         # Each nonempty range needs at most one tile per row, so the tile
         # prefix is bounded by capacity and remains safe in int32.
         wp.utils.array_scan(tile_offsets, tile_offsets)
     return row_offsets, tile_offsets
+
+
+def _launch_forward(
+    a: wp.array,
+    b: wp.array,
+    row_offsets: wp.array,
+    tile_offsets: wp.array,
+    out: wp.array,
+) -> None:
+    """Launch products and padding writes using caller-owned offsets and output.
+
+    Arrays must already satisfy the public shape, dtype, device, and stride
+    contract. This leaf allocates no storage and uses the current Warp stream.
+    """
+    capacity, groups, n = a.shape[0], b.shape[0], b.shape[2]
+    row_tasks = (capacity + _TILE_M - 1) // _TILE_M + groups
+    column_tiles = (n + _TILE_N - 1) // _TILE_N
+    if row_tasks * column_tiles * _BLOCK_DIM > _INDEX_LIMIT:
+        raise ValueError("Launch dimensions exceed the int32 index range")
+    if capacity == 0:
+        return
+    if groups == 0:
+        out.zero_()
+        return
+    wp.launch(
+        _zero_padding_overloads[a.dtype],
+        dim=out.shape,
+        inputs=[row_offsets, out],
+        device=a.device,
+    )
+    wp.launch_tiled(
+        _segment_mm_overloads[a.dtype],
+        dim=(row_tasks, column_tiles),
+        inputs=[a, b, row_offsets, tile_offsets, out],
+        block_dim=_BLOCK_DIM,
+        device=a.device,
+    )
 
 
 def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> None:
@@ -638,8 +495,6 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
     ValueError
         If array ranks, shapes, dtypes, devices, strides, output contiguity, or
         non-overlap requirements are violated.
-    RuntimeError
-        If the arrays are not on a CUDA device.
 
     Notes
     -----
@@ -647,7 +502,7 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
     elementwise launch zeroes padding rows.
     Modifies: every element of ``out``. Inputs are read-only.
 
-    All arrays must reside on the same CUDA device. K and N must be positive.
+    All arrays must reside on the same CPU or CUDA device. K and N must be positive.
     Inputs may be transposed, sliced, or broadcast views with nonnegative
     byte strides that fit signed int32. They are read without making copies.
     Products accumulate in float32 and are cast once to the output dtype.
@@ -674,11 +529,6 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
     _validate_inputs(a, b, seglen)
     capacity, groups, n = a.shape[0], b.shape[0], b.shape[2]
     _validate_output(out, "out", (capacity, n), a, (a, b, seglen))
-    row_tasks = (capacity + _TILE_M - 1) // _TILE_M + groups
-    column_tiles = (n + _TILE_N - 1) // _TILE_N
-    if row_tasks * column_tiles * _BLOCK_DIM > _INDEX_LIMIT:
-        raise ValueError("Launch dimensions exceed the int32 index range")
-
     with wp.ScopedDevice(a.device):
         if capacity == 0:
             return
@@ -687,19 +537,7 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
             return
 
         row_offsets, tile_offsets = _segment_offsets(seglen, capacity)
-        wp.launch(
-            _zero_padding_overloads[a.dtype],
-            dim=out.shape,
-            inputs=[row_offsets, out],
-            device=a.device,
-        )
-        wp.launch(
-            _segment_mm_overloads[a.dtype],
-            dim=(row_tasks, column_tiles, _BLOCK_DIM),
-            inputs=[a, b, row_offsets, tile_offsets, out],
-            block_dim=_BLOCK_DIM,
-            device=a.device,
-        )
+        _launch_forward(a, b, row_offsets, tile_offsets, out)
 
 
 def _validate_grad_out(a: wp.array, grad_out: wp.array, n: int) -> None:
@@ -714,18 +552,20 @@ def _validate_grad_out(a: wp.array, grad_out: wp.array, n: int) -> None:
         raise ValueError(f"grad_out must have shape {shape}, got {grad_out.shape}")
 
 
-def _grad_b_launch_config(a: wp.array, grad_b: wp.array) -> tuple[int, int]:
+def _grad_b_launch_config(
+    capacity: int, groups: int, k: int, n: int, itemsize: int
+) -> tuple[int, int]:
     """Choose shape-dependent splits and validate weight-gradient workspace limits."""
-    capacity, k = a.shape
-    groups, _, n = grad_b.shape
-    splits = max(1, min(32, (capacity + groups * 256 - 1) // (groups * 256)))
-    splits = min(splits, max(1, (64 << 20) // (groups * k * n * 4)))
+    splits = 1
+    if groups:
+        splits = max(1, min(32, (capacity + groups * 256 - 1) // (groups * 256)))
+        splits = min(splits, max(1, (64 << 20) // (groups * k * n * 4)))
     channel_tiles = ((k + _TILE_K - 1) // _TILE_K) * ((n + _TILE_N - 1) // _TILE_N)
     if (
         max(
             groups * splits * channel_tiles * _BLOCK_DIM,
             groups * splits * k * n,
-            capacity * type_size_in_bytes(a.dtype),
+            capacity * itemsize,
             k * n * 4,
         )
         > _INDEX_LIMIT
@@ -738,22 +578,26 @@ def _grad_b_launch_config(a: wp.array, grad_b: wp.array) -> tuple[int, int]:
 
 def _launch_grad_b(
     a: wp.array,
-    grad_out: wp.array,
     row_offsets: wp.array,
+    grad_out: wp.array,
     grad_b: wp.array,
+    partials: wp.array,
     splits: int,
-    channel_tiles: int,
 ) -> None:
-    """Write a single split directly, or reduce FP32 partials without copying A."""
+    """Write weight gradients using caller-owned scratch on the current stream.
+
+    Pass ``grad_b`` as ``partials`` for one split; otherwise pass an FP32
+    ``(R * splits, K, N)`` array. Shapes and splits must have been validated
+    before this allocation-free leaf is called.
+    """
     groups, k, n = grad_b.shape
-    partials = (
-        grad_b
-        if splits == 1
-        else wp.empty((groups * splits, k, n), dtype=wp.float32, device=a.device)
-    )
-    wp.launch(
+    if a.shape[0] == 0 or groups == 0:
+        grad_b.zero_()
+        return
+    channel_tiles = ((k + _TILE_K - 1) // _TILE_K) * ((n + _TILE_N - 1) // _TILE_N)
+    wp.launch_tiled(
         _segment_mm_grad_b_overloads[a.dtype, partials.dtype],
-        dim=(groups * splits, channel_tiles, _BLOCK_DIM),
+        dim=(groups * splits, channel_tiles),
         inputs=[a, grad_out, row_offsets, splits, partials],
         block_dim=_BLOCK_DIM,
         device=a.device,
@@ -775,11 +619,11 @@ def segment_mm_backward_b(
     Parameters
     ----------
     a : wp.array, shape (capacity, K), dtype float32 or bfloat16
-        Packed input features on a CUDA device.
+        Packed input features on a CPU or CUDA device.
     seglen : wp.array, shape (R,), dtype int32
-        Runtime CUDA lengths, nonnegative and summing to at most capacity.
+        Runtime device lengths, nonnegative and summing to at most capacity.
     grad_out : wp.array, shape (capacity, N), dtype matches a
-        Output cotangent on the same CUDA device as ``a``.
+        Output cotangent on the same device as ``a``.
     grad_b : wp.array, shape (R, K, N), dtype matches a
         OUTPUT: Pre-allocated contiguous weight gradient on the same device
         as ``a``. Must not overlap input memory spans, including gaps in
@@ -790,8 +634,6 @@ def segment_mm_backward_b(
     ValueError
         If ranks, shapes, dtypes, devices, strides, index limits, or output
         contiguity/non-overlap requirements are violated.
-    RuntimeError
-        If the arrays are not on CUDA.
 
     Notes
     -----
@@ -799,7 +641,7 @@ def segment_mm_backward_b(
     split; an elementwise reduction combines multiple splits when needed.
     Modifies: every element of ``grad_b``. Inputs are read-only.
 
-    All arrays must reside on the same CUDA device. K and N must be positive.
+    All arrays must reside on the same CPU or CUDA device. K and N must be positive.
     Inputs may have nonnegative int32 byte strides.
     Padding rows are ignored, including NaNs. Empty segments produce zeros.
     Native input products and split sums accumulate in FP32 and are cast once
@@ -809,7 +651,7 @@ def segment_mm_backward_b(
     without computing an input gradient. A is read directly and transposed one
     tile at a time in shared memory; no full activation transpose is allocated.
     A single split writes ``grad_b`` directly without a partial-gradient buffer.
-    Length values stay on the GPU and their constraints are caller preconditions.
+    Length values stay on the device and their constraints are caller preconditions.
     For bounds safety, device offsets treat negative lengths as zero and
     truncate segment ranges at capacity without raising an error.
     Work uses the current Warp stream. CUDA graph capture requires kernel warmup.
@@ -832,9 +674,17 @@ def segment_mm_backward_b(
         if a.shape[0] == 0 or seglen.shape[0] == 0:
             grad_b.zero_()
             return
-        splits, channel_tiles = _grad_b_launch_config(a, grad_b)
+        groups, k, n = grad_b.shape
+        splits, _ = _grad_b_launch_config(
+            a.shape[0], groups, k, n, type_size_in_bytes(a.dtype)
+        )
         row_offsets, _ = _segment_offsets(seglen, a.shape[0])
-        _launch_grad_b(a, grad_out, row_offsets, grad_b, splits, channel_tiles)
+        partials = (
+            grad_b
+            if splits == 1
+            else wp.empty((groups * splits, k, n), dtype=wp.float32, device=a.device)
+        )
+        _launch_grad_b(a, row_offsets, grad_out, grad_b, partials, splits)
 
 
 def segment_mm_backward(
@@ -875,8 +725,6 @@ def segment_mm_backward(
     ValueError
         If shapes, dtypes, devices, strides, index limits, output contiguity,
         or output non-overlap requirements are violated.
-    RuntimeError
-        If the arrays are not on a CUDA device.
 
     Notes
     -----
@@ -885,7 +733,7 @@ def segment_mm_backward(
     combine weight-gradient splits when needed.
     Modifies: every element of ``grad_a`` and ``grad_b``. Inputs are read-only.
 
-    All arrays must reside on the same CUDA device. Inputs support nonnegative
+    All arrays must reside on the same CPU or CUDA device. Inputs support nonnegative
     int32 byte strides. Outputs must not overlap each other or any input's
     memory span, including gaps in strided views.
 
@@ -894,7 +742,7 @@ def segment_mm_backward(
     multiplication does not request reduced precision. Weight-gradient splits
     use a fixed reduction order without floating-point atomics.
 
-    Backward uses a GPU transpose workspace for B. Weight gradients write
+    Backward uses a device transpose workspace for B. Weight gradients write
     directly to ``grad_b`` for one split, otherwise using FP32 partial gradients.
     A is read directly and transposed one tile at a time in shared memory.
     Partial storage is limited to 64 MiB or one FP32 B-sized buffer,
@@ -927,7 +775,9 @@ def segment_mm_backward(
             grad_b.zero_()
             return
 
-        splits, db_channel_tiles = _grad_b_launch_config(a, grad_b)
+        splits, _ = _grad_b_launch_config(
+            capacity, groups, k, n, type_size_in_bytes(a.dtype)
+        )
         row_tasks = (capacity + _TILE_M - 1) // _TILE_M + groups
         da_column_tiles = (k + _TILE_N - 1) // _TILE_N
         if row_tasks * da_column_tiles * _BLOCK_DIM > _INDEX_LIMIT:
@@ -937,17 +787,10 @@ def segment_mm_backward(
 
         row_offsets, tile_offsets = _segment_offsets(seglen, capacity)
         b_transposed = b.transpose((0, 2, 1)).contiguous()
-        wp.launch(
-            _zero_padding_overloads[a.dtype],
-            dim=grad_a.shape,
-            inputs=[row_offsets, grad_a],
-            device=a.device,
+        _launch_forward(grad_out, b_transposed, row_offsets, tile_offsets, grad_a)
+        partials = (
+            grad_b
+            if splits == 1
+            else wp.empty((groups * splits, k, n), dtype=wp.float32, device=a.device)
         )
-        wp.launch(
-            _segment_mm_overloads[a.dtype],
-            dim=(row_tasks, da_column_tiles, _BLOCK_DIM),
-            inputs=[grad_out, b_transposed, row_offsets, tile_offsets, grad_a],
-            block_dim=_BLOCK_DIM,
-            device=a.device,
-        )
-        _launch_grad_b(a, grad_out, row_offsets, grad_b, splits, db_channel_tiles)
+        _launch_grad_b(a, row_offsets, grad_out, grad_b, partials, splits)
