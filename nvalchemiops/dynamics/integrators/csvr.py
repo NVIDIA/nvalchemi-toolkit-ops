@@ -54,7 +54,12 @@ __all__ = [
 
 @wp.func
 def _sample_gamma(state: wp.uint32, shape: wp.float64) -> wp.float64:
-    """Draw from Gamma(shape, 1) with Marsaglia-Tsang; returns 0 for ``shape <= 0``."""
+    """Draw from Gamma(shape, 1) with Marsaglia-Tsang; returns 0 for ``shape <= 0``.
+
+    Kept in float64 regardless of the array dtype: the acceptance test
+    ``0.5 x^2 + d - d v + d log v`` cancels terms of size ``d ~ ndof / 2``, so
+    float32 shifts it by ~1e-2 at ``ndof ~ 1e6`` and biases the draw.
+    """
     if shape <= wp.float64(0.0):
         return wp.float64(0.0)
     boost = wp.float64(1.0)
