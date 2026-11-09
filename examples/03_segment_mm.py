@@ -43,28 +43,28 @@ three rows are padding and produce zero output.
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
-import numpy as np
+import torch
 from matplotlib.colors import ListedColormap
 
 row_capacity, input_channels, output_channels, systems = 8, 4, 5, 3
 initial_lengths = (3, 0, 2)
 updated_lengths = (2, 1, 3)
 feature_values = (
-    np.arange(row_capacity * input_channels, dtype=np.float32).reshape(
+    torch.arange(row_capacity * input_channels, dtype=torch.float32).reshape(
         row_capacity, input_channels
     )
     - 8
 ) / 16
 weight_values = (
-    np.arange(systems * input_channels * output_channels, dtype=np.float32).reshape(
-        systems, input_channels, output_channels
-    )
+    torch.arange(
+        systems * input_channels * output_channels, dtype=torch.float32
+    ).reshape(systems, input_channels, output_channels)
     - 20
 ) / 32
 
 
-def reference_products(lengths: tuple[int, ...]) -> tuple[np.ndarray, ...]:
-    """Compute fixture outputs and gradients of their squared sum with NumPy.
+def reference_products(lengths: tuple[int, ...]) -> tuple[torch.Tensor, ...]:
+    """Compute fixture outputs and gradients of their squared sum with PyTorch.
 
     Parameters
     ----------
@@ -73,14 +73,14 @@ def reference_products(lengths: tuple[int, ...]) -> tuple[np.ndarray, ...]:
 
     Returns
     -------
-    tuple of numpy.ndarray
+    tuple of torch.Tensor
         Output, feature gradient, and weight gradient, including zero padding.
     """
-    features = feature_values.astype(np.float64)
-    weights = weight_values.astype(np.float64)
-    output = np.zeros((row_capacity, output_channels), dtype=np.float64)
-    grad_features = np.zeros_like(features)
-    grad_weights = np.zeros_like(weights)
+    features = feature_values.double()
+    weights = weight_values.double()
+    output = torch.zeros((row_capacity, output_channels), dtype=torch.float64)
+    grad_features = torch.zeros_like(features)
+    grad_weights = torch.zeros_like(weights)
     start = 0
     for system, length in enumerate(lengths):
         stop = start + length
@@ -89,9 +89,7 @@ def reference_products(lengths: tuple[int, ...]) -> tuple[np.ndarray, ...]:
         grad_features[start:stop] = output_gradient @ weights[system].T
         grad_weights[system] = features[start:stop].T @ output_gradient
         start = stop
-    return tuple(
-        value.astype(np.float32) for value in (output, grad_features, grad_weights)
-    )
+    return tuple(value.float() for value in (output, grad_features, grad_weights))
 
 
 expected_output = reference_products(initial_lengths)[0]
@@ -102,7 +100,7 @@ expected_output = reference_products(initial_lengths)[0]
 # The narrow panel identifies each row's system. The heat map shows the
 # reference output. System 1 is empty; the three gray rows are padding.
 
-row_owner = np.array([0, 0, 0, 2, 2, 3, 3, 3])
+row_owner = torch.tensor([0, 0, 0, 2, 2, 3, 3, 3])
 row_labels = ["0", "0", "0", "2", "2", "pad", "pad", "pad"]
 colors = ListedColormap(["#76b900", "#f0a340", "#3298cb", "#dddddd"])
 fig, (map_ax, out_ax) = plt.subplots(
@@ -131,13 +129,11 @@ plt.show()
 # Reusing the compiled callable with ``[2, 1, 3]`` activates the empty system
 # and leaves two padding rows. Finish each backward before changing lengths.
 
-import torch
-
 from nvalchemiops.torch.segment_mm import segment_mm as torch_segment_mm
 
 torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch_features = torch.tensor(feature_values, device=torch_device, requires_grad=True)
-torch_weights = torch.tensor(weight_values, device=torch_device, requires_grad=True)
+torch_features = feature_values.to(torch_device).clone().requires_grad_()
+torch_weights = weight_values.to(torch_device).clone().requires_grad_()
 torch_lengths = torch.tensor(initial_lengths, dtype=torch.int32, device=torch_device)
 eager_output = torch_segment_mm(torch_features, torch_weights, torch_lengths)
 eager_gradients = torch.autograd.grad(
@@ -146,9 +142,7 @@ eager_gradients = torch.autograd.grad(
 for actual, expected in zip(
     (eager_output, *eager_gradients), reference_products(initial_lengths), strict=True
 ):
-    np.testing.assert_allclose(
-        actual.detach().cpu().numpy(), expected, rtol=2e-5, atol=2e-5
-    )
+    torch.testing.assert_close(actual.detach().cpu(), expected, rtol=2e-5, atol=2e-5)
 
 torch_compiled = torch.compile(torch_segment_mm, fullgraph=True)
 for runtime_lengths in (initial_lengths, updated_lengths):
@@ -162,18 +156,15 @@ for runtime_lengths in (initial_lengths, updated_lengths):
     for actual, expected in zip(
         (output, *gradients), reference_products(runtime_lengths), strict=True
     ):
-        np.testing.assert_allclose(
-            actual.detach().cpu().numpy(), expected, rtol=2e-5, atol=2e-5
+        torch.testing.assert_close(
+            actual.detach().cpu(), expected, rtol=2e-5, atol=2e-5
         )
-    np.testing.assert_array_equal(
-        output.detach().cpu().numpy()[sum(runtime_lengths) :], 0
-    )
-    np.testing.assert_array_equal(
-        gradients[0].detach().cpu().numpy()[sum(runtime_lengths) :], 0
-    )
-    np.testing.assert_array_equal(
-        gradients[1].detach().cpu().numpy()[np.asarray(runtime_lengths) == 0], 0
-    )
+    for inactive in (
+        output[sum(runtime_lengths) :],
+        gradients[0][sum(runtime_lengths) :],
+        gradients[1][torch_lengths == 0],
+    ):
+        torch.testing.assert_close(inactive, torch.zeros_like(inactive), rtol=0, atol=0)
     print(
         f"PyTorch on {torch_device}: output and both gradients match for {runtime_lengths}."
     )
@@ -200,15 +191,15 @@ else:
 gradients_bf16 = torch.autograd.grad(
     output_bf16.float().square().sum(), (torch_features, torch_weights)
 )
-np.testing.assert_equal(str(output_bf16.dtype), "torch.bfloat16")
-np.testing.assert_equal(
-    [str(value.dtype) for value in gradients_bf16], ["torch.float32"] * 2
-)
+if output_bf16.dtype != torch.bfloat16 or any(
+    value.dtype != torch.float32 for value in gradients_bf16
+):
+    raise AssertionError("Expected BF16 output and FP32 parameter gradients")
 for actual, expected in zip(
     (output_bf16, *gradients_bf16), reference_products(initial_lengths), strict=True
 ):
-    np.testing.assert_allclose(
-        actual.detach().float().cpu().numpy(), expected, rtol=3e-2, atol=3e-2
+    torch.testing.assert_close(
+        actual.detach().float().cpu(), expected, rtol=3e-2, atol=3e-2
     )
 print("PyTorch BF16 output and FP32 parameter gradients match within BF16 tolerance.")
 
@@ -218,6 +209,8 @@ print("PyTorch BF16 output and FP32 parameter gradients match within BF16 tolera
 # ``value_and_grad(..., argnums=(0, 1))`` differentiates both floating inputs.
 # Compile the forward and loss-gradient functions once, then reuse them with
 # both sets of runtime lengths. Integer lengths are not differentiated.
+# Python lists share this small fixture between frameworks. Result conversions
+# below are only for reference checks, outside the compiled computation.
 
 import jax
 import jax.numpy as jnp
@@ -230,8 +223,8 @@ jax_device = next(
 if jax_device is None:
     jax_device = jax.devices("cpu")[0]
 with jax.default_device(jax_device):
-    jax_features = jnp.asarray(feature_values)
-    jax_weights = jnp.asarray(weight_values)
+    jax_features = jnp.asarray(feature_values.tolist(), dtype=jnp.float32)
+    jax_weights = jnp.asarray(weight_values.tolist(), dtype=jnp.float32)
     jax_lengths = jnp.asarray(initial_lengths, dtype=jnp.int32)
 
 
@@ -253,15 +246,20 @@ for runtime_lengths in (initial_lengths, updated_lengths):
         jax_lengths = jnp.asarray(runtime_lengths, dtype=jnp.int32)
     output = jax_compiled(jax_features, jax_weights, jax_lengths)
     loss, gradients = jax_gradients(jax_features, jax_weights, jax_lengths)
-    for actual, expected in zip(
-        (output, *gradients), reference_products(runtime_lengths), strict=True
-    ):
-        np.testing.assert_allclose(np.asarray(actual), expected, rtol=2e-5, atol=2e-5)
-    np.testing.assert_array_equal(np.asarray(output)[sum(runtime_lengths) :], 0)
-    np.testing.assert_array_equal(np.asarray(gradients[0])[sum(runtime_lengths) :], 0)
-    np.testing.assert_array_equal(
-        np.asarray(gradients[1])[np.asarray(runtime_lengths) == 0], 0
+    checked = tuple(
+        torch.tensor(value.tolist(), dtype=torch.float32)
+        for value in (output, *gradients)
     )
+    for actual, expected in zip(
+        checked, reference_products(runtime_lengths), strict=True
+    ):
+        torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+    for inactive in (
+        checked[0][sum(runtime_lengths) :],
+        checked[1][sum(runtime_lengths) :],
+        checked[2][torch.tensor(runtime_lengths) == 0],
+    ):
+        torch.testing.assert_close(inactive, torch.zeros_like(inactive), rtol=0, atol=0)
     print(
         f"JAX on {jax_device}: output and both gradients match for {runtime_lengths}."
     )
@@ -287,12 +285,17 @@ with jax.default_device(jax_device):
 (loss, output_bf16), gradients_bf16 = jax.jit(
     jax.value_and_grad(jax_bf16_loss, argnums=(0, 1), has_aux=True)
 )(jax_features, jax_weights, jax_lengths)
-np.testing.assert_equal(str(output_bf16.dtype), "bfloat16")
-np.testing.assert_equal([str(value.dtype) for value in gradients_bf16], ["float32"] * 2)
+if output_bf16.dtype != jnp.bfloat16 or any(
+    value.dtype != jnp.float32 for value in gradients_bf16
+):
+    raise AssertionError("Expected BF16 output and FP32 parameter gradients")
 for actual, expected in zip(
     (output_bf16, *gradients_bf16), reference_products(initial_lengths), strict=True
 ):
-    np.testing.assert_allclose(
-        np.asarray(actual, dtype=np.float32), expected, rtol=3e-2, atol=3e-2
+    torch.testing.assert_close(
+        torch.tensor(actual.tolist(), dtype=torch.float32),
+        expected,
+        rtol=3e-2,
+        atol=3e-2,
     )
 print("JAX BF16 output and FP32 parameter gradients match within BF16 tolerance.")
