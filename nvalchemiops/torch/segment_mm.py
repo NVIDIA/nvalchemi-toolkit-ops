@@ -17,16 +17,25 @@
 
 from __future__ import annotations
 
-from functools import partial
-
 import torch
 import warp as wp
 
+from nvalchemiops.batch_utils import _segment_counts
 from nvalchemiops.segment_mm import (
-    _segment_mm_backward_b_impl,
-    _segment_mm_backward_impl,
+    _BLOCK_DIM,
+    _INDEX_LIMIT,
+    _TILE_M,
+    _TILE_N,
+    _grad_b_launch_config,
+    _launch_forward,
+    _launch_grad_a,
+    _launch_grad_b,
+    _launch_segment_offsets,
+    _segment_offsets_requires_scan,
+    _validate_grad_out,
+    _validate_output,
 )
-from nvalchemiops.segment_mm import segment_mm as _warp_segment_mm
+from nvalchemiops.segment_mm import _validate_inputs as _validate_warp_inputs
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
     scoped_warp_capture,
@@ -60,16 +69,78 @@ def _validate_inputs(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> 
         raise ValueError("seglen must contain one length per segment in b")
 
 
+def _segment_offsets(
+    seglen: wp.array,
+    capacity: int,
+    device: torch.device,
+    tile_rows: int = _TILE_M,
+    skip_first_tile: bool = False,
+    *,
+    chunk_rows: int = 0,
+) -> tuple[wp.array, wp.array, wp.array]:
+    """Build device schedules with Torch-owned offsets and scan workspace.
+
+    Called inside the binding's stream scope after metadata validation. The
+    returned Warp views retain their Torch tensors. When no separate chunk
+    schedule is requested, the third result aliases the tile offsets.
+    """
+    groups = seglen.shape[0]
+    rows = torch.empty(groups + 1, dtype=torch.int32, device=device)
+    tiles = torch.empty_like(rows)
+    chunks = torch.empty_like(rows) if chunk_rows else tiles
+    row_offsets = wp.from_torch(rows, requires_grad=False)
+    tile_offsets = wp.from_torch(tiles, requires_grad=False)
+    chunk_offsets = (
+        wp.from_torch(chunks, requires_grad=False) if chunk_rows else tile_offsets
+    )
+    needs_scan = _segment_offsets_requires_scan(
+        groups, seglen.device.is_cuda, bool(chunk_rows)
+    )
+    row_prefix = None
+    if needs_scan:
+        # Widen before summing so even invalid int32 lengths cannot overflow.
+        prefix = torch.empty(groups + 1, dtype=torch.int64, device=device)
+        row_prefix = wp.from_torch(prefix, requires_grad=False)
+        wp.launch(
+            _segment_counts,
+            dim=groups + 1,
+            inputs=[seglen, row_prefix],
+            device=seglen.device,
+        )
+        torch.cumsum(prefix, dim=0, dtype=prefix.dtype, out=prefix)
+    _launch_segment_offsets(
+        seglen,
+        capacity,
+        row_offsets,
+        tile_offsets,
+        tile_rows,
+        skip_first_tile,
+        chunk_rows=chunk_rows,
+        chunk_offsets=chunk_offsets if chunk_rows else None,
+        row_prefix=row_prefix,
+    )
+    if needs_scan:
+        torch.cumsum(tiles, dim=0, dtype=tiles.dtype, out=tiles)
+        if chunk_rows:
+            torch.cumsum(chunks, dim=0, dtype=chunks.dtype, out=chunks)
+    return row_offsets, tile_offsets, chunk_offsets
+
+
 def _forward(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.Tensor:
     """Wrap strided storage and use the current Torch stream on CUDA."""
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         out = a.new_empty((a.shape[0], b.shape[2]))
-        _warp_segment_mm(
-            wp.from_torch(a, requires_grad=False),
-            wp.from_torch(b, requires_grad=False),
-            wp.from_torch(seglen, requires_grad=False),
-            wp.from_torch(out, requires_grad=False),
-        )
+        a_wp = wp.from_torch(a, requires_grad=False)
+        b_wp = wp.from_torch(b, requires_grad=False)
+        seglen_wp = wp.from_torch(seglen, requires_grad=False)
+        out_wp = wp.from_torch(out, requires_grad=False)
+        _validate_warp_inputs(a_wp, b_wp, seglen_wp)
+        _validate_output(out_wp, "out", out.shape, a_wp, (a_wp, b_wp, seglen_wp))
+        if a.shape[0] == 0 or b.shape[0] == 0:
+            out.zero_()
+            return out
+        row_offsets, tile_offsets, _ = _segment_offsets(seglen_wp, a.shape[0], a.device)
+        _launch_forward(a_wp, b_wp, row_offsets, tile_offsets, out_wp)
     return out
 
 
@@ -90,14 +161,61 @@ def _backward(
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         grad_a = a.new_empty(a.shape)
         grad_b = b.new_empty(b.shape)
-        _segment_mm_backward_impl(
-            wp.from_torch(a, requires_grad=False),
-            wp.from_torch(b, requires_grad=False),
-            wp.from_torch(seglen, requires_grad=False),
-            wp.from_torch(grad_out, requires_grad=False),
-            wp.from_torch(grad_a, requires_grad=False),
-            wp.from_torch(grad_b, requires_grad=False),
-            partials_factory=partial(_weight_gradient_scratch, a.device),
+        a_wp = wp.from_torch(a, requires_grad=False)
+        b_wp = wp.from_torch(b, requires_grad=False)
+        seglen_wp = wp.from_torch(seglen, requires_grad=False)
+        grad_out_wp = wp.from_torch(grad_out, requires_grad=False)
+        grad_a_wp = wp.from_torch(grad_a, requires_grad=False)
+        grad_b_wp = wp.from_torch(grad_b, requires_grad=False)
+        _validate_warp_inputs(a_wp, b_wp, seglen_wp)
+        capacity, k = a.shape
+        groups, _, n = b.shape
+        _validate_grad_out(a_wp, grad_out_wp, n)
+        inputs = (a_wp, b_wp, seglen_wp, grad_out_wp)
+        _validate_output(grad_a_wp, "grad_a", a.shape, a_wp, inputs)
+        _validate_output(grad_b_wp, "grad_b", b.shape, a_wp, (*inputs, grad_a_wp))
+        if capacity == 0 or groups == 0:
+            grad_a.zero_()
+            grad_b.zero_()
+            return grad_a, grad_b
+
+        chunk_rows, chunk_capacity = _grad_b_launch_config(
+            capacity, groups, k, n, a.element_size()
+        )
+        row_tasks = (capacity + _TILE_M - 1) // _TILE_M + groups
+        da_column_tiles = (k + _TILE_N - 1) // _TILE_N
+        if row_tasks * da_column_tiles * _BLOCK_DIM > _INDEX_LIMIT:
+            raise ValueError(
+                "Backward workspace or launch dimensions exceed the int32 index range"
+            )
+        row_offsets, tile_offsets, chunk_offsets = _segment_offsets(
+            seglen_wp,
+            capacity,
+            a.device,
+            chunk_rows=chunk_rows if chunk_rows < capacity else 0,
+        )
+        weights_wp = b_wp
+        if b.dtype == torch.float32:
+            weights = b.transpose(1, 2).contiguous()
+            weights_wp = wp.from_torch(weights, requires_grad=False)
+            b_wp = weights_wp.transpose((0, 2, 1))
+        _launch_grad_a(
+            grad_out_wp, b_wp, row_offsets, tile_offsets, grad_a_wp, weights_wp
+        )
+        partials_wp = grad_b_wp
+        if chunk_rows < capacity:
+            partials = torch.empty(
+                (chunk_capacity, k, n), dtype=torch.float32, device=a.device
+            )
+            partials_wp = wp.from_torch(partials, requires_grad=False)
+        _launch_grad_b(
+            a_wp,
+            row_offsets,
+            chunk_offsets,
+            grad_out_wp,
+            grad_b_wp,
+            partials_wp,
+            chunk_rows,
         )
     return grad_a, grad_b
 
@@ -118,22 +236,41 @@ def _weight_product(
     """Compute only the segmented weight product, retaining native operand dtype."""
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         grad_b = a.new_empty((seglen.shape[0], a.shape[1], grad_out.shape[1]))
-        _segment_mm_backward_b_impl(
-            wp.from_torch(a, requires_grad=False),
-            wp.from_torch(seglen, requires_grad=False),
-            wp.from_torch(grad_out, requires_grad=False),
-            wp.from_torch(grad_b, requires_grad=False),
-            partials_factory=partial(_weight_gradient_scratch, a.device),
+        a_wp = wp.from_torch(a, requires_grad=False)
+        seglen_wp = wp.from_torch(seglen, requires_grad=False)
+        grad_out_wp = wp.from_torch(grad_out, requires_grad=False)
+        grad_b_wp = wp.from_torch(grad_b, requires_grad=False)
+        _validate_warp_inputs(a_wp, grad_b_wp, seglen_wp)
+        _validate_grad_out(a_wp, grad_out_wp, grad_out.shape[1])
+        _validate_output(
+            grad_b_wp, "grad_b", grad_b.shape, a_wp, (a_wp, seglen_wp, grad_out_wp)
+        )
+        if a.shape[0] == 0 or seglen.shape[0] == 0:
+            grad_b.zero_()
+            return grad_b
+        groups, k, n = grad_b.shape
+        chunk_rows, chunk_capacity = _grad_b_launch_config(
+            a.shape[0], groups, k, n, a.element_size()
+        )
+        row_offsets, chunk_offsets, _ = _segment_offsets(
+            seglen_wp, a.shape[0], a.device, chunk_rows, skip_first_tile=True
+        )
+        partials_wp = grad_b_wp
+        if chunk_rows < a.shape[0]:
+            partials = torch.empty(
+                (chunk_capacity, k, n), dtype=torch.float32, device=a.device
+            )
+            partials_wp = wp.from_torch(partials, requires_grad=False)
+        _launch_grad_b(
+            a_wp,
+            row_offsets,
+            chunk_offsets,
+            grad_out_wp,
+            grad_b_wp,
+            partials_wp,
+            chunk_rows,
         )
     return grad_b
-
-
-def _weight_gradient_scratch(
-    device: torch.device, shape: tuple[int, int, int]
-) -> wp.array:
-    """Keep chunk scratch in Torch's allocator and current stream/capture pool."""
-    partials = torch.empty(shape, dtype=torch.float32, device=device)
-    return wp.from_torch(partials, requires_grad=False)
 
 
 def _weight_product_fake(

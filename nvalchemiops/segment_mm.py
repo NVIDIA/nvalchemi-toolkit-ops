@@ -15,7 +15,6 @@
 
 """Warp segmented matrix multiplication and explicit operand gradients."""
 
-from collections.abc import Callable
 from typing import Any
 
 import warp as wp
@@ -590,6 +589,63 @@ def _segment_offsets(
     groups = seglen.shape[0]
     row_offsets = wp.empty(groups + 1, dtype=wp.int32, device=seglen.device)
     tile_offsets = wp.empty(groups + 1, dtype=wp.int32, device=seglen.device)
+    needs_scan = _segment_offsets_requires_scan(
+        groups, seglen.device.is_cuda, chunk_offsets is not None
+    )
+    row_prefix = None
+    if needs_scan:
+        row_prefix = wp.empty(groups + 1, dtype=wp.int64, device=seglen.device)
+        wp.launch(
+            _segment_counts,
+            dim=groups + 1,
+            inputs=[seglen, row_prefix],
+            device=seglen.device,
+        )
+        wp.utils.array_scan(row_prefix, row_prefix)
+    _launch_segment_offsets(
+        seglen,
+        capacity,
+        row_offsets,
+        tile_offsets,
+        tile_rows,
+        skip_first_tile,
+        chunk_rows=chunk_rows,
+        chunk_offsets=chunk_offsets,
+        row_prefix=row_prefix,
+    )
+    if needs_scan:
+        wp.utils.array_scan(tile_offsets, tile_offsets)
+        if chunk_offsets is not None:
+            wp.utils.array_scan(chunk_offsets, chunk_offsets)
+    return row_offsets, tile_offsets
+
+
+def _segment_offsets_requires_scan(groups: int, is_cuda: bool, fused: bool) -> bool:
+    """Whether offset construction needs caller-owned prefix scans."""
+    return groups > 128 and not (fused and is_cuda and groups <= 1024)
+
+
+def _launch_segment_offsets(
+    seglen: wp.array,
+    capacity: int,
+    row_offsets: wp.array,
+    tile_offsets: wp.array,
+    tile_rows: int = _TILE_M,
+    skip_first_tile: bool = False,
+    *,
+    chunk_rows: int = 0,
+    chunk_offsets: wp.array | None = None,
+    row_prefix: wp.array | None = None,
+) -> None:
+    """Build offsets in caller-owned storage on the current Warp stream.
+
+    When ``_segment_offsets_requires_scan`` is true, ``row_prefix`` must contain
+    an inclusive int64 scan of ``_segment_counts``. The caller must then scan
+    the tile counts and any chunk counts written here. Other schedules produce
+    complete prefixes in one launch. All offset buffers have ``groups + 1``
+    int32 entries. This leaf allocates no storage.
+    """
+    groups = seglen.shape[0]
     fused = chunk_offsets is not None
     chunk_output = chunk_offsets if fused else tile_offsets
     minimum_rows = 512 if groups >= 32 else 256
@@ -636,16 +692,6 @@ def _segment_offsets(
             device=seglen.device,
         )
     else:
-        # Both group count and each nonnegative length fit int32, so their
-        # sum fits int64 even when the caller's length preconditions are broken.
-        row_prefix = wp.empty(groups + 1, dtype=wp.int64, device=seglen.device)
-        wp.launch(
-            _segment_counts,
-            dim=groups + 1,
-            inputs=[seglen, row_prefix],
-            device=seglen.device,
-        )
-        wp.utils.array_scan(row_prefix, row_prefix)
         wp.launch(
             _segment_offsets_clamped_fused if fused else _segment_offsets_clamped,
             dim=groups + 1,
@@ -662,12 +708,6 @@ def _segment_offsets(
             ],
             device=seglen.device,
         )
-        # Each nonempty range needs at most one tile per row, so the tile
-        # prefix is bounded by capacity and remains safe in int32.
-        wp.utils.array_scan(tile_offsets, tile_offsets)
-        if fused:
-            wp.utils.array_scan(chunk_offsets, chunk_offsets)
-    return row_offsets, tile_offsets
 
 
 def _launch_forward(
@@ -979,22 +1019,6 @@ def segment_mm_backward_b(
     segment_mm : Compute the forward segmented products.
     segment_mm_backward : Compute both operand gradients.
     """
-    _segment_mm_backward_b_impl(a, seglen, grad_out, grad_b)
-
-
-def _segment_mm_backward_b_impl(
-    a: wp.array,
-    seglen: wp.array,
-    grad_out: wp.array,
-    grad_b: wp.array,
-    partials_factory: Callable[[tuple[int, int, int]], wp.array] | None = None,
-) -> None:
-    """Compute dB with optional framework-owned FP32 chunk scratch.
-
-    The optional factory allocates fresh contiguous FP32 storage of the requested
-    shape on the input device. It is called only when chunks require scratch.
-    Public Warp calls allocate their own scratch at the same point.
-    """
     _validate_inputs(a, grad_b, seglen)
     _validate_grad_out(a, grad_out, grad_b.shape[2])
     _validate_output(
@@ -1017,12 +1041,10 @@ def _segment_mm_backward_b_impl(
         )
         if chunk_rows >= a.shape[0]:
             partials = grad_b
-        elif partials_factory is None:
+        else:
             partials = wp.empty(
                 (chunk_capacity, k, n), dtype=wp.float32, device=a.device
             )
-        else:
-            partials = partials_factory((chunk_capacity, k, n))
         _launch_grad_b(
             a, row_offsets, chunk_offsets, grad_out, grad_b, partials, chunk_rows
         )
@@ -1110,24 +1132,6 @@ def segment_mm_backward(
     segment_mm : Compute the forward segmented products.
     segment_mm_backward_b : Compute only the weight gradient.
     """
-    _segment_mm_backward_impl(a, b, seglen, grad_out, grad_a, grad_b)
-
-
-def _segment_mm_backward_impl(
-    a: wp.array,
-    b: wp.array,
-    seglen: wp.array,
-    grad_out: wp.array,
-    grad_a: wp.array,
-    grad_b: wp.array,
-    partials_factory: Callable[[tuple[int, int, int]], wp.array] | None = None,
-) -> None:
-    """Compute both gradients with optional framework-owned FP32 chunk scratch.
-
-    The optional factory satisfies ``_segment_mm_backward_b_impl``'s contract.
-    Validation, scheduling, and numerical kernels are shared with the public
-    Warp operation. Scratch is allocated after enqueuing the input gradient.
-    """
     _validate_inputs(a, b, seglen)
     capacity, k = a.shape
     groups, _, n = b.shape
@@ -1166,12 +1170,10 @@ def _segment_mm_backward_impl(
         _launch_grad_a(grad_out, b, row_offsets, tile_offsets, grad_a, b_transposed)
         if chunk_rows >= capacity:
             partials = grad_b
-        elif partials_factory is None:
+        else:
             partials = wp.empty(
                 (chunk_capacity, k, n), dtype=wp.float32, device=a.device
             )
-        else:
-            partials = partials_factory((chunk_capacity, k, n))
         _launch_grad_b(
             a, row_offsets, chunk_offsets, grad_out, grad_b, partials, chunk_rows
         )

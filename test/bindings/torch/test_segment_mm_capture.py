@@ -38,11 +38,12 @@ def _length_cases(groups):
     """Alternate active and empty splits, including the last scanned segment."""
     if groups == 1:
         return ((1007,), (0,), (33,), (1019,))
+    middle = (groups - 1) // 2
     return (
-        (2049,) + (0,) * 63 + (31,) + (0,) * 63 + (1025,),
+        (2049,) + (0,) * (middle - 1) + (31,) + (0,) * (groups - middle - 2) + (1025,),
         (0,) * groups,
-        (0,) * 64 + (769,) + (0,) * 63 + (33,),
-        (512,) + (0,) * 126 + (1023, 17),
+        (0,) * middle + (769,) + (0,) * (groups - middle - 2) + (33,),
+        (512,) + (0,) * (groups - 3) + (1023, 17),
     )
 
 
@@ -64,7 +65,7 @@ class TestSegmentMMCapture:
     """Replay captured scratch-dependent paths against independent dense products."""
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-    @pytest.mark.parametrize("capacity,groups", [(1024, 1), (40000, 129)])
+    @pytest.mark.parametrize("capacity,groups", [(1024, 1), (40000, 129), (4096, 1025)])
     @pytest.mark.parametrize(
         "capture_error_mode", ["global", "thread_local", "relaxed"]
     )
@@ -85,7 +86,7 @@ class TestSegmentMMCapture:
             out = segment_mm(a, b, lengths)
             return out, *torch.autograd.grad(out, (a, b), g)
 
-        # Both shapes split dB; 129 groups also exercises the cooperative prefix.
+        # All shapes split dB; 129/1025 groups cover cooperative/framework scans.
         graph, actual = _capture(evaluate, capture_error_mode)
         for values in cases:
             used = sum(values)

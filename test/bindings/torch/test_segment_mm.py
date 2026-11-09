@@ -566,6 +566,77 @@ class TestSegmentMM:
             test_utils=("test_schema", "test_faketensor", "test_aot_dispatch_dynamic"),
         )
 
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    @pytest.mark.parametrize("groups", [3, 64, 1025])
+    def test_scratch_is_framework_owned(self, dtype, groups, monkeypatch):
+        """Forward and gradient paths use Torch storage across scheduling regimes."""
+        wp = importlib.import_module("warp")
+        binding = importlib.import_module("nvalchemiops.torch.segment_mm")
+        values = (1537,) + (0,) * (groups - 2) + (17,)
+        a, b, lengths = _inputs(dtype, values, capacity=2048)
+        g = torch.randn(2048, b.shape[2], device="cuda", dtype=dtype)
+        a[sum(values) :] = torch.nan
+        g[sum(values) :] = torch.nan
+        a.requires_grad_()
+        b.requires_grad_()
+
+        def evaluate():
+            """Exercise full backward and the weight-only higher-derivative leaf."""
+            out = segment_mm(a, b, lengths)
+            da, db = torch.autograd.grad(out, (a, b), g)
+            weight_product = binding._apply_weight_product(a, g, lengths)
+            return out, da, db, weight_product
+
+        evaluate()
+        torch.cuda.synchronize()
+        expected = _reference(a, b, values, g)
+
+        def reject_warp_scratch(*args, **kwargs):
+            """Reject allocations that escape the framework's memory ownership."""
+            raise AssertionError("PyTorch SegMM must use framework-owned scratch")
+
+        with monkeypatch.context() as patch:
+            for name in (
+                "empty",
+                "empty_like",
+                "zeros",
+                "zeros_like",
+                "full",
+                "full_like",
+                "clone",
+            ):
+                patch.setattr(wp, name, reject_warp_scratch)
+            patch.setattr(wp.utils, "array_scan", reject_warp_scratch)
+            actual = evaluate()
+
+        for value, reference in zip(actual, (*expected, expected[2]), strict=True):
+            _close(value, reference)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    def test_large_group_lengths_stay_bounded(self, dtype):
+        """Large-group scans clip negatives and saturate totals beyond int32 range."""
+        binding = importlib.import_module("nvalchemiops.torch.segment_mm")
+        empty = (0,) * 1021
+        cases = (
+            ((-2147483648, 3, 2147483647, 2147483647), (0, 3, 7, 0)),
+            ((-2147483648, 3, -7, 2), (0, 3, 0, 2)),
+        )
+        for values, bounded in cases:
+            a, b, lengths = _inputs(dtype, values + empty, capacity=10)
+            g = torch.randn(10, b.shape[2], device="cuda", dtype=dtype)
+            a[sum(bounded) :] = torch.nan
+            g[sum(bounded) :] = torch.nan
+            a.requires_grad_()
+            b.requires_grad_()
+            out = segment_mm(a, b, lengths)
+            da, db = torch.autograd.grad(out, (a, b), g)
+            weight_product = binding._apply_weight_product(a, g, lengths)
+            expected = _reference(a, b, bounded + empty, g)
+            for value, reference in zip(
+                (out, da, db, weight_product), (*expected, expected[2]), strict=True
+            ):
+                _close(value, reference)
+
     @pytest.mark.parametrize(
         "route,capacity,values",
         [
