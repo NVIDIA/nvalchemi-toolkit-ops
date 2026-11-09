@@ -277,95 +277,380 @@ def _segment_counts(
         row_counts[index] = wp.int64(wp.max(seglen[index - 1], 0))
 
 
-@wp.kernel(enable_backward=False)
-def _segment_offsets_small(
-    seglen: wp.array(dtype=wp.int32),
-    capacity: int,
-    tile_rows: int,
-    row_offsets: wp.array(dtype=wp.int32),
-    tile_offsets: wp.array(dtype=wp.int32),
-):
-    """Build capacity-bounded prefix arrays directly for small segment counts.
-
-    Parameters
-    ----------
-    seglen : wp.array, shape (R,), dtype int32
-        Runtime segment lengths. Negative values are treated as zero.
-    capacity : int
-        Maximum number of active rows, stored as an int32 scalar.
-    tile_rows : int
-        Positive number of rows in each work tile.
-    row_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated cumulative row offsets, bounded by ``capacity``.
-    tile_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated cumulative counts of ``tile_rows``-row tiles.
-        Both offset arrays start with zero.
-
-    Notes
-    -----
-    Thread launch: ``R + 1`` threads, one per prefix element.
-    Each thread sums its preceding segments, giving quadratic total work.
-    Callers choose a bounded segment count appropriate to their launch overhead.
-    Modifies: every element of ``row_offsets`` and ``tile_offsets``.
-
-    See Also
-    --------
-    _segment_offsets_clamped : Build offsets from scanned row counts.
-    """
-    index = wp.tid()
-    rows = int(0)
-    tiles = int(0)
-    for group in range(index):
-        length = wp.min(wp.max(seglen[group], 0), capacity - rows)
-        rows += length
-        tiles += length / tile_rows + int(length % tile_rows != 0)
-    row_offsets[index] = rows
-    tile_offsets[index] = tiles
+@wp.func
+def _segment_chunk_rows(active_rows: int, extra_slots: int, minimum_rows: int):
+    """Fit active SegMM rows into fixed extra slots using 32-row chunk multiples."""
+    required = wp.max(active_rows - 1, 0) / (extra_slots + 1) + 1
+    return wp.max(minimum_rows, (required + 31) / 32 * 32)
 
 
-@wp.kernel(enable_backward=False)
-def _segment_offsets_clamped(
-    row_prefix: wp.array(dtype=wp.int64),
-    capacity: int,
-    tile_rows: int,
-    row_offsets: wp.array(dtype=wp.int32),
-    tile_offsets: wp.array(dtype=wp.int32),
-):
-    """Clamp wide row prefixes to capacity and count tiles over the clipped ranges.
+def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
+    """Specialize the small prefix builder with an optional second work schedule."""
 
-    Parameters
-    ----------
-    row_prefix : wp.array, shape (R + 1,), dtype int64
-        Inclusive scan of nonnegative segment lengths with a leading zero.
-    capacity : int
-        Maximum number of active rows, stored as an int32 scalar.
-    tile_rows : int
-        Positive number of rows in each work tile.
-    row_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated cumulative row offsets, bounded by ``capacity``.
-    tile_offsets : wp.array, shape (R + 1,), dtype int32
-        OUTPUT: Pre-allocated per-segment counts of ``tile_rows``-row tiles,
-        preceded by zero. Apply an inclusive scan before using as offsets.
+    @wp.kernel(enable_backward=False)
+    def _segment_offsets_small(
+        seglen: wp.array(dtype=wp.int32),
+        capacity: int,
+        tile_rows: int,
+        skip_first_tile: bool,
+        row_offsets: wp.array(dtype=wp.int32),
+        tile_offsets: wp.array(dtype=wp.int32),
+        chunk_rows: int,
+        chunk_offsets: wp.array(dtype=wp.int32),
+        minimum_chunk_rows: int,
+    ):
+        """Build capacity-bounded prefix arrays directly for small segment counts.
 
-    Notes
-    -----
-    Thread launch: ``R + 1`` threads, one per prefix element.
-    Modifies: every element of ``row_offsets`` and ``tile_offsets``.
+        Parameters
+        ----------
+        seglen : wp.array, shape (R,), dtype int32
+            Runtime segment lengths. Negative values are treated as zero.
+        capacity : int
+            Maximum number of active rows, stored as an int32 scalar.
+        tile_rows : int
+            Positive number of rows in each work tile.
+        skip_first_tile : bool
+            Exclude each nonempty segment's first tile from the work prefix.
+        row_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Pre-allocated cumulative row offsets, bounded by ``capacity``.
+        tile_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Pre-allocated cumulative counts of ``tile_rows``-row tiles.
+            Both offset arrays start with zero.
 
-    See Also
-    --------
-    _segment_counts : Prepare nonnegative lengths for the row-prefix scan.
-    _segment_offsets_small : Build row and tile offsets directly for small inputs.
-    """
-    index = wp.tid()
-    row = int(wp.min(row_prefix[index], wp.int64(capacity)))
-    row_offsets[index] = row
-    if index == 0:
-        tile_offsets[0] = 0
-    else:
-        previous = int(wp.min(row_prefix[index - 1], wp.int64(capacity)))
-        length = row - previous
-        tile_offsets[index] = length / tile_rows + int(length % tile_rows != 0)
+        chunk_rows : int
+            Positive row count for the fused additional-chunk schedule. Ignored
+            by the ordinary specialization.
+        chunk_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Additional-chunk counts or prefixes in the fused specialization.
+            Unused by the ordinary specialization.
+        minimum_chunk_rows : int
+            Positive floor for adapting the chunk schedule to active rows, or zero
+            to retain its static size and skip the total-row pass.
+
+        Notes
+        -----
+        Thread launch: ``R + 1`` threads, one per prefix element.
+        Each thread sums its preceding segments, giving quadratic total work.
+        Callers choose a bounded segment count appropriate to their launch overhead.
+        Modifies: every element of ``row_offsets`` and ``tile_offsets``; the fused
+        specialization also overwrites every element of ``chunk_offsets``.
+
+        See Also
+        --------
+        _segment_offsets_clamped : Build offsets from scanned row counts.
+        """
+        index = wp.tid()
+        if minimum_chunk_rows > 0:
+            total = int(0)
+            for group in range(seglen.shape[0]):
+                total += wp.min(wp.max(seglen[group], 0), capacity - total)
+            if wp.static(with_chunks):
+                chunk_rows = _segment_chunk_rows(
+                    total, (capacity - 1) / chunk_rows, minimum_chunk_rows
+                )
+            else:
+                tile_rows = _segment_chunk_rows(
+                    total, (capacity - 1) / tile_rows, minimum_chunk_rows
+                )
+        rows = int(0)
+        tiles = int(0)
+        chunks = int(0)
+        for group in range(index):
+            length = wp.min(wp.max(seglen[group], 0), capacity - rows)
+            rows += length
+            count = length / tile_rows + int(length % tile_rows != 0)
+            if skip_first_tile:
+                count = wp.max(count - 1, 0)
+            tiles += count
+            if wp.static(with_chunks):
+                chunk_count = length / chunk_rows + int(length % chunk_rows != 0)
+                chunks += wp.max(chunk_count - 1, 0)
+        row_offsets[index] = rows
+        tile_offsets[index] = tiles
+        if wp.static(with_chunks):
+            chunk_offsets[index] = chunks
+
+    return _segment_offsets_small
+
+
+_segment_offsets_small = _make_segment_offsets_small(False)
+_segment_offsets_small_fused = _make_segment_offsets_small(True)
+
+
+def _make_segment_offsets_clamped(with_chunks: bool) -> wp.Kernel:
+    """Specialize bounded count construction with an optional chunk-count output."""
+
+    @wp.kernel(enable_backward=False)
+    def _segment_offsets_clamped(
+        row_prefix: wp.array(dtype=wp.int64),
+        capacity: int,
+        tile_rows: int,
+        skip_first_tile: bool,
+        row_offsets: wp.array(dtype=wp.int32),
+        tile_offsets: wp.array(dtype=wp.int32),
+        chunk_rows: int,
+        chunk_offsets: wp.array(dtype=wp.int32),
+        minimum_chunk_rows: int,
+    ):
+        """Clamp wide row prefixes to capacity and count tiles over the clipped ranges.
+
+        Parameters
+        ----------
+        row_prefix : wp.array, shape (R + 1,), dtype int64
+            Inclusive scan of nonnegative segment lengths with a leading zero.
+        capacity : int
+            Maximum number of active rows, stored as an int32 scalar.
+        tile_rows : int
+            Positive number of rows in each work tile.
+        skip_first_tile : bool
+            Exclude each nonempty segment's first tile from the work prefix.
+        row_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Pre-allocated cumulative row offsets, bounded by ``capacity``.
+        tile_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Pre-allocated per-segment counts of ``tile_rows``-row tiles,
+            preceded by zero. Apply an inclusive scan before using as offsets.
+
+        chunk_rows : int
+            Positive row count for the fused additional-chunk schedule. Ignored
+            by the ordinary specialization.
+        chunk_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Additional-chunk counts or prefixes in the fused specialization.
+            Unused by the ordinary specialization.
+        minimum_chunk_rows : int
+            Positive floor for adapting the chunk schedule to active rows, or zero
+            to retain its static size.
+
+        Notes
+        -----
+        Thread launch: ``R + 1`` threads, one per prefix element.
+        Modifies: every element of ``row_offsets`` and ``tile_offsets``; the fused
+        specialization also overwrites every element of ``chunk_offsets``.
+
+        See Also
+        --------
+        _segment_counts : Prepare nonnegative lengths for the row-prefix scan.
+        _segment_offsets_small : Build row and tile offsets directly for small inputs.
+        """
+        index = wp.tid()
+        if minimum_chunk_rows > 0:
+            total = int(wp.min(row_prefix[row_prefix.shape[0] - 1], wp.int64(capacity)))
+            if wp.static(with_chunks):
+                chunk_rows = _segment_chunk_rows(
+                    total, (capacity - 1) / chunk_rows, minimum_chunk_rows
+                )
+            else:
+                tile_rows = _segment_chunk_rows(
+                    total, (capacity - 1) / tile_rows, minimum_chunk_rows
+                )
+        row = int(wp.min(row_prefix[index], wp.int64(capacity)))
+        row_offsets[index] = row
+        if index == 0:
+            tile_offsets[0] = 0
+            if wp.static(with_chunks):
+                chunk_offsets[0] = 0
+        else:
+            previous = int(wp.min(row_prefix[index - 1], wp.int64(capacity)))
+            length = row - previous
+            count = length / tile_rows + int(length % tile_rows != 0)
+            if skip_first_tile:
+                count = wp.max(count - 1, 0)
+            tile_offsets[index] = count
+            if wp.static(with_chunks):
+                chunk_count = length / chunk_rows + int(length % chunk_rows != 0)
+                chunk_offsets[index] = wp.max(chunk_count - 1, 0)
+
+    return _segment_offsets_clamped
+
+
+_segment_offsets_clamped = _make_segment_offsets_clamped(False)
+_segment_offsets_clamped_fused = _make_segment_offsets_clamped(True)
+
+
+@wp.func
+def _segment_length_low_limb(value: int):
+    """Return the low 16 bits of a nonnegative segment length."""
+    return wp.max(value, 0) & 65535
+
+
+@wp.func
+def _segment_length_high_limb(value: int):
+    """Return the high 16 bits of a nonnegative segment length."""
+    return wp.max(value, 0) >> 16
+
+
+@wp.func
+def _segment_clamped_scan(low: int, high: int, capacity: int):
+    """Reconstruct an exact wide prefix before narrowing its bounded value."""
+    prefix = wp.int64(high) * wp.int64(65536) + wp.int64(low)
+    return int(wp.min(prefix, wp.int64(capacity)))
+
+
+@wp.func
+def _segment_scanned_length(low: int, high: int, length: int, capacity: int):
+    """Recover a clipped segment length from its inclusive prefix and input."""
+    prefix = wp.int64(high) * wp.int64(65536) + wp.int64(low)
+    previous = prefix - wp.int64(wp.max(length, 0))
+    return int(
+        wp.min(prefix, wp.int64(capacity)) - wp.min(previous, wp.int64(capacity))
+    )
+
+
+@wp.func
+def _segment_work_count(length: int, tile_rows: int, skip_first: int):
+    """Count work tiles without overflowing a rounded-up row numerator."""
+    count = length / tile_rows + int(length % tile_rows != 0)
+    if skip_first != 0:
+        count = wp.max(count - 1, 0)
+    return count
+
+
+def _make_segment_offsets_cooperative(bucket: int) -> wp.Kernel:
+    """Specialize one-block fused prefixes for a power-of-two segment bucket."""
+
+    @wp.kernel(enable_backward=False)
+    def _segment_offsets_cooperative_kernel(
+        seglen: wp.array(dtype=wp.int32),
+        capacity: int,
+        tile_rows: int,
+        skip_first_tile: bool,
+        row_offsets: wp.array(dtype=wp.int32),
+        tile_offsets: wp.array(dtype=wp.int32),
+        chunk_rows: int,
+        chunk_offsets: wp.array(dtype=wp.int32),
+        minimum_chunk_rows: int,
+    ):
+        """Build all three bounded prefixes with four cooperative int32 scans.
+
+        Parameters
+        ----------
+        seglen : wp.array, shape (R,), dtype int32
+            Segment lengths, with R <= bucket. Negative lengths count as zero.
+        capacity : int
+            Nonnegative upper bound for the cumulative active row count.
+        tile_rows : int
+            Positive row count per work tile.
+        skip_first_tile : bool
+            Whether the tile prefix excludes each segment's first tile.
+        row_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Capacity-bounded cumulative rows with a leading zero.
+        tile_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Cumulative work-tile counts with a leading zero.
+        chunk_rows : int
+            Positive static chunk-size ceiling for the additional-chunk prefix.
+        chunk_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Cumulative chunks beyond each segment's first, with a
+            leading zero.
+        minimum_chunk_rows : int
+            Positive lower bound for adapting chunks to the active row total,
+            or zero to retain the static chunk size.
+
+        Notes
+        -----
+        At bucket <= 1024, sums of the low and high 16-bit limbs fit int32
+        independently. Wide reconstruction and capacity clamping happen inside
+        ``wp.tile_map`` before the bounded work counts are scanned.
+
+        Thread launch: one tiled block with ``block_dim=min(bucket, 128)``.
+        Modifies: every element of ``row_offsets``, ``tile_offsets``, and
+        ``chunk_offsets``.
+        """
+        _, lane = wp.tid()
+        lengths = wp.tile_load(seglen, shape=(bucket,), offset=(0,))
+        low = wp.tile_scan_inclusive(wp.tile_map(_segment_length_low_limb, lengths))
+        high = wp.tile_scan_inclusive(wp.tile_map(_segment_length_high_limb, lengths))
+        rows = wp.tile_map(_segment_clamped_scan, low, high, capacity)
+        clipped = wp.tile_map(_segment_scanned_length, low, high, lengths, capacity)
+        if minimum_chunk_rows > 0:
+            chunk_rows = _segment_chunk_rows(
+                wp.tile_extract(rows, bucket - 1),
+                (capacity - 1) / chunk_rows,
+                minimum_chunk_rows,
+            )
+        tiles = wp.tile_scan_inclusive(
+            wp.tile_map(_segment_work_count, clipped, tile_rows, int(skip_first_tile))
+        )
+        chunks = wp.tile_scan_inclusive(
+            wp.tile_map(_segment_work_count, clipped, chunk_rows, 1)
+        )
+        wp.tile_store(row_offsets, rows, offset=(1,))
+        wp.tile_store(tile_offsets, tiles, offset=(1,))
+        wp.tile_store(chunk_offsets, chunks, offset=(1,))
+        if lane == 0:
+            row_offsets[0] = 0
+            tile_offsets[0] = 0
+            chunk_offsets[0] = 0
+
+    return _segment_offsets_cooperative_kernel
+
+
+_segment_offsets_cooperative = {
+    bucket: _make_segment_offsets_cooperative(bucket)
+    for bucket in (32, 64, 128, 256, 512, 1024)
+}
+
+
+@wp.func
+def _segment_offset_difference(previous: int, following: int):
+    """Ignore negative differences from the zero-filled tail of a prefix tile."""
+    return wp.max(following - previous, 0)
+
+
+def _make_segment_chunk_offsets(bucket: int) -> wp.Kernel:
+    """Specialize a chunk-prefix scan over precomputed bounded row offsets."""
+
+    @wp.kernel(enable_backward=False)
+    def _segment_chunk_offsets_kernel(
+        row_offsets: wp.array(dtype=wp.int32),
+        chunk_rows: int,
+        extra_slots: int,
+        chunk_offsets: wp.array(dtype=wp.int32),
+    ):
+        """Write an adaptive additional-chunk schedule into caller-owned storage.
+
+        Parameters
+        ----------
+        row_offsets : wp.array, shape (R + 1,), dtype int32
+            Nondecreasing, capacity-bounded row prefixes with a leading zero.
+            R must be at most bucket.
+        chunk_rows : int
+            Positive static chunk-size ceiling; larger ceilings adapt to the
+            active rows using the same rule as the weight-gradient kernel.
+        extra_slots : int
+            Nonnegative fixed workspace budget beyond the first chunk per segment.
+        chunk_offsets : wp.array, shape (R + 1,), dtype int32
+            OUTPUT: Cumulative additional-chunk counts with a leading zero.
+
+        Notes
+        -----
+        Thread launch: one tiled block with ``block_dim=min(bucket, 128)``.
+        Modifies: every ``chunk_offsets`` element, including the leading zero.
+        """
+        _, lane = wp.tid()
+        groups = row_offsets.shape[0] - 1
+        minimum_rows = int(256)
+        if groups >= 32:
+            minimum_rows = 512
+        if chunk_rows > minimum_rows:
+            chunk_rows = _segment_chunk_rows(
+                row_offsets[groups], extra_slots, minimum_rows
+            )
+        previous = wp.tile_load(row_offsets, shape=(bucket,), offset=(0,))
+        following = wp.tile_load(row_offsets, shape=(bucket,), offset=(1,))
+        lengths = wp.tile_map(_segment_offset_difference, previous, following)
+        chunks = wp.tile_scan_inclusive(
+            wp.tile_map(_segment_work_count, lengths, chunk_rows, 1)
+        )
+        wp.tile_store(chunk_offsets, chunks, offset=(1,))
+        if lane == 0:
+            chunk_offsets[0] = 0
+
+    return _segment_chunk_offsets_kernel
+
+
+_segment_chunk_offsets = {
+    bucket: _make_segment_chunk_offsets(bucket)
+    for bucket in (32, 64, 128, 256, 512, 1024)
+}
 
 
 @wp.kernel(enable_backward=False)

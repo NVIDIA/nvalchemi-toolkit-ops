@@ -432,7 +432,9 @@ class TestSegmentMM:
 
         def observe(kernel, *args, **kwargs):
             if any(
-                kernel is product for product in core._segment_mm_overloads.values()
+                kernel is product
+                for overloads in core._segment_mm_overloads.values()
+                for product in overloads.values()
             ):
                 row_products.append(kernel)
             return launch(kernel, *args, **kwargs)
@@ -564,14 +566,27 @@ class TestSegmentMM:
             test_utils=("test_schema", "test_faketensor", "test_aot_dispatch_dynamic"),
         )
 
-    def test_nondefault_stream(self, torch_stream_runner):
-        """Forward and backward consume delayed producers on the current Torch stream."""
-        a, b, lengths = _inputs()
-        g = torch.randn(10, 9, device="cuda")
+    @pytest.mark.parametrize(
+        "route,capacity,values",
+        [
+            pytest.param("full", 10, (3, 0, 4), id="direct-full"),
+            pytest.param("full", 2048, (1537,) + (0,) * 31, id="chunked-full"),
+            pytest.param(
+                "weight_only", 2048, (1537,) + (0,) * 31, id="chunked-weight-only"
+            ),
+        ],
+    )
+    def test_nondefault_stream(self, torch_stream_runner, route, capacity, values):
+        """Direct and scratch-backed gradients consume delayed inputs on their stream."""
+        binding = importlib.import_module("nvalchemiops.torch.segment_mm")
+        a, b, lengths = _inputs(lengths=values, capacity=capacity)
+        g = torch.randn(capacity, b.shape[2], device="cuda")
         target = tuple(torch.zeros_like(value) for value in (a, b, lengths, g))
 
         def operation(inputs):
             aa, bb, ll, gg = inputs
+            if route == "weight_only":
+                return (binding._apply_weight_product(aa, gg, ll),)
             aa = aa.detach().requires_grad_()
             bb = bb.detach().requires_grad_()
             out = segment_mm(aa, bb, ll)

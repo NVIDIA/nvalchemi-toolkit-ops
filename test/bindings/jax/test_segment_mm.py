@@ -15,6 +15,10 @@
 
 """CPU and CUDA integration tests for JAX segment_mm and higher-order autodiff."""
 
+import importlib
+import re
+from functools import partial
+
 import numpy as np
 import pytest
 import warp as wp
@@ -78,6 +82,99 @@ def _assert_close(actual, expected, *, tolerance=None):
 
 
 class TestSegmentMM:
+    @pytest.mark.parametrize(
+        "groups", [1, 31, 32, 33, 64, 65, 128, 129, 256, 257, 512, 513, 1023, 1024]
+    )
+    def test_callback_chunk_prefix_matches_jax_schedule(self, execution_device, groups):
+        """The callback scan matches bounded JAX prefixes across live lengths and buckets."""
+        from nvalchemiops.batch_utils import _segment_chunk_offsets
+
+        module = importlib.import_module("nvalchemiops.jax.segment_mm")
+        capacity, chunk_rows = 131072, 1024
+        extra_slots = (capacity - 1) // chunk_rows
+        device = "cuda:0" if execution_device.platform == "gpu" else "cpu"
+        rows = wp.empty(groups + 1, dtype=wp.int32, device=device)
+        chunks = wp.array(np.full(groups + 1, -99, np.int32), device=device)
+        bucket = max(32, 1 << (groups - 1).bit_length())
+        schedule = jax.jit(
+            lambda ll: module._row_schedule(ll, capacity, chunk_rows, True)
+        )
+        cases = (
+            ([100000], [0], [2147483647], [1], [0])
+            if groups == 1
+            else (
+                [25000] * 4,
+                [0] * 4,
+                [-2147483648, 513, 2147483647, 2147483647],
+                [0, 1, 256, 512],
+                [0] * 4,
+            )
+        )
+        for values in cases:
+            lengths = jnp.pad(jnp.asarray(values, jnp.int32), (0, groups - len(values)))
+            expected_rows, expected_chunks = schedule(lengths)
+            rows.assign(np.asarray(expected_rows))
+            wp.launch_tiled(
+                _segment_chunk_offsets[bucket],
+                dim=(1,),
+                inputs=[rows, chunk_rows, extra_slots, chunks],
+                block_dim=min(bucket, 128),
+                device=device,
+            )
+            np.testing.assert_array_equal(chunks.numpy(), np.asarray(expected_chunks))
+            assert int(chunks.numpy()[-1]) <= extra_slots
+
+    @pytest.mark.parametrize("groups,static_rows", [(4, 1056), (129, 1024)])
+    def test_adaptive_chunk_schedule(self, groups, static_rows):
+        """One compiled schedule recomputes work from active device row counts."""
+        module = importlib.import_module("nvalchemiops.jax.segment_mm")
+        lengths = jnp.pad(jnp.array([25000] * 4, jnp.int32), (0, groups - 4))
+        executable = (
+            jax.jit(lambda ll: module._row_schedule(ll, 131072, static_rows, True))
+            .lower(lengths)
+            .compile()
+        )
+        for values, extras in (([25000] * 4, [31] * 4), ([0] * 4, [0] * 4)):
+            current = jnp.pad(jnp.array(values, jnp.int32), (0, groups - 4))
+            _, actual = executable(current)
+            expected = np.pad(
+                np.concatenate(([0], np.cumsum(extras))), (0, groups - 4), mode="edge"
+            )
+            np.testing.assert_array_equal(np.asarray(actual), expected)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+    def test_adaptive_chunks_through_second_derivatives(self, dtype):
+        """Device-selected chunk sizes retain the complete differentiated product."""
+        a = jnp.full((40000, 2), 0.125, dtype)
+        b = jnp.full((4, 2, 3), 0.25, dtype)
+        tangent = (jnp.full_like(a, 0.03125), jnp.full_like(b, 0.03125))
+
+        def evaluate(fn, a, b, lengths):
+            def energy(a, b):
+                out = fn(a, b, lengths)
+                return jnp.sum(out.astype(jnp.float32) ** 2)
+
+            return jax.jvp(jax.grad(energy, (0, 1)), (a, b), tangent)
+
+        initial = jnp.array([1000, 2500, 0, 127], jnp.int32)
+        executable = (
+            jax.jit(lambda a, b, ll: evaluate(segment_mm, a, b, ll))
+            .lower(a, b, initial)
+            .compile()
+        )
+        for values in (
+            [1000, 2500, 0, 127],
+            [0, 0, 0, 0],
+            [10000, 10000, 10000, 10000],
+        ):
+            lengths = jnp.array(values, jnp.int32)
+            actual = executable(a, b, lengths)
+            expected = evaluate(_reference, a, b, lengths)
+            for value, ref in zip(
+                jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
+            ):
+                _assert_close(value, ref)
+
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
     @pytest.mark.parametrize("compiled", [False, True])
     def test_forward_and_vjp(self, dtype, compiled):
@@ -112,6 +209,33 @@ class TestSegmentMM:
         actual = jax.jit(jax.grad(lambda a, b: loss(segment_mm, a, b), operand))(a, b)
         expected = jax.grad(lambda a, b: loss(_reference, a, b), operand)(a, b)
         _assert_close(actual, expected)
+
+    def test_bf16_input_vjp_does_not_copy_transposed_weights(self):
+        """Compiled BF16 dA consumes original B without a full-B conversion."""
+        a, b, g = _inputs(jnp.bfloat16)
+        lengths = jnp.array([3, 0, 9, 2], jnp.int32)
+
+        def input_vjp(a, b, lengths, g):
+            return jax.vjp(lambda a: segment_mm(a, b, lengths), a)[1](g)[0]
+
+        executable = jax.jit(input_vjp).lower(a, b, lengths, g).compile()
+        expected = jax.vjp(lambda a: _reference(a, b, lengths), a)[1](g)[0]
+        _assert_close(executable(a, b, lengths, g), expected)
+
+        # Inspect optimized HLO, including fusion bodies: a logical transpose
+        # or physical layout copy of either full-B shape violates the contract.
+        weight_shapes = "|".join(
+            ",".join(map(str, shape))
+            for shape in (b.shape, (b.shape[0], b.shape[2], b.shape[1]))
+        )
+        conversions = re.findall(
+            rf"(?:f32|bf16)\[(?:{weight_shapes})\](?:\{{[^}}]*\}})? "
+            r"(?:transpose|copy)\([^\n]*",
+            executable.as_text(),
+        )
+        assert not conversions, "Full-B transpose/layout conversion: " + str(
+            conversions
+        )
 
     def test_runtime_lengths_and_fresh_arrays(self):
         """One executable replays with new addresses, values, and device lengths."""
@@ -306,15 +430,67 @@ class TestSegmentMM:
         monkeypatch.setattr(wp, "empty", reject_warp_scratch)
         monkeypatch.setattr(wp.utils, "array_scan", reject_warp_scratch)
         current_a, current_b = a + jnp.asarray(0.25, dtype), b * jnp.asarray(2, dtype)
-        for active_rows in (0, 3):
+        for active_rows in (0, 3, 1025, 0):
             current_lengths = jnp.array([active_rows] + [0] * (groups - 1), jnp.int32)
             out, grad_a, grad_b = evaluate(current_a, current_b, current_lengths, g)
             np.testing.assert_array_equal(np.asarray(out[:active_rows]), 1.5)
             np.testing.assert_array_equal(np.asarray(out[active_rows:]), 0)
             np.testing.assert_array_equal(np.asarray(grad_a[:active_rows]), 2)
             np.testing.assert_array_equal(np.asarray(grad_a[active_rows:]), 0)
-            np.testing.assert_array_equal(np.asarray(grad_b[0]), active_rows * 0.75)
+            np.testing.assert_array_equal(
+                np.asarray(grad_b[0]),
+                np.asarray(jnp.asarray(active_rows * 0.75, dtype)),
+            )
             np.testing.assert_array_equal(np.asarray(grad_b[1:]), 0)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+    def test_large_group_chunk_replay_with_mixed_owners(self, dtype):
+        """The JAX prefix fallback refreshes mixed chunk owners and excludes NaN padding."""
+        capacity, groups, k, n = 4096, 1025, 3, 5
+        rng = np.random.default_rng(735)
+        a_host = rng.integers(-4, 5, (capacity, k)).astype(np.float32) / 8
+        b_host = rng.integers(-4, 5, (groups, k, n)).astype(np.float32) / 8
+        g_host = rng.integers(-4, 5, (capacity, n)).astype(np.float32) / 8
+        a, b, g = (jnp.asarray(value, dtype) for value in (a_host, b_host, g_host))
+
+        def evaluate(a, b, lengths, g):
+            out, pullback = jax.vjp(lambda a, b: segment_mm(a, b, lengths), a, b)
+            return out, *pullback(g)
+
+        empty = jnp.zeros(groups, jnp.int32)
+        executable = jax.jit(evaluate).lower(a, b, empty, g).compile()
+        for active in ({}, {1024: 2305}, {1: 513, 511: 1025, 1024: 1}, {}):
+            lengths = np.zeros(groups, np.int32)
+            for group, length in active.items():
+                lengths[group] = length
+            used = int(lengths.sum())
+            current_a, current_g = a_host.copy(), g_host.copy()
+            current_a[used:] = current_g[used:] = np.nan
+            actual = executable(
+                jnp.asarray(current_a, dtype),
+                b,
+                jnp.asarray(lengths),
+                jnp.asarray(current_g, dtype),
+            )
+
+            # Slice only active rows; this oracle creates no groups-by-capacity mask.
+            expected = (
+                np.zeros((capacity, n), np.float64),
+                np.zeros((capacity, k), np.float64),
+                np.zeros((groups, k, n), np.float64),
+            )
+            start = 0
+            for group in np.flatnonzero(lengths):
+                stop = start + int(lengths[group])
+                aa = current_a[start:stop].astype(np.float64)
+                gg = current_g[start:stop].astype(np.float64)
+                bb = b_host[group].astype(np.float64)
+                expected[0][start:stop] = aa @ bb
+                expected[1][start:stop] = gg @ bb.T
+                expected[2][group] = aa.T @ gg
+                start = stop
+            for value, reference in zip(actual, expected, strict=True):
+                _assert_close(value, jnp.asarray(reference, dtype))
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
     @pytest.mark.parametrize("compiled", [False, True])
@@ -473,6 +649,71 @@ class TestSegmentMM:
             return jax.jvp(second, (b,), (jnp.ones_like(b),))[1]
 
         _assert_close(jax.jit(lambda b: third(segment_mm, b))(b), third(_reference, b))
+
+
+class TestGraphCachePolicy:
+    """Static cache choices survive transforms without mutating other callables."""
+
+    @pytest.mark.parametrize("limit", [0, -1, True, False, 1.5, "256"])
+    def test_validation(self, limit):
+        """Reject invalid cache bounds before tracing or entering Warp."""
+        a, b, _ = _inputs()
+        lengths = jnp.array([3, 0, 9, 2], jnp.int32)
+        with pytest.raises(ValueError, match="graph_cache_max"):
+            segment_mm(a, b, lengths, graph_cache_max=limit)
+
+    @pytest.mark.parametrize("limit", [17, None])
+    def test_transforms_preserve_policy(self, limit, monkeypatch):
+        """JIT, batching, and second derivatives all reach the requested cache."""
+        module = importlib.import_module("nvalchemiops.jax.segment_mm")
+        original = module._callables
+        used = []
+
+        def observe(*args, **kwargs):
+            callbacks = original(*args, **kwargs)
+            used.extend(callbacks)
+            return callbacks
+
+        monkeypatch.setattr(module, "_callables", observe)
+        a, b, _ = _inputs()
+        a, b = a * 0.1, b * 0.1
+        lengths = jnp.array([[3, 0, 9, 2], [0, 5, 1, 13]], jnp.int32)
+        operation = partial(segment_mm, graph_cache_max=limit)
+
+        def evaluate(fn, a, b):
+            def energy(a, b):
+                outputs = jax.vmap(lambda ll: fn(a, b, ll))(lengths)
+                return jnp.sum(jnp.sin(outputs))
+
+            return jax.jvp(
+                jax.value_and_grad(energy, argnums=(0, 1)),
+                (a, b),
+                (jnp.ones_like(a), jnp.ones_like(b)),
+            )
+
+        actual = jax.jit(lambda a, b: evaluate(operation, a, b))(a, b)
+        expected = evaluate(_reference, a, b)
+        for value, ref in zip(
+            jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
+        ):
+            _assert_close(value, ref)
+        assert used
+        assert all(callback.graph_cache_max == limit for callback in used)
+
+    def test_callable_policies_remain_independent(self, execution_device):
+        """Visiting other limits never changes or recreates an existing policy."""
+        module = importlib.import_module("nvalchemiops.jax.segment_mm")
+        mode = (
+            wp.JaxCallableGraphMode.NONE
+            if execution_device.platform == "cpu"
+            else wp.JaxCallableGraphMode.WARP
+        )
+        first = module._callables("float32", mode, 11)
+        for limit in (13, 19, 23, 29, None):
+            other = module._callables("float32", mode, limit)
+            assert all(callback.graph_cache_max == limit for callback in other)
+        assert module._callables("float32", mode, 11) is first
+        assert all(callback.graph_cache_max == 11 for callback in first)
 
 
 class TestExplicitMixedPrecision:

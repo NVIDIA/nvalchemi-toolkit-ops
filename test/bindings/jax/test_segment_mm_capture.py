@@ -15,8 +15,12 @@
 
 """Warp-owned JAX graph replay with prefix scans and split weight gradients."""
 
+import importlib
+from functools import wraps
+
 import numpy as np
 import pytest
+import warp as wp
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
@@ -65,6 +69,60 @@ def _dense_reference(a, b, g, lengths):
 
 class TestSegmentMMCapture:
     """Reuse one compiled graph while all input storage and runtime lengths change."""
+
+    def test_many_callsites_replay_after_warmup(self, monkeypatch):
+        """Forty live calls per product must fit the default graph cache."""
+        module = importlib.import_module("nvalchemiops.jax.segment_mm")
+        counts = [0, 0, 0]
+        for index, name in enumerate(
+            ("_launch_forward", "_launch_grad_a", "_launch_grad_b")
+        ):
+            launch = getattr(module, name)
+
+            @wraps(launch)
+            def observed(*args, _index=index, _launch=launch, **kwargs):
+                counts[_index] += 1
+                return _launch(*args, **kwargs)
+
+            monkeypatch.setattr(module, name, observed)
+
+        inputs = tuple(
+            (
+                jnp.full((5, 2), site + 1, jnp.float32),
+                jnp.full((3, 2, 3), 0.25 + site * 0.01, jnp.float32),
+                jnp.array([2, 0, 1], jnp.int32),
+                jnp.full((5, 3), 2, jnp.float32),
+            )
+            for site in range(40)
+        )
+
+        def evaluate(inputs):
+            outputs = []
+            for a, b, lengths, g in inputs:
+                out, pullback = jax.vjp(lambda a, b: segment_mm(a, b, lengths), a, b)
+                outputs.append((out, *pullback(g)))
+            return tuple(outputs)
+
+        def check(outputs):
+            for actual, (a, b, lengths, g) in zip(outputs, inputs, strict=True):
+                expected = _dense_reference(a, b, g, np.asarray(lengths))
+                for value, reference in zip(actual, expected, strict=True):
+                    _assert_close(value, reference)
+
+        executable = jax.jit(evaluate).lower(inputs).compile()
+        for callback in module._callables("float32", wp.JaxCallableGraphMode.WARP, 256):
+            wp.clear_jax_callable_graph_cache(callback)
+        captures = []
+        for _ in range(6):
+            before = counts.copy()
+            outputs = jax.block_until_ready(executable(inputs))
+            check(outputs)
+            del outputs
+            captures.append(
+                tuple(after - start for after, start in zip(counts, before))
+            )
+        assert captures[0] == (40, 40, 40)
+        assert captures[-2:] == [(0, 0, 0), (0, 0, 0)]
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
     @pytest.mark.parametrize("capacity,groups", [(1024, 1), (40000, 129)])

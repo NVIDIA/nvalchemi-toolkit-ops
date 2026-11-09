@@ -85,7 +85,7 @@ class TestSegmentMMCapture:
             out = segment_mm(a, b, lengths)
             return out, *torch.autograd.grad(out, (a, b), g)
 
-        # Both shapes require multiple dB splits; 129 groups also uses CUB scans.
+        # Both shapes split dB; 129 groups also exercises the cooperative prefix.
         graph, actual = _capture(evaluate, capture_error_mode)
         for values in cases:
             used = sum(values)

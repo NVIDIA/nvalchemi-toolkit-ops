@@ -444,8 +444,8 @@ class TestSegmentMMBackward:
 
     @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
     @pytest.mark.parametrize("k,n", [(1, 1), (35, 67), (64, 128), (129, 65)])
-    def test_gradients(self, device, dtype, k, n):
-        """Both gradients must respect empty segments, tile boundaries, and NaN padding."""
+    def test_gradients(self, device, dtype, k, n, monkeypatch):
+        """Respect empty segments and padding without copying full BF16 weights."""
         values = np.array([0, 1, 31, 0, 32, 33, 0], dtype=np.int32)
         capacity = int(values.sum()) + 19
         rng = np.random.default_rng(55)
@@ -460,7 +460,22 @@ class TestSegmentMMBackward:
         da = _device_array(np.full(a.shape, np.nan), dtype, device)
         db = _device_array(np.full(b.shape, np.nan), dtype, device)
 
-        assert segmm.segment_mm_backward(a, b, lengths, dy, da, db) is None
+        copy = wp.copy
+
+        def copy_without_weights(dest, src, *args, **kwargs):
+            """Reject materializing B while allowing unrelated runtime copies."""
+            if (
+                dtype == wp.bfloat16
+                and src.ptr == b.ptr
+                and src.size == b.size
+                and dest.ptr != b.ptr
+            ):
+                pytest.fail("BF16 input gradients must not copy the full weight array")
+            return copy(dest, src, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(wp, "copy", copy_without_weights)
+            assert segmm.segment_mm_backward(a, b, lengths, dy, da, db) is None
 
         expected_a, expected_b = _backward_reference(
             _numpy(a), _numpy(b), values, _numpy(dy), dtype
@@ -479,7 +494,7 @@ class TestSegmentMMBackward:
     @pytest.mark.parametrize(
         "a_layout", ["transposed", "sliced", "row_broadcast", "column_broadcast"]
     )
-    def test_strided_inputs(self, device, dtype, a_layout):
+    def test_strided_inputs(self, device, dtype, a_layout, monkeypatch):
         """Accept strided primal arrays, cotangents, and device lengths together."""
         values = np.array([1, 0, 33], dtype=np.int32)
         rng = np.random.default_rng(7)
@@ -527,7 +542,16 @@ class TestSegmentMMBackward:
         da = wp.empty(a.shape, dtype=dtype, device=device)
         db = wp.empty(b.shape, dtype=dtype, device=device)
 
-        segmm.segment_mm_backward(a, b, lengths, dy, da, db)
+        empty = wp.empty
+
+        def without_weight_scratch(shape, *args, **kwargs):
+            """A contiguous B transpose must not allocate another full weight buffer."""
+            assert shape != (b.shape[0], b.shape[2], b.shape[1])
+            return empty(shape, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(wp, "empty", without_weight_scratch)
+            segmm.segment_mm_backward(a, b, lengths, dy, da, db)
 
         expected_a, expected_b = _backward_reference(a_np, b_np, values, dy_np, dtype)
         np.testing.assert_array_equal(_numpy(da), expected_a)
@@ -670,7 +694,7 @@ class TestSegmentMMBackward:
     @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
     @pytest.mark.parametrize("strided", [False, True])
     def test_cuda_graph_replay(self, device, dtype, strided):
-        """Replay transpose workspaces with new input data and GPU lengths."""
+        """Replay backward with new original weights, input data, and GPU lengths."""
         a_np = np.arange(7 * 4, dtype=np.float32).reshape(7, 4) / 16
         b_np = np.arange(3 * 4 * 5, dtype=np.float32).reshape(3, 4, 5) / 32
         dy_np = np.ones((7, 5), dtype=np.float32)
@@ -839,14 +863,15 @@ class TestSegmentMMLengthBounds:
         values = np.pad(np.asarray(values, dtype=np.int32), (0, groups - 4))
         effective = np.pad(np.asarray(effective, dtype=np.int32), (0, groups - 4))
         expected_rows = np.concatenate(([0], np.cumsum(effective, dtype=np.int64)))
-        expected_tiles = np.concatenate(
-            ([0], np.cumsum((effective.astype(np.int64) + 31) // 32))
-        )
         original_offsets = segmm._segment_offsets
 
-        def checked_offsets(*args, **kwargs):
+        def checked_offsets(seglen, capacity, tile_rows=32, skip_first_tile=False):
             """Stop before unsafe matrix access if the real GPU prefix builder regresses."""
-            rows, tiles = original_offsets(*args, **kwargs)
+            rows, tiles = original_offsets(seglen, capacity, tile_rows, skip_first_tile)
+            counts = (effective.astype(np.int64) + tile_rows - 1) // tile_rows
+            if skip_first_tile:
+                counts = np.maximum(counts - 1, 0)
+            expected_tiles = np.concatenate(([0], np.cumsum(counts)))
             np.testing.assert_array_equal(rows.numpy(), expected_rows)
             np.testing.assert_array_equal(tiles.numpy(), expected_tiles)
             return rows, tiles
@@ -1006,8 +1031,269 @@ class TestSegmentMMValidation:
             segmm.segment_mm(**arrays, out=out)
 
 
+class TestSegmentMMPersistentReduction:
+    """Check sparse split reduction, including fixed graph replay and CPU lanes."""
+
+    @pytest.mark.parametrize(
+        "device_name", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)]
+    )
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("k,n", [(3, 5), (35, 67), (129, 129)])
+    def test_poisoned_partials_and_prefix_changes(self, device_name, dtype, k, n):
+        """Only owned FP32 slots are read, and each split output rounds once."""
+        if device_name == "cuda" and not wp.is_cuda_available():
+            pytest.skip("CUDA is unavailable")
+        device = wp.get_device(device_name)
+        groups, extra_capacity = 128, 127
+        tiles = (k * n + 127) // 128
+        work_blocks = min(512, extra_capacity * tiles)
+        rng = np.random.default_rng(731)
+        partials = wp.empty(
+            (groups + extra_capacity, k, n), dtype=wp.float32, device=device
+        )
+        offsets = wp.empty(groups + 1, dtype=wp.int32, device=device)
+        for active in ({}, {37: 127}, {1: 1, 7: 3, 96: 2}, {}):
+            extras = np.zeros(groups, np.int32)
+            for group, count in active.items():
+                extras[group] = count
+            prefix = np.concatenate(([0], np.cumsum(extras))).astype(np.int32)
+            scratch = np.full(partials.shape, np.nan, np.float32)
+            initial = np.full((groups, k, n), 0.25, np.float32)
+            expected = initial.copy()
+            for group in active:
+                scratch[group] = rng.normal(size=(k, n)).astype(np.float32)
+                scratch[group, 0, 0] = 1.0
+                value = scratch[group].copy()
+                for chunk in range(int(prefix[group]), int(prefix[group + 1])):
+                    scratch[groups + chunk] = rng.normal(size=(k, n)).astype(np.float32)
+                    scratch[groups + chunk, 0, 0] = 2**-8
+                    value = np.add(value, scratch[groups + chunk], dtype=np.float32)
+                expected[group] = value
+            partials.assign(scratch)
+            offsets.assign(prefix)
+            output = _device_array(initial, dtype, device)
+            wp.launch_tiled(
+                segmm._reduce_grad_b_persistent_overloads[dtype],
+                dim=(work_blocks,),
+                inputs=[partials, offsets, work_blocks, output],
+                block_dim=128,
+                device=device,
+            )
+            np.testing.assert_array_equal(
+                _numpy(output), _round_output(expected, dtype)
+            )
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("joint", [False, True])
+    @pytest.mark.parametrize("k,n", [(3, 5), (129, 129)])
+    def test_public_capture_with_changing_split_groups(
+        self, device, dtype, joint, k, n
+    ):
+        """Captured public gradients survive all-short, skewed, mixed, all-short replay."""
+        capacity, groups = 8192, 64
+        chunk_rows, slots = segmm._grad_b_launch_config(
+            capacity, groups, k, n, 2 if dtype == wp.bfloat16 else 4
+        )
+        assert chunk_rows < capacity and 0 < slots - groups < groups
+        states = [
+            np.full(groups, 96, np.int32),
+            np.zeros(groups, np.int32),
+            np.zeros(groups, np.int32),
+            np.full(groups, 32, np.int32),
+        ]
+        states[1][37] = 6145
+        states[2][[1, 17, 40]] = [513, 2049, 1]
+        with wp.ScopedStream(wp.Stream(device)):
+            a = _device_array(np.full((capacity, k), 0.5), dtype, device)
+            g = _device_array(np.full((capacity, n), 0.25), dtype, device)
+            b = _device_array(np.full((groups, k, n), 0.125), dtype, device)
+            lengths = wp.array(states[0], device=device)
+            da = wp.empty(a.shape, dtype=dtype, device=device)
+            db = wp.empty(b.shape, dtype=dtype, device=device)
+
+            def launch():
+                """Exercise either public route with the same live device buffers."""
+                if joint:
+                    segmm.segment_mm_backward(a, b, lengths, g, da, db)
+                else:
+                    segmm.segment_mm_backward_b(a, lengths, g, db)
+
+            launch()
+            with wp.ScopedCapture(device=device) as capture:
+                launch()
+            for values in states:
+                current_a = np.full(a.shape, 0.5, np.float32)
+                current_g = np.full(g.shape, 0.25, np.float32)
+                current_a[values.sum() :] = current_g[values.sum() :] = np.nan
+                wp.copy(a, _device_array(current_a, dtype, device))
+                wp.copy(g, _device_array(current_g, dtype, device))
+                lengths.assign(values)
+                wp.capture_launch(capture.graph)
+                expected_b = np.broadcast_to(values[:, None, None] / 8, db.shape)
+                np.testing.assert_array_equal(
+                    _numpy(db), _round_output(expected_b, dtype)
+                )
+                if joint:
+                    expected_a = np.zeros(da.shape, np.float32)
+                    expected_a[: values.sum()] = n / 32
+                    np.testing.assert_array_equal(
+                        _numpy(da), _round_output(expected_a, dtype)
+                    )
+
+
 class TestSegmentMMCPU:
     """Exercise complete tiles and explicit gradients with one CPU lane."""
+
+    @pytest.mark.parametrize("groups,k,n", [(4, 3, 5), (129, 256, 256)])
+    def test_adaptive_chunks_fill_fixed_workspace(self, groups, k, n):
+        """Padded capacity must not reduce active work below the fixed slot budget."""
+        capacity = 131072
+        chunk_rows, slots = segmm._grad_b_launch_config(capacity, groups, k, n, 4)
+        cases = (
+            ([25000] * 4, [31] * 4),
+            ([25001, 25000, 25000, 25000], [30] * 4),
+            ([100000, 15000, 2000, 0], [104, 15, 2, 0]),
+            ([0, 0, 0, 0], [0, 0, 0, 0]),
+            ([2147483647, -1, 0, 0], [124, 0, 0, 0]),
+        )
+        if groups == 129:
+            # Q=256, so 128 additional-slot choices round 100k active rows to 800.
+            cases = (
+                ([25000] * 4, [31] * 4),
+                ([0, 0, 0, 0], [0, 0, 0, 0]),
+                ([513, 512, 1, 0], [1, 0, 0, 0]),
+            )
+        for values, extra_counts in cases:
+            lengths = wp.array(
+                np.pad(values, (0, groups - 4)).astype(np.int32), device="cpu"
+            )
+            rows, extras = segmm._segment_offsets(
+                lengths, capacity, chunk_rows, skip_first_tile=True
+            )
+            expected = np.concatenate(([0], np.cumsum(extra_counts)))
+            expected = np.pad(expected, (0, groups - 4), mode="edge")
+            np.testing.assert_array_equal(extras.numpy(), expected)
+            assert groups + int(extras.numpy()[-1]) <= slots
+            fused = wp.empty(groups + 1, dtype=wp.int32, device="cpu")
+            fused_rows, _ = segmm._segment_offsets(
+                lengths, capacity, chunk_rows=chunk_rows, chunk_offsets=fused
+            )
+            np.testing.assert_array_equal(fused_rows.numpy(), rows.numpy())
+            np.testing.assert_array_equal(fused.numpy(), expected)
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    def test_adaptive_chunk_replay_uses_live_lengths(self, dtype):
+        """Changing chunk sizes must overwrite active partials and ignore stale slots."""
+        capacity, groups, k, n = 131072, 4, 3, 5
+        chunk_rows, slots = segmm._grad_b_launch_config(capacity, groups, k, n, 4)
+        partials = wp.array(np.full((slots, k, n), np.nan, np.float32), device="cpu")
+        db = _device_array(np.full((groups, k, n), np.nan), dtype, "cpu")
+        for values in (
+            [25000] * 4,
+            [0] * 4,
+            [257, 511, 0, 1],
+            [100000, 15000, 2000, 0],
+        ):
+            a_np = np.full((capacity, k), 0.5, np.float32)
+            g_np = np.full((capacity, n), 0.25, np.float32)
+            a_np[sum(values) :] = g_np[sum(values) :] = np.nan
+            a, g = (_device_array(x, dtype, "cpu") for x in (a_np, g_np))
+            lengths = wp.array(values, dtype=wp.int32, device="cpu")
+            rows, extras = segmm._segment_offsets(lengths, capacity, chunk_rows, True)
+            segmm._launch_grad_b(a, rows, extras, g, db, partials, chunk_rows)
+            expected = np.broadcast_to(np.asarray(values)[:, None, None] / 8, db.shape)
+            np.testing.assert_array_equal(_numpy(db), _round_output(expected, dtype))
+
+    @pytest.mark.parametrize("groups", [4, 129])
+    def test_joint_backward_builds_row_prefix_once(self, groups, monkeypatch):
+        """Both gradients must share one scheduling pass without changing results."""
+        capacity, k, n = 2048, 3, 5
+        values = np.pad(np.array([0, 1025, 0, 33], np.int32), (0, groups - 4))
+        a_np = np.full((capacity, k), 0.5, np.float32)
+        g_np = np.full((capacity, n), 0.25, np.float32)
+        a_np[values.sum() :] = g_np[values.sum() :] = np.nan
+        b_np = np.full((groups, k, n), 0.125, np.float32)
+        a, b, g = (_device_array(x, wp.float32, "cpu") for x in (a_np, b_np, g_np))
+        lengths = wp.array(values, device="cpu")
+        da = wp.empty(a.shape, dtype=wp.float32, device="cpu")
+        db = wp.empty(b.shape, dtype=wp.float32, device="cpu")
+        calls = []
+        original = segmm._segment_offsets
+
+        def observe(*args, **kwargs):
+            """Count real schedule construction while retaining all device work."""
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(segmm, "_segment_offsets", observe)
+        segmm.segment_mm_backward(a, b, lengths, g, da, db)
+        expected_a, expected_b = _backward_reference(
+            a_np, b_np, values, g_np, wp.float32
+        )
+        np.testing.assert_array_equal(_numpy(da), expected_a)
+        np.testing.assert_array_equal(_numpy(db), expected_b)
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        "capacity,groups,k,n",
+        [
+            (7, 129, 3, 5),
+            (4096, 4, 35, 67),
+            (40000, 129, 3, 5),
+            (65536, 64, 512, 512),
+            (1000000, 1, 1, 1),
+        ],
+    )
+    def test_chunk_workspace_covers_skewed_lengths(self, capacity, groups, k, n):
+        """Every possible tail-heavy schedule must fit the bounded FP32 workspace."""
+        chunk_rows, chunk_capacity = segmm._grad_b_launch_config(
+            capacity, groups, k, n, 2
+        )
+        nonempty = min(capacity, groups)
+        lengths = np.zeros(groups, dtype=np.int64)
+        lengths[:nonempty] = 1
+        lengths[nonempty - 1] += capacity - nonempty
+        counts = lengths // chunk_rows + (lengths % chunk_rows != 0)
+        assert groups + np.maximum(counts - 1, 0).sum() <= chunk_capacity
+        one_segment_chunks = capacity // chunk_rows + (capacity % chunk_rows != 0)
+        assert groups + one_segment_chunks - 1 <= chunk_capacity
+        assert chunk_capacity * k * n * 4 <= max(64 << 20, groups * k * n * 4)
+        assert chunk_capacity <= max(128, 32 * groups)
+        assert chunk_rows % 32 == 0
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("groups", [4, 129])
+    @pytest.mark.parametrize("k,n", [(3, 5), (35, 67)])
+    def test_chunk_replay_with_singletons_and_empty_segments(self, dtype, groups, k, n):
+        """Changing chunk ownership must ignore stale singleton and unused partials."""
+        capacity = 4096
+        chunk_rows, chunk_capacity = segmm._grad_b_launch_config(
+            capacity, groups, k, n, 2 if dtype == wp.bfloat16 else 4
+        )
+        partials = wp.array(
+            np.full((chunk_capacity, k, n), np.nan, np.float32), device="cpu"
+        )
+        db = _device_array(np.full((groups, k, n), np.nan), dtype, "cpu")
+        for values in (
+            [0, 1, 2305, 33],
+            [0, 0, 0, 0],
+            [0, 0, 31, 0],
+            [1025, 0, 1, 513],
+        ):
+            values = np.pad(np.asarray(values, dtype=np.int32), (0, groups - 4))
+            used = sum(values)
+            a_np = np.full((capacity, k), 0.5, np.float32)
+            g_np = np.full((capacity, n), 0.25, np.float32)
+            a_np[used:] = g_np[used:] = np.nan
+            a, g = (_device_array(x, dtype, "cpu") for x in (a_np, g_np))
+            lengths = wp.array(values, dtype=wp.int32, device="cpu")
+            rows, chunks = segmm._segment_offsets(
+                lengths, capacity, chunk_rows, skip_first_tile=True
+            )
+            segmm._launch_grad_b(a, rows, chunks, g, db, partials, chunk_rows)
+            expected = np.broadcast_to(np.asarray(values)[:, None, None] / 8, db.shape)
+            np.testing.assert_array_equal(_numpy(db), _round_output(expected, dtype))
 
     @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
     @pytest.mark.parametrize("groups", [4, 129])
@@ -1077,27 +1363,35 @@ class TestSegmentMMCPU:
         lengths = wp.array(values, device="cpu")
         rows, tiles = segmm._segment_offsets(lengths, a.shape[0])
         out = wp.empty(g.shape, dtype=dtype, device="cpu")
+        da = wp.empty(a.shape, dtype=dtype, device="cpu")
         db = wp.empty(b.shape, dtype=dtype, device="cpu")
-        splits, _ = segmm._grad_b_launch_config(
+        chunk_rows, chunk_capacity = segmm._grad_b_launch_config(
             1031, 3, 3, 5, 2 if dtype == wp.bfloat16 else 4
         )
-        partials = wp.empty((3 * splits, 3, 5), dtype=wp.float32, device="cpu")
+        _, chunks = segmm._segment_offsets(
+            lengths, a.shape[0], chunk_rows, skip_first_tile=True
+        )
+        partials = wp.empty((chunk_capacity, 3, 5), dtype=wp.float32, device="cpu")
+        transposed = wp.empty((3, 5, 3), dtype=dtype, device="cpu")
         # Warm compilation before enforcing the callback's storage contract.
         segmm._launch_forward(a, b, rows, tiles, out)
-        segmm._launch_grad_b(a, rows, g, db, partials, splits)
+        segmm._launch_grad_a(g, b, rows, tiles, da, transposed)
+        segmm._launch_grad_b(a, rows, chunks, g, db, partials, chunk_rows)
 
         def reject_allocation(*args, **kwargs):
-            """Detect storage created inside either otherwise-real launch leaf."""
+            """Detect storage created inside the otherwise-real launch leaves."""
             pytest.fail("launch leaves must use caller-owned storage")
 
         with monkeypatch.context() as patch:
             patch.setattr(wp, "empty", reject_allocation)
             patch.setattr(wp, "zeros", reject_allocation)
             segmm._launch_forward(a, b, rows, tiles, out)
-            segmm._launch_grad_b(a, rows, g, db, partials, splits)
+            segmm._launch_grad_a(g, b, rows, tiles, da, transposed)
+            segmm._launch_grad_b(a, rows, chunks, g, db, partials, chunk_rows)
 
         np.testing.assert_array_equal(
             _numpy(out), _reference(a_np, b_np, values, dtype)
         )
-        expected_b = _backward_reference(a_np, b_np, values, g_np, dtype)[1]
+        expected_a, expected_b = _backward_reference(a_np, b_np, values, g_np, dtype)
+        np.testing.assert_array_equal(_numpy(da), expected_a)
         np.testing.assert_array_equal(_numpy(db), expected_b)

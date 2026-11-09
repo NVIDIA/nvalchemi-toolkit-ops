@@ -17,12 +17,16 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import torch
 import warp as wp
 
+from nvalchemiops.segment_mm import (
+    _segment_mm_backward_b_impl,
+    _segment_mm_backward_impl,
+)
 from nvalchemiops.segment_mm import segment_mm as _warp_segment_mm
-from nvalchemiops.segment_mm import segment_mm_backward as _warp_segment_mm_backward
-from nvalchemiops.segment_mm import segment_mm_backward_b as _warp_segment_mm_backward_b
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
     scoped_warp_capture,
@@ -86,13 +90,14 @@ def _backward(
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         grad_a = a.new_empty(a.shape)
         grad_b = b.new_empty(b.shape)
-        _warp_segment_mm_backward(
+        _segment_mm_backward_impl(
             wp.from_torch(a, requires_grad=False),
             wp.from_torch(b, requires_grad=False),
             wp.from_torch(seglen, requires_grad=False),
             wp.from_torch(grad_out, requires_grad=False),
             wp.from_torch(grad_a, requires_grad=False),
             wp.from_torch(grad_b, requires_grad=False),
+            partials_factory=partial(_weight_gradient_scratch, a.device),
         )
     return grad_a, grad_b
 
@@ -113,13 +118,22 @@ def _weight_product(
     """Compute only the segmented weight product, retaining native operand dtype."""
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
         grad_b = a.new_empty((seglen.shape[0], a.shape[1], grad_out.shape[1]))
-        _warp_segment_mm_backward_b(
+        _segment_mm_backward_b_impl(
             wp.from_torch(a, requires_grad=False),
             wp.from_torch(seglen, requires_grad=False),
             wp.from_torch(grad_out, requires_grad=False),
             wp.from_torch(grad_b, requires_grad=False),
+            partials_factory=partial(_weight_gradient_scratch, a.device),
         )
     return grad_b
+
+
+def _weight_gradient_scratch(
+    device: torch.device, shape: tuple[int, int, int]
+) -> wp.array:
+    """Keep chunk scratch in Torch's allocator and current stream/capture pool."""
+    partials = torch.empty(shape, dtype=torch.float32, device=device)
+    return wp.from_torch(partials, requires_grad=False)
 
 
 def _weight_product_fake(
@@ -314,21 +328,25 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     ``out[offsets[g]:offsets[g+1]] = a[offsets[g]:offsets[g+1]] @ b[g]``.
     Rows after ``sum(seglen)`` are zero, even when input padding contains NaNs.
 
+    ``row_capacity`` is the allocated row count, including padding, and
+    ``num_segments`` is the number of segments. ``in_channels`` and
+    ``out_channels`` are the input and output feature counts.
+
     Parameters
     ----------
-    a : torch.Tensor, shape (capacity, K), dtype float32 or bfloat16
+    a : torch.Tensor, shape (row_capacity, in_channels), dtype float32 or bfloat16
         Packed input features on a CPU or CUDA device.
-    b : torch.Tensor, shape (R, K, N), dtype float32 or bfloat16
-        Weight matrices for ``R`` segments, on the same device as ``a``.
+    b : torch.Tensor, shape (num_segments, in_channels, out_channels), dtype float32 or bfloat16
+        One weight matrix per segment, on the same device as ``a``.
         The dtype must match ``a`` unless CUDA bfloat16 autocast is enabled.
-    seglen : torch.Tensor, shape (R,), dtype torch.int32
+    seglen : torch.Tensor, shape (num_segments,), dtype torch.int32
         Runtime lengths on the same device. Values must be nonnegative
-        and sum to at most ``capacity``. Zero-length segments are supported.
+        and sum to at most ``row_capacity``. Zero-length segments are supported.
         These value constraints are caller preconditions, not host checks.
 
     Returns
     -------
-    torch.Tensor, shape (capacity, N)
+    torch.Tensor, shape (row_capacity, out_channels)
         Newly allocated contiguous output on the same device as ``a``. The
         dtype matches ``a``, or is bfloat16 under CUDA bfloat16 autocast.
         Products accumulate in FP32 and round once to the output dtype.
@@ -342,9 +360,9 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
 
     Notes
     -----
-    K and N must be positive. Inputs are wrapped without copying unless autocast
-    requires dtype conversion; transposed, sliced, and broadcast views with
-    nonnegative int32 byte strides are supported.
+    ``in_channels`` and ``out_channels`` must be positive. Inputs are wrapped
+    without copying unless autocast requires dtype conversion; transposed,
+    sliced, and broadcast views with nonnegative int32 byte strides are supported.
     Segment lengths and prefix sums remain on the input device. CUDA work,
     including temporary allocation, uses the current PyTorch CUDA stream.
 

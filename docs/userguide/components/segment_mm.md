@@ -4,227 +4,209 @@
 
 # Segmented Matrix Multiplication
 
-`segment_mm(a, b, seglen)` multiplies each contiguous segment of packed rows
-by its own matrix. Use it when systems have different row counts but share
-input and output channel sizes.
+`segment_mm(a, b, seglen)` multiplies each group of rows in `a` by its own
+matrix in `b`. A group is called a **segment**. For example, each segment can
+hold the atom features for one system, with one weight matrix per system.
 
-FP32 and BF16 inputs are supported on CPU and CUDA. Each local call operates
-on one device; all its tensors must be placed on that device.
+Segments can have different numbers of rows, including zero. All segments
+share the same input and output channel counts. FP32 and BF16 are supported
+on CPU and CUDA.
 
-## Packed-Row Contract
+## How rows are grouped
 
-| Input | Shape | Meaning |
+Rows from the same segment must be next to each other in `a`, with segments
+stored in order. `seglen` gives the number of rows in each segment.
+
+For `a.shape = (8, 4)`, `b.shape = (3, 4, 5)`, and `seglen = [3, 0, 2]`:
+
+| Segment | Input rows | Product |
 | --- | --- | --- |
-| `a` | `(row_capacity, K)` | Allocated feature rows, packed in segment order |
-| `b` | `(R, K, N)` | One matrix per segment |
-| `seglen` | `(R,)` | Runtime `int32` row counts on the input device |
-| Output | `(row_capacity, N)` | Packed products followed by zero padding |
+| 0 | First 3 rows | `out[0:3] = a[0:3] @ b[0]` |
+| 1 | No rows | Empty segment; no product needed |
+| 2 | Next 2 rows | `out[3:5] = a[3:5] @ b[2]` |
 
-`R` is the number of segments, `K` is the number of input channels, and `N`
-is the number of output channels. `row_capacity` is the allocated number of
-rows in `a` and the output. The number of **active rows** is `sum(seglen)`;
-it may be smaller than `row_capacity`. Each segment can have a different row
-count, including zero. `row_capacity` is shared storage for all segments,
-not a per-segment row count.
+The output has shape `(8, 5)`. Only five rows are active. The last three rows
+are unused capacity, so `out[5:8]` is zero.
 
-For example, `a.shape == (8, 4)`, `b.shape == (3, 4, 5)`, and
-`seglen == [3, 0, 2]` describe three segments and five active rows:
+## Inputs and output
 
-| Segment | Feature rows | Product |
+| Array | Shape | Meaning |
 | --- | --- | --- |
-| `0` | `a[0:3]` | `a[0:3] @ b[0]` |
-| `1` | `a[3:3]` (empty) | No active output rows |
-| `2` | `a[3:5]` | `a[3:5] @ b[2]` |
+| `a` | `(row_capacity, in_channels)` | Feature rows for all segments |
+| `b` | `(num_segments, in_channels, out_channels)` | One weight matrix per segment |
+| `seglen` | `(num_segments,)` | Number of rows in each segment, as `int32` |
+| Output | `(row_capacity, out_channels)` | Products followed by zero rows |
 
-The output has shape `(8, 5)`. Its final three rows, `out[5:8]`, are padding
-and are zero. Changing lengths can change the active row count without
-changing the allocated shapes.
+`row_capacity` is the total number of allocated rows, including padding.
+`sum(seglen)` is the number of active rows. Lengths must be nonnegative and
+their sum must not exceed `row_capacity`. Input and output channel counts
+must be positive.
 
-For `offsets = [0, cumsum(seglen)]`, segment `g` computes
-`a[offsets[g]:offsets[g + 1]] @ b[g]`. These are **lengths**, unlike the
-per-row `idx` arrays used by [segment reductions](segment_ops.md).
-The caller must provide nonnegative lengths whose sum is at most `row_capacity`;
-CUDA values stay on the GPU and are not validated on the host. As a bounds-safety
-fallback, negative lengths count as zero and segment ranges are truncated at
-`row_capacity`. This fallback does not report an input error. All operands of a
-local call must be on the same CPU or CUDA device, and `K` and `N` must be positive.
+All inputs belong on the same device. Segment lengths stay on that device;
+the operation does not read them back to the CPU. Both floating inputs must
+have the same dtype, except when PyTorch CUDA BF16 autocast performs the casts.
 
-Zero-length segments, an empty segment list, and zero row capacity are
-supported. Unused output rows are zero even when input padding contains NaNs.
-The derivative with respect to padded feature rows and weights of empty
-segments is zero. Shapes are static for a compiled signature; lengths may
-change between executions while those shapes stay fixed.
+Unused feature rows are ignored, even if they contain NaNs. Their outputs and
+gradients are zero. An empty segment's weight gradient is also zero. An empty
+segment list or zero row capacity is supported.
 
-Both floating inputs use the same dtype: FP32 or BF16. Products and derivative
-products accumulate in FP32 and return the native operand dtype. BF16 outputs
-and gradients therefore retain BF16 precision. The Warp API takes an explicit
-contiguous output buffer; the framework wrappers allocate the output.
+## Quick start
 
-## PyTorch
+Both examples compute the same products and gradients for the batch above.
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 import torch
-
 from nvalchemiops.torch.segment_mm import segment_mm
 
-a = torch.randn(8, 4, device="cuda", requires_grad=True)
-b = torch.randn(3, 4, 5, device="cuda", requires_grad=True)
+a = torch.ones(8, 4, device="cuda", requires_grad=True)
+b = torch.ones(3, 4, 5, device="cuda", requires_grad=True)
 lengths = torch.tensor([3, 0, 2], device="cuda", dtype=torch.int32)
 
-with torch.autocast("cuda", dtype=torch.bfloat16):
-    out = segment_mm(a, b, lengths)  # BF16, shape (8, 5); rows 5: are zero
-    loss = out.float().square().sum()
-loss.backward()  # a.grad and b.grad are FP32, through the BF16 casts
+compiled_mm = torch.compile(segment_mm, fullgraph=True)
+out = compiled_mm(a, b, lengths)  # Shape (8, 5); rows 5:8 are zero.
+out.square().sum().backward()    # Gradients for both a and b.
 ```
 
-CUDA BF16 autocast converts both operands before the operation. Outside
-autocast they must already have the same supported dtype; CUDA FP16 autocast
-is unsupported. The FP32 parameter gradients in this example retain the
-numerical precision of the BF16 derivative products.
-CPU execution uses the explicit operand dtype; CPU autocast does not convert
-the operands. Place `a`, `b`, and `lengths` on CPU to use the same packed-row
-interface there.
+Use `device="cpu"` for CPU execution. Calling `segment_mm` directly supports
+eager autograd as well.
 
-Eager autograd, `torch.compile(fullgraph=True)`, forward AD, `torch.func.jvp`,
-and higher derivatives are supported. For compiled higher derivatives,
-compile the complete `torch.func.grad` or `torch.func.jvp` computation:
-PyTorch 2.10 AOTAutograd does not support a second backward through a
-separately compiled forward. CUDA graph capture requires kernel warmup and
-Warp's `verify_cuda` debugging option to be disabled. Keep the SegMM Warp
-module loaded and unchanged until all graph replays finish and the graphs are
-discarded. Warm up and recapture after unloading, reloading, or changing module
-options.
+:::
 
-### DDP and Force-Loss Training
-
-With `DistributedDataParallel`, each rank owns complete systems and passes
-ordinary local CUDA tensors to `segment_mm`. DDP synchronizes replicated model
-parameter gradients. The caller owns process-group initialization, device
-selection, system assignment, packing, and loss weighting across ranks.
-
-For a force loss, compute the position derivative **inside the module's
-`forward`**, with `create_graph=True`, and use ordinary `loss.backward()`
-outside the DDP wrapper. The following pattern assumes an initialized process
-group, a current CUDA device selected for each process, and these local inputs:
-
-| Variable | Shape or type | Meaning |
-| --- | --- | --- |
-| `local_rank` | `int` | CUDA device index within the process's node |
-| `weights_fp32` | `(R, K, N)` | FP32 weights, initialized identically on each rank |
-| `positions` | `(row_capacity, K)` | FP32 local input features used to form the energy |
-| `target_forces` | `(row_capacity, K)` | FP32 derivative targets, zero on padded rows |
-| `lengths` | `(R,)` | Local segment lengths as CUDA `int32` |
-
-All tensors must be on the process's CUDA device. This example uses a toy
-energy to illustrate differentiating through the input gradient.
-
-```python
-import torch
-from torch.nn.parallel import DistributedDataParallel as DDP
-
-from nvalchemiops.torch.segment_mm import segment_mm
-
-
-class ForceModel(torch.nn.Module):
-    def __init__(self, weights_fp32):
-        super().__init__()
-        self.weights = torch.nn.Parameter(weights_fp32)
-
-    def forward(self, positions, lengths):
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            out = segment_mm(torch.sin(positions), self.weights, lengths)
-            energy = out.float().square().sum()
-        return -torch.autograd.grad(energy, positions, create_graph=True)[0]
-
-
-device = torch.device("cuda", local_rank)
-model = DDP(ForceModel(weights_fp32).to(device), device_ids=[local_rank])
-forces = model(positions.requires_grad_(), lengths)
-loss = (forces - target_forces).square().sum()
-loss.backward()
-```
-
-This illustrates eager DDP force training. Keep the outer parameter-gradient
-accumulation in `backward()` so DDP's reduction hooks run.
-
-## JAX
-
-`jax.jit`, `jax.lax.scan`, JVP, VJP, and higher-order differentiation are
-supported for either or both floating operands. Integer lengths are
-nondifferentiable. Batched transforms map independent products sequentially.
-CPU and CUDA use the same public interface and derivative rules.
-For mixed precision, cast both operands inside the differentiated function:
+:::{tab-item} JAX
+:sync: jax
 
 ```python
 import jax
 import jax.numpy as jnp
-
 from nvalchemiops.jax.segment_mm import segment_mm
 
+a = jnp.ones((8, 4), dtype=jnp.float32)
+b = jnp.ones((3, 4, 5), dtype=jnp.float32)
+lengths = jnp.array([3, 0, 2], dtype=jnp.int32)
 
-@jax.jit
-def loss(a_fp32, weights_fp32, lengths):
-    out = segment_mm(
-        a_fp32.astype(jnp.bfloat16),
-        weights_fp32.astype(jnp.bfloat16),
-        lengths,
-    )
-    return jnp.sum(out.astype(jnp.float32) ** 2)
+compiled_mm = jax.jit(segment_mm)
+out = compiled_mm(a, b, lengths)  # Shape (8, 5); rows 5:8 are zero.
 
+def loss(a, b, lengths):
+    return jnp.sum(segment_mm(a, b, lengths) ** 2)
 
-gpu = jax.devices("gpu")[0]
-with jax.default_device(gpu):
-    a = jnp.ones((8, 4), dtype=jnp.float32)
-    b = jnp.ones((3, 4, 5), dtype=jnp.float32)
-    lengths = jnp.array([3, 0, 2], dtype=jnp.int32)
-
-loss_and_grad = jax.value_and_grad(loss, argnums=(0, 1))
-value, (grad_a, grad_b) = loss_and_grad(a, b, lengths)
-# grad_a.shape == (8, 4); grad_b.shape == (3, 4, 5).
-# Both gradients are FP32; padded rows and empty segments have zero gradients.
+grad_a, grad_b = jax.jit(jax.grad(loss, argnums=(0, 1)))(a, b, lengths)
 ```
 
-The casts return gradients to FP32 parameters in their original dtype, with
-BF16 numerical precision. Casting weights before passing them to
-`loss_and_grad` instead makes those BF16 arrays the differentiation inputs.
+JAX uses its default device. Use `jax.default_device` or `jax.device_put` to
+choose a CPU or CUDA device explicitly.
 
-### Whole-System Sharding
+:::
 
-Call `segment_mm` inside `jax.shard_map` with complete local systems. For a
-one-dimensional mesh named `"systems"`, use global shapes
-`(devices, row_capacity, K)`, `(devices, R, K, N)`, and `(devices, R)`:
+::::
+
+### Changing segment sizes
+
+The same compiled function can accept new lengths, such as `[2, 1, 3]`,
+without recompiling when array shapes and dtypes stay fixed. That batch has
+six active rows and two padding rows. Keep the allocated row capacity,
+segment count, and channel counts fixed; change the values in `seglen`.
+
+Lengths describe contiguous groups, rather than the per-row indices used by
+[segment reductions](segment_ops.md). The caller is responsible for valid
+lengths. For bounds safety, invalid negative lengths are treated as zero and
+ranges past capacity are truncated, without reporting an input error.
+
+## Gradients and mixed precision
+
+You can differentiate with respect to both the features `a` and weights `b`.
+Both frontends support forward derivatives (JVPs) and higher derivatives.
+Integer lengths are not differentiable. JAX also supports `jax.lax.scan`.
+
+Products and gradient products accumulate in FP32 and return the operand
+dtype. BF16 inputs therefore produce BF16 outputs and derivative products.
+To keep model parameters in FP32 while computing in BF16:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
-import jax
-import numpy as np
-from jax.sharding import Mesh, PartitionSpec as P
-
-from nvalchemiops.jax.segment_mm import segment_mm
-
-mesh = Mesh(np.array(jax.devices("gpu")), ("systems",))
-
-distributed_segment_mm = jax.jit(
-    jax.shard_map(
-        lambda a, b, lengths: segment_mm(a[0], b[0], lengths[0])[None],
-        mesh=mesh,
-        in_specs=(P("systems"), P("systems"), P("systems")),
-        out_specs=P("systems"),
-        check_vma=True,
-    )
-)
+with torch.autocast("cuda", dtype=torch.bfloat16):
+    out = segment_mm(a, b, lengths)
+    loss = out.float().square().sum()
+loss.backward()
 ```
 
-`shard_map` preserves rank, so the mapped body removes and restores the
-singleton device dimension. Devices have equal static capacities; local
-lengths may differ and must fit each device's capacity. Replicated floating
-operands receive summed gradients across the relevant mesh axes. Reduced or
-unreduced manual-axis operands must first be converted to ordinary local
-operands. The caller owns mesh construction and data placement. Automatic
-redistribution of globally packed rows, DTensor integration, and splitting a
-system across devices are outside this interface.
+CUDA BF16 autocast casts both operands. CUDA FP16 autocast is unsupported.
+CPU execution uses the explicit input dtype, even inside CPU autocast.
 
-## API Reference
+:::
 
-- {doc}`PyTorch </modules/torch/segment_mm>`
-- {doc}`JAX </modules/jax/segment_mm>`
-- {doc}`Warp forward and explicit gradients </modules/warp/segment_mm>`
+:::{tab-item} JAX
+:sync: jax
+
+```python
+def loss(a, b, lengths):
+    out = segment_mm(a.astype(jnp.bfloat16), b.astype(jnp.bfloat16), lengths)
+    return jnp.sum(out.astype(jnp.float32) ** 2)
+
+grad_a, grad_b = jax.jit(jax.grad(loss, argnums=(0, 1)))(a, b, lengths)
+```
+
+Cast inside the function being differentiated so gradients return to the
+original FP32 inputs.
+
+:::
+
+::::
+
+In both cases, FP32 parameter gradients retain the numerical precision of
+the BF16 products. Casting back to FP32 does not recover lost precision.
+
+For compiled higher derivatives in PyTorch, compile the complete
+`torch.func.grad` or `torch.func.jvp` computation. A second backward through
+a separately compiled forward is not supported by PyTorch 2.10 AOTAutograd.
+
+## Multiple GPUs
+
+Assign complete systems to each GPU, then call `segment_mm` on each device's
+local features, weights, and lengths. Each local length sum must fit that
+device's row capacity. The caller handles system assignment and data placement.
+
+- **JAX:** call inside `jax.shard_map`. Replicated operands receive gradients
+  summed across the relevant mesh axes. See the {doc}`JAX API example </modules/jax/segment_mm>`
+  for the mesh and array layout.
+- **PyTorch:** call inside a `DistributedDataParallel` model. DDP reduces model
+  parameter gradients. For force-loss training, compute forces inside the
+  model's `forward` with `create_graph=True`, then call `loss.backward()`
+  outside the DDP wrapper.
+
+Splitting a single system across GPUs and automatically redistributing packed
+rows are outside this interface.
+
+## CUDA graph reuse
+
+JAX reuses CUDA graphs when buffer addresses repeat. Each dtype has separate
+caches for the forward operation and both gradient operations, holding up to
+256 graphs each. If many buffer combinations recur, set a larger static limit,
+for example
+`segment_mm(a, b, lengths, graph_cache_max=512)`. `None` removes the limit and
+allows graph memory to grow. Fresh buffer addresses still require capture.
+The limit also applies to derivative products and is ignored on CPU.
+
+For explicit PyTorch or Warp graph capture, warm up the kernels first and
+disable Warp's `verify_cuda` debugging option. Keep the Warp module loaded
+and unchanged until captured graphs are discarded. Recapture after changing
+module options or reloading the module.
+
+## Example and API reference
+
+The {doc}`worked example </examples/03_segment_mm>` checks forward results,
+gradients, changing lengths, and BF16 using both frontends.
+
+- {doc}`PyTorch API </modules/torch/segment_mm>`
+- {doc}`JAX API </modules/jax/segment_mm>`
+- {doc}`Warp API </modules/warp/segment_mm>`: caller-provided output buffers and
+  explicit gradient functions.

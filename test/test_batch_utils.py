@@ -133,9 +133,188 @@ class TestBatchIndex:
 class TestBoundedSegmentOffsets:
     """Check generic row/tile metadata independently of matrix multiplication."""
 
+    @pytest.mark.parametrize(
+        "groups", [0, 4, 32, 33, 64, 65, 128, 129, 256, 257, 512, 513, 1024]
+    )
+    @pytest.mark.parametrize("capacity", [0, 2048, 2**30 + 17])
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            [0, -1, -2147483648, 0],
+            [65535, 65536, 65537, 1],
+            [2147483647, 2147483647, -2147483648, 0],
+        ],
+        ids=["empty", "limb_carry", "wide_overflow"],
+    )
+    def test_cooperative_fused_prefixes(self, device, groups, capacity, pattern):
+        """Cooperative limb scans must match wide arithmetic on strided inputs."""
+        import nvalchemiops.batch_utils as batch_utils
+
+        values = np.resize(np.asarray(pattern, np.int32), groups)
+        storage = wp.array(np.repeat(values, 2), device=device)
+        lengths = storage[::2] if groups else storage
+        outputs = [
+            wp.array(np.full(groups + 1, -99, np.int32), device=device)
+            for _ in range(3)
+        ]
+        bucket = max(32, 1 << (groups - 1).bit_length())
+        wp.launch_tiled(
+            batch_utils._segment_offsets_cooperative[bucket],
+            dim=(1,),
+            inputs=[
+                lengths,
+                capacity,
+                32,
+                False,
+                outputs[0],
+                outputs[1],
+                256,
+                outputs[2],
+                0,
+            ],
+            block_dim=min(bucket, 128),
+            device=device,
+        )
+        rows = np.concatenate(
+            (
+                [0],
+                np.minimum(np.cumsum(np.maximum(values.astype(np.int64), 0)), capacity),
+            )
+        )
+        clipped = np.diff(rows)
+        tiles = np.concatenate(([0], np.cumsum((clipped + 31) // 32)))
+        extras = np.concatenate(
+            ([0], np.cumsum(np.maximum((clipped + 255) // 256 - 1, 0)))
+        )
+        for actual, expected in zip(outputs, (rows, tiles, extras), strict=True):
+            np.testing.assert_array_equal(actual.numpy(), expected)
+
+    @pytest.mark.parametrize("groups", [32, 64, 128, 129, 257, 513])
+    def test_cooperative_adaptive_chunks(self, device, groups):
+        """The final clipped tile prefix must drive live chunk sizes in every bucket."""
+        import nvalchemiops.batch_utils as batch_utils
+
+        capacity = 131072
+        bucket = max(32, 1 << (groups - 1).bit_length())
+        lengths = wp.empty(groups, dtype=wp.int32, device=device)
+        outputs = [
+            wp.empty(groups + 1, dtype=wp.int32, device=device) for _ in range(3)
+        ]
+        for values, expected_extras in (
+            ([25000] * 4, [0, 31, 62, 93, 124]),
+            ([0] * 4, [0] * 5),
+            ([2147483647, -1, 1, 0], [0, 127, 127, 127, 127]),
+        ):
+            values = np.pad(np.asarray(values, np.int32), (0, groups - 4))
+            lengths.assign(values)
+            wp.launch_tiled(
+                batch_utils._segment_offsets_cooperative[bucket],
+                dim=(1,),
+                inputs=[
+                    lengths,
+                    capacity,
+                    32,
+                    False,
+                    outputs[0],
+                    outputs[1],
+                    1024,
+                    outputs[2],
+                    512,
+                ],
+                block_dim=min(bucket, 128),
+                device=device,
+            )
+            rows = np.concatenate(
+                (
+                    [0],
+                    np.minimum(
+                        np.cumsum(np.maximum(values.astype(np.int64), 0)), capacity
+                    ),
+                )
+            )
+            tiles = np.concatenate(([0], np.cumsum((np.diff(rows) + 31) // 32)))
+            extras = np.pad(expected_extras, (0, groups - 4), mode="edge")
+            for actual, expected in zip(outputs, (rows, tiles, extras), strict=True):
+                np.testing.assert_array_equal(actual.numpy(), expected)
+
+    @pytest.mark.parametrize("groups", [4, 32, 64, 128, 129, 1024, 1025])
+    @pytest.mark.parametrize("chunk_rows", [256, 512])
+    @pytest.mark.parametrize(
+        "values,expected_rows,expected_tiles,extras256,extras512,extras512_small",
+        [
+            (
+                [0, 513, 33, 0],
+                [0, 0, 513, 546, 546],
+                [0, 0, 17, 19, 19],
+                [0, 0, 2, 2, 2],
+                [0, 0, 1, 1, 1],
+                [0, 0, 2, 2, 2],
+            ),
+            (
+                [-1, 513, 64, 2147483647],
+                [0, 0, 513, 577, 2048],
+                [0, 0, 17, 19, 65],
+                [0, 0, 2, 2, 7],
+                [0, 0, 1, 1, 3],
+                [0, 0, 1, 1, 3],
+            ),
+            (
+                [-2147483648, 513, 2147483647, 2147483647],
+                [0, 0, 513, 2048, 2048],
+                [0, 0, 17, 65, 65],
+                [0, 0, 2, 7, 7],
+                [0, 0, 1, 3, 3],
+                [0, 0, 1, 3, 3],
+            ),
+            (
+                [0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+            ),
+        ],
+        ids=["padding", "capacity_clamp", "int32_overflow", "empty"],
+    )
+    def test_fused_backward_schedules(
+        self,
+        device,
+        groups,
+        chunk_rows,
+        values,
+        expected_rows,
+        expected_tiles,
+        extras256,
+        extras512,
+        extras512_small,
+    ):
+        """One bounded row scan must feed both independently specified work prefixes."""
+        import nvalchemiops.segment_mm as segmm
+
+        values = np.pad(np.asarray(values, np.int32), (0, groups - 4))
+        lengths = wp.array(np.repeat(values, 2), device=device)[::2]
+        extras = wp.array(np.full(groups + 1, -99, np.int32), device=device)
+        rows, tiles = segmm._segment_offsets(
+            lengths, 2048, chunk_rows=chunk_rows, chunk_offsets=extras
+        )
+        expected_extras = extras256 if chunk_rows == 256 else extras512
+        if groups == 4 and chunk_rows == 512:
+            expected_extras = extras512_small
+        for actual, expected in (
+            (rows, expected_rows),
+            (tiles, expected_tiles),
+            (extras, expected_extras),
+        ):
+            expected = np.pad(
+                np.asarray(expected, np.int32), (0, groups - 4), mode="edge"
+            )
+            np.testing.assert_array_equal(actual.numpy(), expected)
+
     @pytest.mark.parametrize("tile_rows", [7, 32])
     @pytest.mark.parametrize("groups", [0, 4, 128, 129, 1024])
-    def test_clipped_wide_prefixes(self, device, tile_rows, groups):
+    @pytest.mark.parametrize("skip_first_tile", [False, True])
+    def test_clipped_wide_prefixes(self, device, tile_rows, groups, skip_first_tile):
         """Both paths clamp before narrowing and count tiles from clipped lengths."""
         from nvalchemiops.batch_utils import (
             _segment_counts,
@@ -154,6 +333,9 @@ class TestBoundedSegmentOffsets:
             expected_rows[3:] = 17
             expected_tiles[2] = 2 if tile_rows == 7 else 1
             expected_tiles[3:] = 4 if tile_rows == 7 else 2
+            if skip_first_tile:
+                expected_tiles[2] -= 1
+                expected_tiles[3:] -= 2
         storage = wp.array(np.repeat(values, 2), device=device)
         lengths = storage[::2] if groups else storage
         rows = wp.empty(groups + 1, dtype=wp.int32, device=device)
@@ -164,7 +346,7 @@ class TestBoundedSegmentOffsets:
         wp.launch(
             _segment_offsets_clamped,
             groups + 1,
-            inputs=[prefix, 17, tile_rows, rows, tiles],
+            inputs=[prefix, 17, tile_rows, skip_first_tile, rows, tiles, 0, tiles, 0],
             device=device,
         )
         wp.utils.array_scan(tiles, tiles)
@@ -173,7 +355,7 @@ class TestBoundedSegmentOffsets:
         wp.launch(
             _segment_offsets_small,
             groups + 1,
-            inputs=[lengths, 17, tile_rows, rows, tiles],
+            inputs=[lengths, 17, tile_rows, skip_first_tile, rows, tiles, 0, tiles, 0],
             device=device,
         )
         np.testing.assert_array_equal(rows.numpy(), expected_rows)
