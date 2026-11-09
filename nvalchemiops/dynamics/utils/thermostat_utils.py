@@ -1754,10 +1754,12 @@ def remove_com_motion(
             device=device,
         )
 
-        # Compute COM velocity using Warp kernel (no numpy)
+        # Compute COM velocity using Warp kernel (no numpy). Size the launch
+        # from the (B,) scratch arrays: ``num_systems`` defaults to 1, and a
+        # short launch leaves com_velocities[1:] holding stale memory.
         wp.launch(
             _batch_compute_com_from_momentum_kernel,
-            dim=num_systems,
+            dim=com_velocities.shape[0],
             inputs=[total_momentum, total_mass, com_velocities],
             device=device,
         )
@@ -1889,10 +1891,12 @@ def remove_com_motion_out(
             device=device,
         )
 
-        # Compute COM velocity using Warp kernel (no numpy)
+        # Compute COM velocity using Warp kernel (no numpy). Size the launch
+        # from the (B,) scratch arrays: ``num_systems`` defaults to 1, and a
+        # short launch leaves com_velocities[1:] holding stale memory.
         wp.launch(
             _batch_compute_com_from_momentum_kernel,
-            dim=num_systems,
+            dim=com_velocities.shape[0],
             inputs=[total_momentum, total_mass, com_velocities],
             device=device,
         )
