@@ -460,7 +460,13 @@ class TestLBFGSJaxCellPreparation:
         from nvalchemiops.jax.lbfgs import _lbfgs_set_reference_cell
 
         compiled = jax.jit(_lbfgs_set_reference_cell)
-        cell = jnp.asarray(np.eye(3)[None])
+        # Run on the CPU client. In jax < 0.12 a failing ordered io_callback
+        # leaves the GPU client's effect token failed, so every later
+        # effects_barrier and the conftest GPU cleanup re-raise this expected
+        # error (fixed upstream in jax-ml/jax#41109). The host check under
+        # test is identical on both backends.
+        cpu = jax.local_devices(backend="cpu")[0]
+        cell = jax.device_put(np.eye(3)[None], cpu)
         ref_cell, ref_cell_inv = compiled(cell)
         ref_cell.block_until_ready()
         ref_cell_inv.block_until_ready()
