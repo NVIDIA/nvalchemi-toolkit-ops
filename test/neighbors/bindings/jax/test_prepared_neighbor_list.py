@@ -2903,6 +2903,39 @@ def test_prepared_fixed_naive_wrapped_pairs_track_moving_positions_and_gradients
     np.testing.assert_allclose(np.asarray(cell_grad[:, 0]), [-1.0, 0.0, 0.0])
 
 
+@pytest.mark.parametrize("method", ["naive", "batch_naive"])
+def test_prepared_naive_changing_cell_gradients(method: str) -> None:
+    """Cell gradients pass through prepared naive lists without a fixed cell."""
+    positions = jnp.array([[0.2, 1.0, 1.0], [7.8, 1.0, 1.0]], dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32) * 8.0
+    pbc = jnp.array([True, False, False], dtype=jnp.bool_)
+    batch = {}
+    if method == "batch_naive":
+        batch = {
+            "batch_idx": jnp.zeros((2,), dtype=jnp.int32),
+            "batch_ptr": jnp.array([0, 2], dtype=jnp.int32),
+        }
+    state = prepare_neighbor_list(
+        positions,
+        0.6,
+        cell=cell,
+        pbc=pbc,
+        method=method,
+        strategy="scalar",
+        max_neighbors=4,
+        return_vectors=True,
+        return_distances=True,
+        **batch,
+    )
+
+    def first_vector_x(current_cell: jax.Array) -> jax.Array:
+        result, _ = neighbor_list(positions, cell=current_cell, state=state, **batch)
+        return result[4][0, 0, 0]
+
+    cell_grad = jax.grad(first_vector_x)(cell)
+    np.testing.assert_allclose(np.asarray(cell_grad[:, 0]), [-1.0, 0.0, 0.0])
+
+
 def test_prepared_fixed_naive_partial_rows_match_direct() -> None:
     """Fixed-cell inverse reuse preserves compact partial source rows."""
     positions = jnp.array(

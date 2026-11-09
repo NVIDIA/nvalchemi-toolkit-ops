@@ -59,9 +59,21 @@ import time
 _CORE_FRACTION = 0.6
 
 
+def _visible_cores() -> int:
+    """Return the number of cores this process may use, at least 1.
+
+    ``os.cpu_count()`` reports the host total, which is wrong under a Slurm
+    job or ``taskset`` (a 16-core job on a 128-core host reports 128).
+    """
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:  # not available on this platform
+        return max(1, os.cpu_count() or 1)
+
+
 def default_workers() -> int:
     """Return the worker count to compile with: 60% of visible cores, at least 1."""
-    return max(1, int((os.cpu_count() or 1) * _CORE_FRACTION))
+    return max(1, int(_visible_cores() * _CORE_FRACTION))
 
 
 def import_package(quiet: bool) -> tuple[int, list[str]]:
@@ -121,7 +133,7 @@ def main() -> None:
     print(
         f"imported {imported} modules ({len(failed)} skipped), compiling for "
         f"{device} with {workers or 'serial'} "
-        f"worker{'' if workers == 1 else 's'} of {os.cpu_count()} cores"
+        f"worker{'' if workers == 1 else 's'} of {_visible_cores()} cores"
     )
 
     # A couple of registered specialisations do not type-check when the whole

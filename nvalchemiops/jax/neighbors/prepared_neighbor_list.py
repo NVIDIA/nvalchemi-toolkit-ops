@@ -843,37 +843,35 @@ def _batch_indices(
     return jnp.zeros((num_atoms,), dtype=jnp.int32)
 
 
+def _cell_inverse(cell_batch: jax.Array) -> jax.Array:
+    """Invert ``(num_systems, 3, 3)`` cells with the Warp cell-inverse kernel."""
+    # The kernel has no backward pass; the inverse is only used for sizing.
+    cell_batch = jax.lax.stop_gradient(cell_batch)
+    (inverse,) = _FIXED_CELL_INVERSE_REGISTRATION[cell_batch.dtype](
+        cell_batch,
+        jnp.zeros_like(cell_batch),
+        launch_dims=(cell_batch.shape[0],),
+    )
+    return inverse
+
+
 def _fixed_cell_inverse(
     cell: jax.Array,
     positions: jax.Array,
     *,
     method: str,
-    strategy: str,
     num_systems: int,
 ) -> jax.Array:
-    """Prepare the route-precision inverse carried by a fixed-cell state.
+    """Prepare the inverse carried by a fixed-cell state.
 
-    Cell-list count/binning and tile-cooperative naive launchers use Warp's
-    ``wp.inverse`` implementation. Scalar JAX paths, including cluster
-    geometry and pair-output wrappers, use ``jnp.linalg.inv``.
+    Every route inverts the cell with the Warp cell-inverse kernel, so the
+    prepared inverse matches the one a direct call computes.
     """
     dtype = positions.dtype if positions.dtype == jnp.float64 else jnp.float32
     cell_batch = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
     if method.startswith("batch_") and cell_batch.shape[0] == 1 and num_systems > 1:
         cell_batch = jnp.broadcast_to(cell_batch, (num_systems, 3, 3))
-    cell_batch = cell_batch.astype(dtype)
-    uses_warp_inverse = "cell_list" in method or (
-        method in {"naive", "batch_naive"} and strategy == "tile"
-    )
-    if uses_warp_inverse:
-        inverse = jnp.zeros_like(cell_batch)
-        (inverse,) = _FIXED_CELL_INVERSE_REGISTRATION[dtype](
-            cell_batch,
-            inverse,
-            launch_dims=(num_systems,),
-        )
-    else:
-        inverse = jnp.linalg.inv(cell_batch)
+    inverse = _cell_inverse(cell_batch.astype(dtype))
     return jax.lax.stop_gradient(inverse)
 
 
@@ -1182,7 +1180,7 @@ def _prepare_cluster_state(
 
         cell_batch = prepared_cell if prepared_cell.ndim == 3 else prepared_cell[None]
         cell_batch = jax.lax.stop_gradient(cell_batch.astype(jnp.float32))
-        inverse = jax.lax.stop_gradient(jnp.linalg.inv(cell_batch))
+        inverse = jax.lax.stop_gradient(_cell_inverse(cell_batch))
         _preload_cluster_tile_build_kernel(device_source=cell_batch, fixed_cell=True)
         qr_values = jnp.zeros((systems, 15), dtype=jnp.float32)
         axis_aligned = jnp.zeros((systems,), dtype=jnp.bool_)
@@ -2123,7 +2121,6 @@ def _build_noncluster_state(
             cell,
             positions,
             method=method,
-            strategy=str(kwargs.get("strategy", "auto")),
             num_systems=systems,
         )
         if needs_fixed_inverse
@@ -2766,7 +2763,7 @@ def _prepare_noncluster_route_execution(
         runtime_pbc = leaf_view.pbc
         if runtime_pbc.ndim == 1:
             runtime_pbc = runtime_pbc[None]
-        reciprocal = jnp.swapaxes(jnp.linalg.inv(runtime_cell), -1, -2)
+        reciprocal = jnp.swapaxes(_cell_inverse(runtime_cell), -1, -2)
         runtime_ranges = jnp.where(
             runtime_pbc,
             jnp.ceil(
