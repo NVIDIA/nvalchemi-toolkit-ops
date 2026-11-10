@@ -4993,6 +4993,7 @@ class TestFire2PartialSystems:
                 shard["batch_idx"],
                 s["max_norm"],
                 maxstep=self.HP["maxstep"],
+                whole_system_sums=True,
             )
 
         for key in ("positions", "velocities"):
@@ -5044,3 +5045,48 @@ class TestFire2PartialSystems:
                 shard["dt"],
                 shard["nsteps_inc"],
             )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_hookless_staged_apply_without_atoms_is_a_no_op(self, device):
+        """Hookless couple + apply at N == 0 leave cell, cell velocity and dt alone.
+
+        The hookless mix zeroes ``vf`` when it holds no atoms, so applying it
+        would treat the system as uphill and move the cell. Passing
+        ``whole_system_sums=True`` (the hooked path) does apply the step.
+        """
+        dtype = torch.float64
+
+        def state():
+            cell = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1)
+            cv = torch.full((2, 3, 3), 0.5, dtype=dtype, device=device)
+            dt = torch.full((2,), 0.05, dtype=dtype, device=device)
+            return cell, cv, dt
+
+        z = lambda *s: torch.zeros(*s, dtype=dtype, device=device)  # noqa: E731
+        b = torch.zeros(0, dtype=torch.int32, device=device)
+        cell, cv, dt = state()
+        cell0, cv0, dt0 = cell.clone(), cv.clone(), dt.clone()
+        vf, mn = z(2), z(2)
+        fire2_step_coord_cell_couple(z(0, 3), z(0, 3), cell, cv, dt, vf, b, mn)
+        fire2_step_coord_cell_apply(
+            z(0, 3), z(0, 3), cell, cv, dt, vf, b, mn, maxstep=0.1
+        )
+        torch.testing.assert_close(cell, cell0, rtol=0, atol=0)
+        torch.testing.assert_close(cv, cv0, rtol=0, atol=0)
+        torch.testing.assert_close(dt, dt0, rtol=0, atol=0)
+
+        cell, cv, dt = state()
+        vf = torch.ones(2, dtype=dtype, device=device)  # whole-system, downhill
+        fire2_step_coord_cell_apply(
+            z(0, 3),
+            z(0, 3),
+            cell,
+            cv,
+            dt,
+            vf,
+            b,
+            mn,
+            maxstep=0.1,
+            whole_system_sums=True,
+        )
+        assert (cell != cell0).any()

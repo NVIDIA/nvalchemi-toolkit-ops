@@ -1416,6 +1416,7 @@ def fire2_step_coord_cell_apply(
     atom_ptr: torch.Tensor | None = None,
     ext_atom_ptr: torch.Tensor | None = None,
     ext_batch_idx: torch.Tensor | None = None,
+    whole_system_sums: bool = False,
 ) -> None:
     r"""Phase 3 of the coupled variable-cell FIRE2 step: clamp + apply.
 
@@ -1435,8 +1436,12 @@ def fire2_step_coord_cell_apply(
     ``positions``, ``cell``, ``cell_velocities`` (uphill zeroing), and the clamped
     ``dt`` in-place.
 
-    A caller holding no atoms (``N == 0``) still applies the cell step and the
-    ``dt`` clamp, so every caller of a partitioned system keeps the same cell.
+    With no atoms (``N == 0``) this returns without doing anything, because the
+    mix phase zeroes ``vf`` there and the cell would be wrongly treated as
+    uphill. A caller whose ``vf`` holds whole-system sums (the mix ran with
+    ``reduce_partials``) sets ``whole_system_sums=True`` so that a caller
+    holding no atoms still applies the cell step and the ``dt`` clamp, and every
+    caller of a partitioned system keeps the same cell.
 
     Parameters
     ----------
@@ -1468,9 +1473,15 @@ def fire2_step_coord_cell_apply(
         Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
     ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
         System index for each element of the extended layout. Computed if ``None``.
+    whole_system_sums : bool, default False
+        Set when ``vf`` holds whole-system sums, i.e. the mix phase ran with
+        ``reduce_partials``. Only matters for ``N == 0``: if ``False`` the call
+        returns early, if ``True`` the cell step is applied.
     """
     device = positions.device
     M = dt.shape[0]
+    if positions.shape[0] == 0 and not whole_system_sums:
+        return
     vec_type = _TORCH_TO_WP_VEC[positions.dtype]
     mat_type = _TORCH_TO_WP_MAT[cell.dtype]
     wp_device = wp.device_from_torch(device)

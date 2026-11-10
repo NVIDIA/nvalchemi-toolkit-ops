@@ -19,6 +19,10 @@
   so a caller holding part of each system, such as one rank of a
   domain-decomposed run, gets whole-system values in the mixing and step clamp.
   Omitting them keeps the previous behavior.
+  `fire2_update_absent_systems` updates the per-system controls of systems with
+  no local atoms, and with `reduce_partials` plus `global_atom_counts` the cell
+  mix accepts ranks that hold no atoms of a system (such a rank passes
+  `whole_system_sums=True` to `fire2_step_coord_cell_apply`).
 
 ### Fixed
 
