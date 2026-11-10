@@ -2487,6 +2487,14 @@ def test_weighted_recip_backward_and_double_backward(
     """Check weighted gradients and HVPs against Torch autograd on CPU or CUDA."""
     data = _weighted_reference_inputs(batched)
     if masked_k:
+        # Keep threshold coverage separate from neutral-system cancellation.
+        # At k=1.1e-4, neutral structure factors lose digits before the
+        # 1/k**2 Green function amplifies the error. The k gradient subtracts
+        # terms near +573.5 and -573.5 to obtain a value of order 1e-6.
+        # Neither float64 Torch nor Warp is an accurate absolute reference
+        # there. Nonneutral charges keep this threshold test conditioned;
+        # the active_k cases still exercise neutral gradients and HVPs.
+        data["charges"][data["atom_start"]] += 0.125
         threshold_k = np.array(
             [
                 [0.0, 0.0, 0.0],
