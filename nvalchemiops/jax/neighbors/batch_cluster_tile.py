@@ -39,6 +39,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _GraphRegistration,
 )
 from nvalchemiops.jax.neighbors._status import _build_cluster_status_tail
+from nvalchemiops.jax.neighbors.batch_naive import _compute_cell_inverse
 from nvalchemiops.jax.neighbors.cluster_tile import _fixed_cluster_geometry_args
 from nvalchemiops.jax.neighbors.neighbor_utils import _validate_dual_cutoff_order
 from nvalchemiops.neighbors.cluster_tile import (
@@ -1404,7 +1405,9 @@ def _batch_build_cluster_tile_list_bounded(
         _FIXED_BATCH_CLUSTER_TILE_BUILDS if fixed_cell else _BATCH_CLUSTER_TILE_BUILDS
     )
     inv_cell_batch = (
-        _fixed_cell_geometry[0] if fixed_cell else jnp.linalg.inv(cell_batch)
+        _fixed_cell_geometry[0]
+        if fixed_cell
+        else _compute_cell_inverse(cell_batch, jnp.empty_like(cell_batch))
     )
     batch_idx = _make_batch_idx(batch_ptr, positions.shape[0])
 
@@ -1838,7 +1841,9 @@ def batch_query_cluster_tile(
     geometry_args = _fixed_cluster_geometry_args(_fixed_cell_geometry)
     fixed_cell = _fixed_cell_geometry is not None
     inv_cell_batch = (
-        _fixed_cell_geometry[0] if fixed_cell else jnp.linalg.inv(cell_batch)
+        _fixed_cell_geometry[0]
+        if fixed_cell
+        else _compute_cell_inverse(cell_batch, jnp.empty_like(cell_batch))
     )
 
     if neighbor_matrix is None:
@@ -2216,7 +2221,9 @@ def batch_query_cluster_tile_coo(
     geometry_args = _fixed_cluster_geometry_args(_fixed_cell_geometry)
     fixed_cell = _fixed_cell_geometry is not None
     inv_cell_batch = (
-        _fixed_cell_geometry[0] if fixed_cell else jnp.linalg.inv(cell_batch)
+        _fixed_cell_geometry[0]
+        if fixed_cell
+        else _compute_cell_inverse(cell_batch, jnp.empty_like(cell_batch))
     )
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
 

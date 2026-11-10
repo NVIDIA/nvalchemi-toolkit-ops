@@ -23,6 +23,7 @@ import warp as wp
 from warp import jax_kernel
 
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
+from nvalchemiops.jax.neighbors.batch_naive import _compute_cell_inverse
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_coo_capacities,
     _validate_dual_cutoff_order,
@@ -541,7 +542,9 @@ def batch_naive_neighbor_list_dual_cutoff(
 
         if wrap_positions:
             inv_cell = (
-                inv_cell_buffer if inv_cell_buffer is not None else jnp.linalg.inv(cell)
+                inv_cell_buffer
+                if inv_cell_buffer is not None
+                else _compute_cell_inverse(cell, jnp.empty_like(cell))
             )
             positions_wrapped = (
                 positions_wrapped_buffer
