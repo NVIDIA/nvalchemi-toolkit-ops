@@ -318,6 +318,48 @@ class TestCSVRAPI:
                 wp.zeros(5, dtype=wp.vec3f, device=device),
             )
 
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("mode", ["single", "batch_idx", "atom_ptr"])
+    @pytest.mark.parametrize(
+        "name", ["ke", "scale", "target_temp", "tau", "dt", "ndof"]
+    )
+    def test_validates_per_system_lengths(self, device, mode, name):
+        """A short per-system array raises ValueError naming it."""
+        sizes = [4, 6]
+        num_systems = 1 if mode == "single" else len(sizes)
+        bad_length = 2 if mode == "single" else num_systems - 1
+        velocities = wp.zeros(sum(sizes), dtype=wp.vec3f, device=device)
+        masses = wp.ones(sum(sizes), dtype=wp.float32, device=device)
+        params = dict(
+            zip(
+                ["target_temp", "tau", "dt", "ndof", "ke", "scale"],
+                _params(wp.float32, device, num_systems=num_systems),
+            )
+        )
+        params[name] = wp.zeros(bad_length, dtype=wp.float32, device=device)
+        kwargs = {} if mode == "single" else _batch_kwargs(mode, sizes, device)
+
+        for fn, extra in [
+            (csvr_thermostat, ()),
+            (csvr_thermostat_out, (wp.empty_like(velocities),)),
+        ]:
+            with pytest.raises(
+                ValueError, match=rf"\({num_systems}\); got {name}={bad_length}$"
+            ):
+                fn(
+                    velocities,
+                    masses,
+                    params["target_temp"],
+                    params["tau"],
+                    params["dt"],
+                    params["ndof"],
+                    0,
+                    params["ke"],
+                    params["scale"],
+                    *extra,
+                    **kwargs,
+                )
+
 
 # ==============================================================================
 # Distribution Tests

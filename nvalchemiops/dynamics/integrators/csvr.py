@@ -151,6 +151,28 @@ def _csvr_update(
     compute_ke: bool,
 ) -> None:
     """Compute ``ke`` and ``scale`` from ``velocities``; write the rescaled velocities to ``velocities_out``."""
+    lengths = {
+        "ke": ke.shape[0],
+        "scale": scale.shape[0],
+        "target_temp": target_temp.shape[0],
+        "tau": tau.shape[0],
+        "dt": dt.shape[0],
+        "ndof": ndof.shape[0],
+    }
+    if atom_ptr is not None:
+        num_systems = atom_ptr.shape[0] - 1
+    elif batch_idx is not None:
+        # The system count in batch_idx is only known on device; short arrays are
+        # the ones read out of bounds, so check against the longest.
+        num_systems = max(lengths.values())
+    else:
+        num_systems = 1
+    wrong = {name: n for name, n in lengths.items() if n != num_systems}
+    if wrong:
+        got = ", ".join(f"{name}={n}" for name, n in wrong.items())
+        raise ValueError(
+            f"per-system arrays must have one entry per system ({num_systems}); got {got}"
+        )
     if device is None:
         device = velocities.device
     if compute_ke:
