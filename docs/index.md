@@ -23,6 +23,9 @@ GPU-accelerated primitives for atomistic simulations and atomic-scale modeling.
 - **[Segment operations](userguide/components/segment_ops.md):** reductions and
   transformations of grouped data, including sums, means, dot products, and
   matrix-vector products.
+- **[Segmented matrix multiplication](userguide/components/segment_mm.md):**
+  matrix products for packed systems with runtime lengths and differentiable
+  PyTorch and JAX interfaces.
 - **Framework integration:** NVIDIA Warp kernels with PyTorch and JAX interfaces
   for supported operations.
 - **[Repeated calculations](userguide/about/performance.md):**
