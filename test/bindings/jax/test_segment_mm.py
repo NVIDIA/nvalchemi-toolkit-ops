@@ -262,6 +262,48 @@ class TestSegmentMM:
             ):
                 _assert_close(value, ref)
 
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_int64_lengths_forward_and_derivatives(self, dtype, compiled):
+        """Wide runtime lengths preserve forward, both VJPs, and joint JVPs."""
+        with jax.enable_x64(True):
+            a, b, g = _inputs(dtype)
+            lengths = jnp.array([3, 0, 9, 2], jnp.int64)
+            tangents = (jnp.full_like(a, 0.125), jnp.full_like(b, -0.125))
+
+            def evaluate(fn, a, b, lengths):
+                def operation(aa, bb):
+                    return fn(aa, bb, lengths)
+
+                out, pullback = jax.vjp(operation, a, b)
+                return out, *pullback(g), jax.jvp(operation, (a, b), tangents)[1]
+
+            def operation(a, b, lengths):
+                return evaluate(segment_mm, a, b, lengths)
+
+            execute = (
+                jax.jit(operation).lower(a, b, lengths).compile()
+                if compiled
+                else operation
+            )
+            for values in ([3, 0, 9, 2], [0, 5, 1, 13], [0, 0, 0, 0]):
+                current = jnp.array(values, jnp.int64)
+                actual = execute(a, b, current)
+                expected = evaluate(_reference, a, b, current)
+                for value, reference in zip(actual, expected, strict=True):
+                    _assert_close(value, reference)
+
+    def test_int64_large_capacity_prefix(self):
+        """The saturating prefix keeps int32 offsets with extreme int64 inputs."""
+        capacity = 2**30 + 17
+        with jax.enable_x64(True):
+            lengths = jnp.array([13, capacity - 5, 2**63 - 1, -(2**63)], jnp.int64)
+            offsets = jax.jit(lambda values: _row_offsets(values, capacity))(lengths)
+            assert offsets.dtype == jnp.int32
+            np.testing.assert_array_equal(
+                np.asarray(offsets), [0, 13, capacity, capacity, capacity]
+            )
+
     def test_jit_scan_and_gradient(self):
         """Scan residuals retain runtime segment lengths for reverse mode."""
         a, b, g = _inputs()

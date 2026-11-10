@@ -34,7 +34,7 @@ are unused capacity, so `out[5:8]` is zero.
 | --- | --- | --- |
 | `a` | `(row_capacity, in_channels)` | Feature rows for all segments |
 | `b` | `(num_segments, in_channels, out_channels)` | One weight matrix per segment |
-| `seglen` | `(num_segments,)` | Number of rows in each segment; `int32`, or `int64` in PyTorch |
+| `seglen` | `(num_segments,)` | Number of rows in each segment; `int32` or `int64` |
 | Output | `(row_capacity, out_channels)` | Products followed by zero rows |
 
 `row_capacity` is the total number of allocated rows, including padding.
@@ -44,6 +44,8 @@ must be positive.
 
 All inputs belong on the same device. Both floating inputs must
 have the same dtype, except when PyTorch CUDA BF16 autocast performs the casts.
+For int64 lengths in JAX, enable 64-bit types with
+`jax.config.update("jax_enable_x64", True)` before creating the arrays.
 
 Unused feature rows are ignored, even if they contain NaNs. Their outputs and
 gradients are zero. An empty segment's weight gradient is also zero. An empty
@@ -124,8 +126,6 @@ check length values as well.
 :::{tab-item} PyTorch
 :sync: pytorch
 
-PyTorch accepts int32 or int64 lengths; all length values must fit int32.
-
 ```python
 out = segment_mm(a, b, lengths, validate=True)
 ```
@@ -138,8 +138,7 @@ CUDA. Validation also works with `torch.compile` and CUDA graph capture.
 :::{tab-item} JAX
 :sync: jax
 
-JAX requires int32 lengths. With `validate=True`, it returns `(error, out)`
-instead of just `out`.
+With `validate=True`, JAX returns `(error, out)` instead of just `out`.
 
 ```python
 @jax.jit
@@ -171,8 +170,8 @@ warp_segment_mm(a, b, lengths, out, validation=status)
 
 Each call sets `status[0]` to `1` for valid lengths or `0` for invalid lengths.
 Only use the output when the status is `1`. The same option is available on
-`segment_mm_backward` and `segment_mm_backward_b`. Warp lengths must be int32;
-omitting `validation` leaves value checking disabled.
+`segment_mm_backward` and `segment_mm_backward_b`. Omitting `validation`
+leaves value checking disabled.
 
 ## Gradients and mixed precision
 

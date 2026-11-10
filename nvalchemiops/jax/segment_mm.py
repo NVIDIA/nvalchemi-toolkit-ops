@@ -149,8 +149,8 @@ def _validate_inputs(a, b, seglen):
             raise ValueError(f"{name} array size exceeds the int32 index range")
     if a.dtype not in (jnp.float32, jnp.bfloat16) or b.dtype != a.dtype:
         raise ValueError("a and b must have the same float32 or bfloat16 dtype")
-    if seglen.dtype != jnp.int32:
-        raise ValueError("seglen must have dtype int32")
+    if seglen.dtype not in (jnp.int32, jnp.int64):
+        raise ValueError("seglen must have dtype int32 or int64")
     if a.shape[1] <= 0 or b.shape[2] <= 0:
         raise ValueError("Channel dimensions K and N must be positive")
     if b.shape[1] != a.shape[1]:
@@ -175,8 +175,8 @@ def _validate_inputs(a, b, seglen):
 
 
 def _row_offsets(seglen, capacity):
-    """Build XLA-owned bounded prefixes without requiring 64-bit JAX arithmetic."""
-    lengths = jnp.clip(seglen, 0, capacity)
+    """Build bounded int32 row prefixes in XLA."""
+    lengths = jnp.clip(seglen, 0, capacity).astype(jnp.int32)
     if seglen.shape[0] * capacity <= 2**31 - 1:
         # Clipping each length proves every partial sum fits int32, including
         # malformed inputs. Use XLA's optimized cumulative-sum lowering.
@@ -444,9 +444,10 @@ def segment_mm(
         Packed input features on a CPU or CUDA device.
     b : jax.Array, shape (num_segments, in_channels, out_channels), dtype matches a
         One weight matrix per segment, on the same device as ``a``.
-    seglen : jax.Array, shape (num_segments,), dtype int32
+    seglen : jax.Array, shape (num_segments,), dtype int32 or int64
         Runtime device segment lengths. Values must be nonnegative and sum
         to at most ``row_capacity``. Zero-length segments are supported.
+        Int64 lengths require JAX 64-bit types to be enabled; values must fit int32.
     graph_cache_max : int or None, optional
         Maximum CUDA graphs per product and dtype for this cache policy,
         shared across callsites and devices. Defaults to 256; must be a

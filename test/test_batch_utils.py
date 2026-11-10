@@ -405,6 +405,47 @@ class TestCheckedSegmentOffsets:
     """Check validity flags and bounded schedules without allocating matrix data."""
 
     @pytest.mark.parametrize(
+        "groups,fused", [(4, False), (4, True), (129, True), (129, False), (1025, True)]
+    )
+    def test_unchecked_int64_prefixes_are_bounded(self, device, groups, fused):
+        """Unchecked wide lengths are bounded before any narrowing or prefix sum."""
+        from nvalchemiops.segment_mm import _segment_offsets
+
+        capacity = 17
+        for leading in (
+            [0, 8, 2**63 - 1, 2**63 - 1],
+            [-(2**63), 2**32 + 3, 0, 2],
+            [0, 8, 9, 0],
+        ):
+            values = np.pad(np.asarray(leading, np.int64), (0, groups - 4))
+            lengths = wp.array(values, device=device)
+            chunks = (
+                wp.empty(groups + 1, dtype=wp.int32, device=device) if fused else None
+            )
+            rows, tiles = _segment_offsets(
+                lengths,
+                capacity,
+                tile_rows=7,
+                chunk_rows=9 if fused else 0,
+                chunk_offsets=chunks,
+            )
+            expected = [0]
+            for value in values:
+                expected.append(min(expected[-1] + max(int(value), 0), capacity))
+            clipped = np.diff(expected)
+            np.testing.assert_array_equal(rows.numpy(), expected)
+            np.testing.assert_array_equal(
+                tiles.numpy(), np.concatenate(([0], np.cumsum((clipped + 6) // 7)))
+            )
+            if fused:
+                np.testing.assert_array_equal(
+                    chunks.numpy(),
+                    np.concatenate(
+                        ([0], np.cumsum(np.maximum((clipped + 8) // 9 - 1, 0)))
+                    ),
+                )
+
+    @pytest.mark.parametrize(
         "groups,fused",
         [
             pytest.param(3, False, id="small"),

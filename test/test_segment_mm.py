@@ -110,7 +110,7 @@ class TestSegmentMMBackwardB:
         elif invalid == "dtype":
             g = wp.ones((8, 3), dtype=wp.bfloat16, device=device)
         elif invalid == "lengths":
-            lengths = wp.array([3, 2], dtype=wp.int64, device=device)
+            lengths = wp.array([3, 2], dtype=wp.int16, device=device)
         else:
             grad_b = wp.array(
                 ptr=a.ptr, shape=(2, 4, 3), dtype=wp.float32, device=device, copy=False
@@ -770,7 +770,7 @@ class TestSegmentMMBackwardValidation:
         elif case == "b_shape":
             b = wp.empty((2, 5, 4), device=device)
         elif case == "length_dtype":
-            lengths = wp.zeros(2, dtype=wp.int64, device=device)
+            lengths = wp.zeros(2, dtype=wp.int16, device=device)
         elif case == "dy_rank":
             dy = dy.flatten()
         elif case == "dy_shape":
@@ -969,7 +969,7 @@ class TestSegmentMMValidation:
         elif case == "out_dtype":
             out = wp.empty(out.shape, dtype=wp.bfloat16, device=device)
         elif case == "length_dtype":
-            lengths = wp.empty(2, dtype=wp.int64, device=device)
+            lengths = wp.empty(2, dtype=wp.int16, device=device)
         elif case == "strided_out":
             out = wp.empty((4, 8), device=device).transpose()
         elif case == "device":
@@ -1703,14 +1703,108 @@ class TestSegmentMMDeviceValidation:
             with pytest.raises(ValueError, match="overlap"):
                 call(*arguments, validation=validation)
 
-    def test_checked_calls_still_require_raw_int32_lengths(self, validation_device):
-        """Opting into status reporting must not widen the raw length dtype contract."""
-        arrays = self._buffers(validation_device)
-        arrays["seglen"] = wp.zeros(4, dtype=wp.int64, device=validation_device)
-        validation = wp.zeros(1, dtype=wp.int32, device=validation_device)
-        for call, arguments in self._calls(arrays):
-            with pytest.raises(ValueError, match="int32"):
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("groups", [4, 129, 1025])
+    @pytest.mark.parametrize("checked", [False, True])
+    def test_int64_lengths_all_products(
+        self, validation_device, dtype, groups, checked
+    ):
+        """Wide strided lengths preserve each public product and int32 status output."""
+        arrays = self._buffers(validation_device, dtype, capacity=513, groups=groups)
+        storage = wp.zeros(2 * groups, dtype=wp.int64, device=validation_device)
+        arrays["seglen"] = storage[::2]
+        validation = (
+            wp.empty(1, dtype=wp.int32, device=validation_device) if checked else None
+        )
+        for leading in ([0, 257, 1, 0], [4, 0, 0, 509], [0, 0, 0, 0]):
+            values = np.pad(np.asarray(leading, np.int64), (0, groups - 4))
+            arrays["seglen"].assign(values)
+            for call, arguments in self._calls(arrays):
                 call(*arguments, validation=validation)
+                if checked:
+                    np.testing.assert_array_equal(validation.numpy(), [1])
+            self._assert_results(arrays, values, dtype)
+
+    @pytest.mark.parametrize("groups", [4, 129, 1025])
+    def test_int64_validation_before_narrowing(self, validation_device, groups):
+        """Wide values cannot wrap into apparently valid lengths during checking."""
+        arrays = self._buffers(validation_device, capacity=513, groups=groups)
+        arrays["seglen"] = wp.zeros(groups, dtype=wp.int64, device=validation_device)
+        validation = wp.empty(1, dtype=wp.int32, device=validation_device)
+        for leading in (
+            [2**32 + 2, 0, 3, 0],
+            [2**63 - 1, 2**63 - 1, 2, 0],
+            [-(2**63), 0, 0, 0],
+            [0, 513, 1, 0],
+            [0, 3, 2, 0],
+        ):
+            values = np.pad(np.asarray(leading, np.int64), (0, groups - 4))
+            arrays["seglen"].assign(values)
+            expected = int(all(value >= 0 for value in leading) and sum(leading) <= 513)
+            for call, arguments in self._calls(arrays):
+                call(*arguments, validation=validation)
+                np.testing.assert_array_equal(validation.numpy(), [expected])
+            if expected:
+                self._assert_results(arrays, values, wp.float32)
+
+    def test_int64_empty_calls(self, validation_device):
+        """Wide empty segments retain zero-output and validity early-return semantics."""
+        for capacity, values, expected in (
+            (0, [], 1),
+            (7, [], 1),
+            (0, [0, 0], 1),
+            (0, [2**32, 0], 0),
+        ):
+            arrays = self._buffers(
+                validation_device, capacity=capacity, groups=len(values)
+            )
+            arrays["seglen"] = wp.array(
+                values, dtype=wp.int64, device=validation_device
+            )
+            validation = wp.empty(1, dtype=wp.int32, device=validation_device)
+            for call, arguments in self._calls(arrays):
+                call(*arguments, validation=validation)
+                np.testing.assert_array_equal(validation.numpy(), [expected])
+            if expected:
+                self._assert_results(arrays, values, wp.float32)
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("groups", [4, 129, 1025])
+    def test_int64_calls_preserve_existing_graphs(self, device, groups):
+        """Using wide lengths must not invalidate previously captured int32 calls."""
+        arrays = self._buffers(device, capacity=513, groups=groups)
+        values = np.pad(np.asarray([0, 257, 1, 0], np.int32), (0, groups - 4))
+        arrays["seglen"].assign(values)
+        calls = self._calls(arrays)
+        for call, arguments in calls:
+            call(*arguments)
+        with wp.ScopedCapture(device=device) as capture32:
+            for call, arguments in calls:
+                call(*arguments)
+        arrays["seglen"] = wp.array(values, dtype=wp.int64, device=device)
+        status = wp.empty(1, dtype=wp.int32, device=device)
+        calls64 = self._calls(arrays)
+        for call, arguments in calls64:
+            call(*arguments)
+            call(*arguments, validation=status)
+        with wp.ScopedCapture(device=device) as capture64:
+            for call, arguments in calls64:
+                call(*arguments, validation=status)
+        for name in ("out", "grad_a", "grad_b", "grad_b_only"):
+            arrays[name].fill_(float("nan"))
+        wp.capture_launch(capture32.graph)
+        self._assert_results(arrays, values, wp.float32)
+        for leading, expected in (
+            ([2, 0, 3, 0], 1),
+            ([2**32 + 2, 0, 3, 0], 0),
+            ([0, 0, 0, 0], 1),
+        ):
+            current = np.pad(np.asarray(leading, np.int64), (0, groups - 4))
+            arrays["seglen"].assign(current)
+            wp.capture_launch(capture64.graph)
+            np.testing.assert_array_equal(status.numpy(), [expected])
+            if expected:
+                self._assert_results(arrays, current, wp.float32)
 
     def test_status_does_not_require_host_readback(
         self, validation_device, monkeypatch

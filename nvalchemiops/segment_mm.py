@@ -531,9 +531,7 @@ def _validate_array(array: wp.array, name: str, ndim: int) -> None:
         raise ValueError(f"{name} array size exceeds the int32 index range")
 
 
-def _validate_inputs(
-    a: wp.array, b: wp.array, seglen: wp.array, *, allow_int64_lengths: bool = False
-) -> None:
+def _validate_inputs(a: wp.array, b: wp.array, seglen: wp.array) -> None:
     """Validate the shared segmented matrix multiplication input contract."""
     for name, array, ndim in (("a", a, 2), ("b", b, 3), ("seglen", seglen, 1)):
         _validate_array(array, name, ndim)
@@ -541,10 +539,8 @@ def _validate_inputs(
         raise ValueError("All arrays must be on the same device")
     if a.dtype not in _DTYPES or b.dtype != a.dtype:
         raise ValueError("a and b must have the same float32 or bfloat16 dtype")
-    if seglen.dtype != wp.int32 and not (
-        allow_int64_lengths and seglen.dtype == wp.int64
-    ):
-        raise ValueError("seglen must have dtype int32")
+    if seglen.dtype not in (wp.int32, wp.int64):
+        raise ValueError("seglen must have dtype int32 or int64")
     if a.shape[1] <= 0 or b.shape[2] <= 0:
         raise ValueError("Channel dimensions K and N must be positive")
     if b.shape[1] != a.shape[1]:
@@ -559,6 +555,8 @@ def _validate_output(
     shape: tuple[int, ...],
     like: wp.array,
     inputs: tuple[wp.array, ...],
+    *,
+    dtype: type | None = None,
 ) -> None:
     """Validate a contiguous output that cannot overlap any input memory span."""
     _validate_array(out, name, len(shape))
@@ -566,8 +564,9 @@ def _validate_output(
         raise ValueError(f"{name} must be contiguous")
     if out.device != like.device:
         raise ValueError("All arrays must be on the same device")
-    if out.dtype != like.dtype:
-        raise ValueError(f"{name} must have dtype {like.dtype.__name__}")
+    dtype = like.dtype if dtype is None else dtype
+    if out.dtype != dtype:
+        raise ValueError(f"{name} must have dtype {dtype.__name__}")
     if out.shape != shape:
         raise ValueError(f"{name} must have shape {shape}, got {out.shape}")
     if out.size:
@@ -867,9 +866,10 @@ def segment_mm(
         Packed input features.
     b : wp.array, shape (num_segments, in_channels, out_channels), dtype matches a
         One weight matrix per segment.
-    seglen : wp.array, shape (num_segments,), dtype int32
+    seglen : wp.array, shape (num_segments,), dtype int32 or int64
         Runtime device segment lengths. Values must be nonnegative and sum
-        to at most ``row_capacity``. Zero-length segments are supported.
+        to at most ``row_capacity``. Values must fit int32. Zero-length segments
+        are supported.
     out : wp.array, shape (row_capacity, out_channels), dtype matches a
         OUTPUT: Pre-allocated contiguous product buffer. Must not overlap
         any input's memory span, including gaps in strided views. Every
@@ -921,7 +921,9 @@ def segment_mm(
     capacity, groups, n = a.shape[0], b.shape[0], b.shape[2]
     _validate_output(out, "out", (capacity, n), a, (a, b, seglen))
     if validation is not None:
-        _validate_output(validation, "validation", (1,), seglen, (a, b, seglen, out))
+        _validate_output(
+            validation, "validation", (1,), seglen, (a, b, seglen, out), dtype=wp.int32
+        )
     with wp.ScopedDevice(a.device):
         if capacity == 0 or groups == 0:
             if validation is not None:
@@ -1067,8 +1069,9 @@ def segment_mm_backward_b(
     ----------
     a : wp.array, shape (row_capacity, in_channels), dtype float32 or bfloat16
         Packed input features on a CPU or CUDA device.
-    seglen : wp.array, shape (num_segments,), dtype int32
+    seglen : wp.array, shape (num_segments,), dtype int32 or int64
         Runtime device lengths, nonnegative and summing to at most ``row_capacity``.
+        Values must fit int32.
     grad_out : wp.array, shape (row_capacity, out_channels), dtype matches a
         Output cotangent on the same device as ``a``.
     grad_b : wp.array, shape (num_segments, in_channels, out_channels), dtype matches a
@@ -1127,7 +1130,12 @@ def segment_mm_backward_b(
     )
     if validation is not None:
         _validate_output(
-            validation, "validation", (1,), seglen, (a, seglen, grad_out, grad_b)
+            validation,
+            "validation",
+            (1,),
+            seglen,
+            (a, seglen, grad_out, grad_b),
+            dtype=wp.int32,
         )
     with wp.ScopedDevice(a.device):
         if a.shape[0] == 0 or seglen.shape[0] == 0:
@@ -1184,9 +1192,9 @@ def segment_mm_backward(
         Packed input features.
     b : wp.array, shape (num_segments, in_channels, out_channels), dtype matches a
         One weight matrix per segment.
-    seglen : wp.array, shape (num_segments,), dtype int32
+    seglen : wp.array, shape (num_segments,), dtype int32 or int64
         Runtime device lengths, nonnegative and summing to at most ``row_capacity``.
-        Empty segments are supported. Lengths are not differentiated.
+        Values must fit int32. Empty segments are supported. Lengths are not differentiated.
     grad_out : wp.array, shape (row_capacity, out_channels), dtype matches a
         Output cotangent.
     grad_a : wp.array, shape (row_capacity, in_channels), dtype matches a
@@ -1256,7 +1264,12 @@ def segment_mm_backward(
     _validate_output(grad_b, "grad_b", b.shape, a, (*inputs, grad_a))
     if validation is not None:
         _validate_output(
-            validation, "validation", (1,), seglen, (*inputs, grad_a, grad_b)
+            validation,
+            "validation",
+            (1,),
+            seglen,
+            (*inputs, grad_a, grad_b),
+            dtype=wp.int32,
         )
 
     with wp.ScopedDevice(a.device):

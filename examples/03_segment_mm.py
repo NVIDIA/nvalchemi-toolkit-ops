@@ -29,7 +29,7 @@ three rows are padding and produce zero output.
 .. important::
     This comparison requires both the ``torch`` and ``jax`` package extras,
     plus Matplotlib. Each frontend selects CUDA when available, otherwise CPU.
-    Lengths are nonnegative ``int32`` values whose sum fits the row capacity;
+    This example uses nonnegative ``int32`` lengths whose sum fits the row capacity;
     all inputs for a call must share a device.
 """
 

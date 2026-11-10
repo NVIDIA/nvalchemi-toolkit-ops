@@ -174,7 +174,7 @@ def _forward(
         b_wp = wp.from_torch(b, requires_grad=False)
         seglen_wp = wp.from_torch(seglen, requires_grad=False)
         out_wp = wp.from_torch(out, requires_grad=False)
-        _validate_warp_inputs(a_wp, b_wp, seglen_wp, allow_int64_lengths=validate)
+        _validate_warp_inputs(a_wp, b_wp, seglen_wp)
         _validate_output(out_wp, "out", out.shape, a_wp, (a_wp, b_wp, seglen_wp))
         if a.shape[0] == 0 or b.shape[0] == 0:
             if validate and b.shape[0] > 0:
@@ -213,7 +213,7 @@ def _backward(
         grad_out_wp = wp.from_torch(grad_out, requires_grad=False)
         grad_a_wp = wp.from_torch(grad_a, requires_grad=False)
         grad_b_wp = wp.from_torch(grad_b, requires_grad=False)
-        _validate_warp_inputs(a_wp, b_wp, seglen_wp, allow_int64_lengths=validate)
+        _validate_warp_inputs(a_wp, b_wp, seglen_wp)
         capacity, k = a.shape
         groups, _, n = b.shape
         _validate_grad_out(a_wp, grad_out_wp, n)
@@ -294,7 +294,7 @@ def _weight_product(
         seglen_wp = wp.from_torch(seglen, requires_grad=False)
         grad_out_wp = wp.from_torch(grad_out, requires_grad=False)
         grad_b_wp = wp.from_torch(grad_b, requires_grad=False)
-        _validate_warp_inputs(a_wp, grad_b_wp, seglen_wp, allow_int64_lengths=validate)
+        _validate_warp_inputs(a_wp, grad_b_wp, seglen_wp)
         _validate_grad_out(a_wp, grad_out_wp, grad_out.shape[1])
         _validate_output(
             grad_b_wp, "grad_b", grad_b.shape, a_wp, (a_wp, seglen_wp, grad_out_wp)

@@ -37,6 +37,47 @@ execution_device = _segment_mm_tests.execution_device
 class TestSegmentMMValidation:
     """Checked calls return device error state for valid and invalid lengths."""
 
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_int64_values_are_checked_before_narrowing(self, compiled):
+        """Wide invalid values cannot wrap to valid lengths before validation."""
+        with jax.enable_x64(True):
+            a, b, _ = _inputs()
+            lengths = jnp.array([3, 0, 9, 2], jnp.int64)
+            operation = partial(segment_mm, validate=True)
+            execute = (
+                jax.jit(operation).lower(a, b, lengths).compile()
+                if compiled
+                else operation
+            )
+            cases = (
+                ([3, 0, 9, 2], True),
+                ([2**32 + 3, 0, 9, 2], False),
+                ([-(2**32) + 3, 0, 9, 2], False),
+                ([2**63 - 1, 2**63 - 1, 2, 0], False),
+                ([-(2**63), 0, 0, 0], False),
+                ([5, 5, 5, 5], False),
+                ([0, 19, 0, 0], True),
+                ([0, 0, 0, 0], True),
+            )
+            for values, valid in cases:
+                current = jnp.asarray(values, jnp.int64)
+                with jax.transfer_guard_device_to_host("disallow_explicit"):
+                    error, out = execute(a, b, current)
+                assert (error.get() is None) == valid
+                if valid:
+                    _assert_close(out, _reference(a, b, current))
+
+    @pytest.mark.parametrize("capacity,groups", [(0, 4), (0, 0), (19, 0)])
+    def test_int64_empty_lengths(self, capacity, groups):
+        """Checked int64 inputs support zero capacity and an empty segment list."""
+        with jax.enable_x64(True):
+            a, b, _ = _inputs(capacity=capacity, groups=groups)
+            lengths = jnp.zeros(groups, jnp.int64)
+            error, out = jax.jit(partial(segment_mm, validate=True))(a, b, lengths)
+            assert error.get() is None
+            assert out.shape == (capacity, b.shape[2])
+            np.testing.assert_array_equal(np.asarray(out), np.zeros(out.shape))
+
     def test_checked_keyword_reports_invalid_runtime_lengths(self):
         """A compiled checked call detects a negative runtime segment length."""
         a = jnp.ones((4, 2), dtype=jnp.float32)
