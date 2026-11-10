@@ -35,6 +35,27 @@ def _seed():
     torch.manual_seed(27)
 
 
+@pytest.fixture
+def _product_launches(monkeypatch):
+    """Count real row and weight products without replacing their computation."""
+    binding = importlib.import_module("nvalchemiops.torch.segment_mm")
+    calls = {"forward": 0, "grad_a": 0, "grad_b": 0}
+
+    def observe(name, launch):
+        def counted(*args, **kwargs):
+            calls[name] += 1
+            return launch(*args, **kwargs)
+
+        return counted
+
+    for name in calls:
+        attribute = f"_launch_{name}"
+        monkeypatch.setattr(
+            binding, attribute, observe(name, getattr(binding, attribute))
+        )
+    return calls
+
+
 def _inputs(dtype=torch.float32, lengths=(3, 0, 4), capacity=10, strided=False):
     """Create framework-native inputs, optionally with noncontiguous storage."""
     if strided:
@@ -246,6 +267,37 @@ class TestSegmentMM:
         for actual, previous in zip((a, b, lengths), saved, strict=True):
             torch.testing.assert_close(actual, previous, equal_nan=True)
 
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    @pytest.mark.parametrize("requires", [(True, True), (True, False), (False, True)])
+    def test_backward_skips_unrequested_products(
+        self, dtype, requires, _product_launches
+    ):
+        """Backward launches only products needed by trainable operands."""
+        a, b, lengths = _inputs(dtype, strided=True)
+        a[7:] = torch.nan
+        a.requires_grad_(requires[0])
+        b.requires_grad_(requires[1])
+        cotangent = torch.randn(9, 10, device="cuda", dtype=dtype).T
+        cotangent[7:] = torch.nan
+        out = segment_mm(a, b, lengths)
+        expected, da, db = _reference(a, b, (3, 0, 4), cotangent)
+        _close(out, expected)
+        _product_launches.update(dict.fromkeys(_product_launches, 0))
+
+        operands = tuple(x for x in (a, b) if x.requires_grad)
+        actual = torch.autograd.grad(out, operands, cotangent)
+        wanted = tuple(
+            g for g, required in zip((da, db), requires, strict=True) if required
+        )
+        for gradient, reference in zip(actual, wanted, strict=True):
+            _close(gradient, reference)
+        assert _product_launches["forward"] + _product_launches["grad_a"] == int(
+            requires[0]
+        ), "launched an unrequested input-gradient product"
+        assert _product_launches["grad_b"] == int(requires[1]), (
+            "launched an unrequested weight-gradient product"
+        )
+
     @pytest.mark.parametrize(
         "lengths,capacity", [((0, 0, 0), 10), ((0, 0), 0), ((), 10), ((), 0)]
     )
@@ -370,9 +422,30 @@ class TestSegmentMM:
         assert torch.count_nonzero(actual[2][1]) == 0
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-    def test_jvp_over_vjp(self, dtype):
+    def test_frozen_weights_force_loss(self, dtype):
+        """The input-only backward remains differentiable with frozen weights."""
+        positions, weights, lengths = _inputs(dtype)
+        positions.requires_grad_()
+
+        def evaluate(operation):
+            energy = _energy(operation, positions, weights, lengths)
+            forces = -torch.autograd.grad(energy, positions, create_graph=True)[0]
+            loss = (forces.float() - 0.15).square().sum()
+            gradient = torch.autograd.grad(loss, positions)[0]
+            return forces, gradient
+
+        actual = evaluate(segment_mm)
+        expected = evaluate(lambda a, b, _: _differentiable_reference(a, b, (3, 0, 4)))
+        for value, ref in zip(actual, expected, strict=True):
+            _close(value, ref)
+            assert torch.count_nonzero(value[7:]) == 0
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    @pytest.mark.parametrize("length_dtype", [torch.int32, torch.int64])
+    def test_jvp_over_vjp(self, dtype, length_dtype):
         """Forward-over-reverse includes both operand and nonlinear cotangent variations."""
         a, b, lengths = _inputs(dtype)
+        lengths = lengths.to(length_dtype)
         tangents = (torch.randn_like(a), torch.randn_like(b))
 
         def gradient(operation):
@@ -474,6 +547,42 @@ class TestSegmentMM:
         assert len(row_products) == 1, "launched a discarded input-gradient product"
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+    @pytest.mark.parametrize("requires", [(True, True), (True, False), (False, True)])
+    def test_weight_product_backward_skips_unrequested_products(
+        self, dtype, requires, _product_launches
+    ):
+        """A weight product differentiates only its trainable row operands."""
+        binding = importlib.import_module("nvalchemiops.torch.segment_mm")
+        a, b, lengths = _inputs(dtype, strided=True)
+        g = torch.randn(9, 10, device="cuda", dtype=dtype).T
+        a[7:] = torch.nan
+        g[7:] = torch.nan
+        a.requires_grad_(requires[0])
+        g.requires_grad_(requires[1])
+        cotangent = torch.randn_like(b)
+        product = binding._apply_weight_product(a, g, lengths)
+        _close(product, _reference(a, b, (3, 0, 4), g)[2])
+        expected = (
+            _reference(g, cotangent.transpose(1, 2), (3, 0, 4))[0],
+            _reference(a, cotangent, (3, 0, 4))[0],
+        )
+        _product_launches.update(dict.fromkeys(_product_launches, 0))
+
+        operands = tuple(x for x in (a, g) if x.requires_grad)
+        actual = torch.autograd.grad(product, operands, cotangent)
+        wanted = tuple(
+            value
+            for value, required in zip(expected, requires, strict=True)
+            if required
+        )
+        for gradient, reference in zip(actual, wanted, strict=True):
+            _close(gradient, reference)
+        assert _product_launches["forward"] + _product_launches["grad_a"] == sum(
+            requires
+        ), "launched an unrequested row-operand gradient product"
+        assert _product_launches["grad_b"] == 0
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     def test_weight_product_higher_transforms(self, dtype):
         """The weight-only branch retains both reverse and forward derivatives."""
         binding = importlib.import_module("nvalchemiops.torch.segment_mm")
@@ -556,19 +665,21 @@ class TestSegmentMM:
             for value, ref in zip(actual, expected, strict=True):
                 _close(value, ref)
 
-    def test_opcheck(self):
+    @pytest.mark.parametrize("validate", [False, True])
+    def test_opcheck(self, validate):
         """Internal execution ops satisfy alias, fake, and AOT metadata contracts."""
         a, b, lengths = _inputs(strided=True)
         # Differentiation is owned and tested through the public Function API.
         torch.library.opcheck(
             torch.ops.nvalchemiops.segment_mm.default,
-            (a, b, lengths),
+            (a, b, lengths, validate),
             test_utils=("test_schema", "test_faketensor", "test_aot_dispatch_dynamic"),
         )
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     @pytest.mark.parametrize("groups", [3, 64, 1025])
-    def test_scratch_is_framework_owned(self, dtype, groups, monkeypatch):
+    @pytest.mark.parametrize("validate", [False, True])
+    def test_scratch_is_framework_owned(self, dtype, groups, validate, monkeypatch):
         """Forward and gradient paths use Torch storage across scheduling regimes."""
         wp = importlib.import_module("warp")
         binding = importlib.import_module("nvalchemiops.torch.segment_mm")
@@ -582,9 +693,9 @@ class TestSegmentMM:
 
         def evaluate():
             """Exercise full backward and the weight-only higher-derivative leaf."""
-            out = segment_mm(a, b, lengths)
+            out = segment_mm(a, b, lengths, validate=validate)
             da, db = torch.autograd.grad(out, (a, b), g)
-            weight_product = binding._apply_weight_product(a, g, lengths)
+            weight_product = binding._apply_weight_product(a, g, lengths, validate)
             return out, da, db, weight_product
 
         evaluate()
@@ -614,7 +725,7 @@ class TestSegmentMM:
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     def test_large_group_lengths_stay_bounded(self, dtype):
-        """Large-group scans clip negatives and saturate totals beyond int32 range."""
+        """Internal scans defensively bound invalid lengths below the public checks."""
         binding = importlib.import_module("nvalchemiops.torch.segment_mm")
         empty = (0,) * 1021
         cases = (
@@ -628,7 +739,7 @@ class TestSegmentMM:
             g[sum(bounded) :] = torch.nan
             a.requires_grad_()
             b.requires_grad_()
-            out = segment_mm(a, b, lengths)
+            out = binding._apply_forward(a, b, lengths)
             da, db = torch.autograd.grad(out, (a, b), g)
             weight_product = binding._apply_weight_product(a, g, lengths)
             expected = _reference(a, b, bounded + empty, g)
@@ -669,9 +780,11 @@ class TestSegmentMM:
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     @pytest.mark.parametrize("strided", [False, True])
-    def test_cuda_graph_replay(self, dtype, strided):
+    @pytest.mark.parametrize("length_dtype", [torch.int32, torch.int64])
+    def test_cuda_graph_replay(self, dtype, strided, length_dtype):
         """Captured forward/backward scratch remains valid with changed values and lengths."""
         a, b, lengths = _inputs(dtype, strided=strided)
+        lengths = lengths.to(length_dtype)
         a.requires_grad_()
         b.requires_grad_()
         g = torch.randn(9, 10, device="cuda", dtype=dtype).T
@@ -726,7 +839,7 @@ class TestSegmentMM:
         elif case == "dtype":
             b = b.double()
         elif case == "length_dtype":
-            lengths = lengths.long()
+            lengths = lengths.float()
         elif case == "channels":
             b = b[:, :-1]
         elif case == "groups":

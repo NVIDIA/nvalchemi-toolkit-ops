@@ -20,6 +20,8 @@ from functools import cache, partial
 import jax
 import jax.numpy as jnp
 import warp as wp
+from jax._src import dispatch
+from jax.experimental import checkify
 from jax.extend import core
 from jax.interpreters import ad, batching, mlir
 from warp import JaxCallableGraphMode
@@ -99,7 +101,7 @@ def _callables(
                 inputs=[
                     row_offsets,
                     int(chunk_rows),
-                    partials.shape[0] - groups,
+                    max(partials.shape[0] // 2, partials.shape[0] - groups),
                     chunk_scratch,
                 ],
                 block_dim=min(bucket, 128),
@@ -188,6 +190,13 @@ def _row_offsets(seglen, capacity):
     return jnp.concatenate((jnp.zeros((1,), dtype=jnp.int32), offsets))
 
 
+@jax.jit
+@checkify.checkify
+def _length_error(valid):
+    """Return device error state without inspecting the validity predicate."""
+    checkify.check(valid, "seglen must be nonnegative and sum to at most row_capacity")
+
+
 def _row_schedule(seglen, capacity, tile_rows=_TILE_M, skip_first_tile=False):
     """Build XLA-owned row and tile prefixes for forward and input products."""
     row_offsets = _row_offsets(seglen, capacity)
@@ -240,9 +249,9 @@ def _weight_product(a, grad_out, seglen, *, graph_mode, graph_cache_max):
     """Allocate chunk-gradient scratch as an internal XLA-owned FFI result."""
     capacity, k = a.shape
     groups, n = seglen.shape[0], grad_out.shape[1]
-    chunk_rows, chunk_capacity = max(256, capacity), 0
+    chunk_rows, scratch_slots = max(256, capacity), 0
     if capacity and groups:
-        chunk_rows, chunk_capacity = _grad_b_launch_config(
+        chunk_rows, scratch_slots = _grad_b_launch_config(
             capacity, groups, k, n, a.dtype.itemsize
         )
     direct = chunk_rows >= capacity
@@ -263,31 +272,16 @@ def _weight_product(a, grad_out, seglen, *, graph_mode, graph_cache_max):
         chunk_rows,
         output_dims={
             "grad_b": (groups, k, n),
-            "partials": (0 if direct else chunk_capacity, k, n),
+            "partials": (0 if direct else scratch_slots, k, n),
             "chunk_scratch": (groups + 1 if callback_schedule else 0,),
         },
     )
     return grad_b
 
 
-def _eager_product(implementation, a, b, seglen, **params):
-    """Place eager temporaries and select graph mode from the actual operands."""
-    device = next(iter(a.devices()))
-    graph_mode = (
-        JaxCallableGraphMode.NONE
-        if device.platform == "cpu"
-        else JaxCallableGraphMode.WARP
-    )
-    with jax.default_device(device):
-        return implementation(a, b, seglen, graph_mode=graph_mode, **params)
-
-
 _forward_p = core.Primitive("nvalchemiops_segment_mm")
-_forward_p.def_impl(partial(_eager_product, _forward))
 _input_p = core.Primitive("nvalchemiops_segment_mm_input_product")
-_input_p.def_impl(partial(_eager_product, _input_product))
 _weight_p = core.Primitive("nvalchemiops_segment_mm_weight_product")
-_weight_p.def_impl(partial(_eager_product, _weight_product))
 
 
 def _bind_product(primitive, a, b, seglen, **params):
@@ -325,6 +319,7 @@ def _abstract_product(a, b, seglen, *, primitive, graph_cache_max):
 
 
 for _primitive in (_forward_p, _input_p, _weight_p):
+    _primitive.def_impl(partial(dispatch.apply_primitive, _primitive))
     _primitive.def_abstract_eval(partial(_abstract_product, primitive=_primitive))
 for _platform, _graph_mode in (
     ("cpu", JaxCallableGraphMode.NONE),
@@ -430,7 +425,8 @@ def segment_mm(
     seglen: jax.Array,
     *,
     graph_cache_max: int | None = 256,
-) -> jax.Array:
+    validate: bool = False,
+) -> jax.Array | tuple[checkify.Error, jax.Array]:
     """Multiply each contiguous segment of rows by its own matrix.
 
     For ``offsets = [0, cumsum(seglen)]``, segment ``g`` computes
@@ -457,16 +453,26 @@ def segment_mm(
         positive integer or ``None`` for an unlimited cache. Close over this
         value or mark it static under ``jax.jit``. Derivative products inherit
         the limit. Ignored on CPU.
+    validate : bool, optional
+        Check runtime length values and return ``(error, out)`` instead of
+        ``out``. Defaults to ``False``. The error is a
+        ``jax.experimental.checkify.Error`` with device-resident state;
+        this operation never inspects it or synchronizes to report errors.
+        Close over this flag or mark it static under ``jax.jit``.
 
     Returns
     -------
-    jax.Array, shape (row_capacity, out_channels), dtype matches a
+    jax.Array or tuple of (checkify.Error, jax.Array)
         Newly allocated contiguous output on the same device as ``a``.
+        The output has shape ``(row_capacity, out_channels)`` and matches
+        ``a.dtype``. With ``validate=True``, an error value precedes the
+        output. No external ``checkify`` transformation is required.
 
     Raises
     ------
     ValueError
-        If input metadata disagree or ``graph_cache_max`` is invalid.
+        If input metadata disagree, ``graph_cache_max`` is invalid, or
+        ``validate`` is not a Python bool.
     RuntimeError
         If concrete inputs are not on CPU or CUDA.
 
@@ -474,8 +480,14 @@ def segment_mm(
     -----
     ``in_channels`` and ``out_channels`` must be positive. Products accumulate
     in float32 and round to the native output dtype. Inputs are read-only.
-    Lengths and prefix sums stay on the device; length value constraints are
-    caller preconditions.
+    Lengths and prefix sums stay on the device. By default, length value
+    constraints are caller preconditions. With ``validate=True``, checks
+    report negative lengths or a total above the row capacity, including
+    inputs whose int32 sum would overflow. Errors do not stop the product
+    from executing; outputs for invalid lengths must not be used.
+    Inspecting ``error.get()`` or calling ``error.throw()`` explicitly reads
+    error state on the host and can synchronize. Preserve errors as auxiliary
+    outputs with ``has_aux=True`` when differentiating a checked loss.
 
     Supports ``jax.jit``, ``jax.lax.scan``, JVP, VJP, and higher-order
     differentiation with respect to either or both floating operands.
@@ -562,6 +574,8 @@ def segment_mm(
     ... )
 
     """
+    if not isinstance(validate, bool):
+        raise ValueError("validate must be a Python bool; keep it static under jax.jit")
     if graph_cache_max is not None and (
         isinstance(graph_cache_max, bool)
         or not isinstance(graph_cache_max, int)
@@ -569,4 +583,8 @@ def segment_mm(
     ):
         raise ValueError("graph_cache_max must be a positive integer or None")
     _validate_inputs(a, b, seglen)
-    return _bind_product(_forward_p, a, b, seglen, graph_cache_max=graph_cache_max)
+    if validate:
+        offsets = _row_offsets(seglen, a.shape[0])
+        error, _ = _length_error(jnp.all(jnp.diff(offsets) == seglen))
+    out = _bind_product(_forward_p, a, b, seglen, graph_cache_max=graph_cache_max)
+    return (error, out) if validate else out

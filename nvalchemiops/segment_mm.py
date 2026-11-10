@@ -23,11 +23,17 @@ from warp._src.types import type_size_in_bytes
 from nvalchemiops.batch_utils import (
     _segment_chunk_rows,
     _segment_counts,
+    _segment_counts_checked,
     _segment_offsets_clamped,
+    _segment_offsets_clamped_checked,
     _segment_offsets_clamped_fused,
+    _segment_offsets_clamped_fused_checked,
     _segment_offsets_cooperative,
+    _segment_offsets_cooperative_checked,
     _segment_offsets_small,
+    _segment_offsets_small_checked,
     _segment_offsets_small_fused,
+    _segment_offsets_small_fused_checked,
     _zero_padding_overloads,
 )
 from nvalchemiops.warp_dispatch import register_overloads
@@ -224,15 +230,18 @@ def _make_segment_mm_grad_b_kernel(direct: bool) -> wp.Kernel:
         chunk_rows : int
             Static maximum chunk size. Split execution can shorten it from the
             active row total while retaining the same bounded scratch shape.
-        partials : wp.array, shape (chunk_capacity, K, N)
+        partials : wp.array, shape (scratch_slots, K, N)
             OUTPUT: FP32 scratch for segments spanning multiple chunks. Unused
-            for singleton segments and when chunk_rows >= capacity.
+            for singleton segments and when chunk_rows >= capacity. When
+            R <= extra_capacity, first chunks occupy the first R slots.
+            Otherwise extra chunks come first, followed by first-chunk slots
+            indexed by each split segment's additional-chunk prefix.
         grad_b : wp.array, shape (R, K, N), dtype matches a
             OUTPUT: Final gradients for segments that require only one chunk.
 
         Notes
         -----
-        Thread launch: tiled ``(chunk_capacity, channel_tiles)``, or
+        Thread launch: tiled ``(R + extra_capacity, channel_tiles)``, or
         ``(R, channel_tiles)`` when chunk_rows >= capacity, with
         ``block_dim=_BLOCK_DIM`` (one lane on CPU). Each block computes one channel
         tile for one chunk; ``channel_tiles = ceil(K / _TILE_K) * ceil(N / _TILE_N)``.
@@ -250,14 +259,19 @@ def _make_segment_mm_grad_b_kernel(direct: bool) -> wp.Kernel:
         group = task
         chunk_count = int(1)
         first = int(0)
+        partial_slot = task
+        extra_capacity = int(0)
         if wp.static(not direct):
+            extra_capacity = wp.max(
+                partials.shape[0] / 2, partials.shape[0] - grad_b.shape[0]
+            )
             minimum_rows = int(256)
             if grad_b.shape[0] >= 32:
                 minimum_rows = 512
             if chunk_rows > minimum_rows:
                 chunk_rows = _segment_chunk_rows(
                     row_offsets[grad_b.shape[0]],
-                    partials.shape[0] - grad_b.shape[0],
+                    extra_capacity,
                     minimum_rows,
                 )
             if task >= grad_b.shape[0]:
@@ -267,6 +281,10 @@ def _make_segment_mm_grad_b_kernel(direct: bool) -> wp.Kernel:
                 group = wp.lower_bound(chunk_offsets, extra + 1) - 1
                 first = (extra - chunk_offsets[group] + 1) * (chunk_rows / _TILE_M)
             chunk_count = chunk_offsets[group + 1] - chunk_offsets[group] + 1
+            if grad_b.shape[0] > extra_capacity:
+                partial_slot = task - grad_b.shape[0]
+                if task < grad_b.shape[0]:
+                    partial_slot = extra_capacity + chunk_offsets[group]
         column_tiles = grad_b.shape[2] / _TILE_N + int(grad_b.shape[2] % _TILE_N != 0)
         input_channel = (channel_tile / column_tiles) * _TILE_K
         output_channel = (channel_tile % column_tiles) * _TILE_N
@@ -323,7 +341,9 @@ def _make_segment_mm_grad_b_kernel(direct: bool) -> wp.Kernel:
                     ] = grad_b.dtype(value)
                 else:
                     partials[
-                        task, input_channel + local_row, output_channel + local_column
+                        partial_slot,
+                        input_channel + local_row,
+                        output_channel + local_column,
                     ] = partials.dtype(value)
 
     return _segment_mm_grad_b_kernel
@@ -340,8 +360,9 @@ def _reduce_grad_b(
 
     Parameters
     ----------
-    partials : wp.array, shape (chunk_capacity, K, N), dtype float32
-        Weight-gradient partials for segments requiring multiple chunks.
+    partials : wp.array, shape (scratch_slots, K, N), dtype float32
+        First chunks occupy the first R slots; additional chunks follow.
+        Used when extra_capacity >= R.
     chunk_offsets : wp.array, shape (R + 1,), dtype int32
         Cumulative counts of additional chunks after each segment's first.
     elements_per_block : int
@@ -389,10 +410,9 @@ def _reduce_grad_b_persistent(
 
     Parameters
     ----------
-    partials : wp.array, shape (chunk_capacity, K, N), dtype float32
-        Weight-gradient partials for segments spanning multiple chunks. The
-        first R slots belong to the first chunk of each segment; later slots
-        hold additional chunks in prefix order.
+    partials : wp.array, shape (scratch_slots, K, N), dtype float32
+        Additional chunks occupy the first half; first chunks follow, indexed
+        by each split segment's extra prefix. Used when extra_capacity < R.
     chunk_offsets : wp.array, shape (R + 1,), dtype int32
         Cumulative additional-chunk counts with a leading zero.
     work_blocks : int
@@ -427,15 +447,16 @@ def _reduce_grad_b_persistent(
         first = chunk_offsets[group]
         last = chunk_offsets[group + 1]
         if extra == first:
+            first_slot = partials.shape[0] / 2 + first
             element_tile = task % tiles
             for step in range(_BLOCK_DIM / wp.block_dim()):
                 element = element_tile * _BLOCK_DIM + lane + step * wp.block_dim()
                 if element < elements:
                     input_channel = element / grad_b.shape[2]
                     output_channel = element % grad_b.shape[2]
-                    value = partials[group, input_channel, output_channel]
+                    value = partials[first_slot, input_channel, output_channel]
                     for chunk in range(first, last):
-                        value += partials[groups + chunk, input_channel, output_channel]
+                        value += partials[chunk, input_channel, output_channel]
                     grad_b[group, input_channel, output_channel] = grad_b.dtype(value)
             task += work_blocks
         else:
@@ -510,7 +531,9 @@ def _validate_array(array: wp.array, name: str, ndim: int) -> None:
         raise ValueError(f"{name} array size exceeds the int32 index range")
 
 
-def _validate_inputs(a: wp.array, b: wp.array, seglen: wp.array) -> None:
+def _validate_inputs(
+    a: wp.array, b: wp.array, seglen: wp.array, *, allow_int64_lengths: bool = False
+) -> None:
     """Validate the shared segmented matrix multiplication input contract."""
     for name, array, ndim in (("a", a, 2), ("b", b, 3), ("seglen", seglen, 1)):
         _validate_array(array, name, ndim)
@@ -518,7 +541,9 @@ def _validate_inputs(a: wp.array, b: wp.array, seglen: wp.array) -> None:
         raise ValueError("All arrays must be on the same device")
     if a.dtype not in _DTYPES or b.dtype != a.dtype:
         raise ValueError("a and b must have the same float32 or bfloat16 dtype")
-    if seglen.dtype != wp.int32:
+    if seglen.dtype != wp.int32 and not (
+        allow_int64_lengths and seglen.dtype == wp.int64
+    ):
         raise ValueError("seglen must have dtype int32")
     if a.shape[1] <= 0 or b.shape[2] <= 0:
         raise ValueError("Channel dimensions K and N must be positive")
@@ -542,7 +567,7 @@ def _validate_output(
     if out.device != like.device:
         raise ValueError("All arrays must be on the same device")
     if out.dtype != like.dtype:
-        raise ValueError(f"{name} must have the same dtype as a")
+        raise ValueError(f"{name} must have dtype {like.dtype.__name__}")
     if out.shape != shape:
         raise ValueError(f"{name} must have shape {shape}, got {out.shape}")
     if out.size:
@@ -572,6 +597,7 @@ def _segment_offsets(
     *,
     chunk_rows: int = 0,
     chunk_offsets: wp.array | None = None,
+    validation: wp.array | None = None,
 ) -> tuple[wp.array, wp.array]:
     """Allocate row offsets and cumulative counts of SegMM row-tile tasks.
 
@@ -585,6 +611,8 @@ def _segment_offsets(
     Both schedules share the row-prefix construction.
     Weight schedules shorten chunks from the clipped active total when the
     static size exceeds the 256/512-row floor, preserving their slot budget.
+    If supplied, ``validation`` is overwritten with one for valid lengths
+    and zero otherwise, without inspecting the result on the host.
     """
     groups = seglen.shape[0]
     row_offsets = wp.empty(groups + 1, dtype=wp.int32, device=seglen.device)
@@ -596,9 +624,11 @@ def _segment_offsets(
     if needs_scan:
         row_prefix = wp.empty(groups + 1, dtype=wp.int64, device=seglen.device)
         wp.launch(
-            _segment_counts,
+            _segment_counts_checked if validation is not None else _segment_counts,
             dim=groups + 1,
-            inputs=[seglen, row_prefix],
+            inputs=[seglen, row_prefix, capacity]
+            if validation is not None
+            else [seglen, row_prefix],
             device=seglen.device,
         )
         wp.utils.array_scan(row_prefix, row_prefix)
@@ -612,6 +642,7 @@ def _segment_offsets(
         chunk_rows=chunk_rows,
         chunk_offsets=chunk_offsets,
         row_prefix=row_prefix,
+        validation=validation,
     )
     if needs_scan:
         wp.utils.array_scan(tile_offsets, tile_offsets)
@@ -636,6 +667,7 @@ def _launch_segment_offsets(
     chunk_rows: int = 0,
     chunk_offsets: wp.array | None = None,
     row_prefix: wp.array | None = None,
+    validation: wp.array | None = None,
 ) -> None:
     """Build offsets in caller-owned storage on the current Warp stream.
 
@@ -644,6 +676,10 @@ def _launch_segment_offsets(
     the tile counts and any chunk counts written here. Other schedules produce
     complete prefixes in one launch. All offset buffers have ``groups + 1``
     int32 entries. This leaf allocates no storage.
+
+    A supplied single-element int32 ``validation`` buffer selects checked
+    kernels. Its result is one for valid lengths and zero otherwise. Scanned
+    checked calls must supply prefixes built from ``_segment_counts_checked``.
     """
     groups = seglen.shape[0]
     fused = chunk_offsets is not None
@@ -657,8 +693,13 @@ def _launch_segment_offsets(
     )
     if fused and seglen.device.is_cuda and 32 <= groups <= 1024:
         bucket = 1 << (groups - 1).bit_length()
+        kernels = (
+            _segment_offsets_cooperative_checked
+            if validation is not None
+            else _segment_offsets_cooperative
+        )
         wp.launch_tiled(
-            _segment_offsets_cooperative[bucket],
+            kernels[bucket],
             dim=(1,),
             inputs=[
                 seglen,
@@ -670,13 +711,22 @@ def _launch_segment_offsets(
                 chunk_rows,
                 chunk_offsets,
                 minimum_chunk_rows,
+                validation,
             ],
             block_dim=min(bucket, _BLOCK_DIM),
             device=seglen.device,
         )
     elif groups <= 128:
+        if validation is not None:
+            kernel = (
+                _segment_offsets_small_fused_checked
+                if fused
+                else _segment_offsets_small_checked
+            )
+        else:
+            kernel = _segment_offsets_small_fused if fused else _segment_offsets_small
         wp.launch(
-            _segment_offsets_small_fused if fused else _segment_offsets_small,
+            kernel,
             dim=groups + 1,
             inputs=[
                 seglen,
@@ -688,12 +738,23 @@ def _launch_segment_offsets(
                 chunk_rows,
                 chunk_output,
                 minimum_chunk_rows,
+                validation,
             ],
             device=seglen.device,
         )
     else:
+        if validation is not None:
+            kernel = (
+                _segment_offsets_clamped_fused_checked
+                if fused
+                else _segment_offsets_clamped_checked
+            )
+        else:
+            kernel = (
+                _segment_offsets_clamped_fused if fused else _segment_offsets_clamped
+            )
         wp.launch(
-            _segment_offsets_clamped_fused if fused else _segment_offsets_clamped,
+            kernel,
             dim=groups + 1,
             inputs=[
                 row_prefix,
@@ -705,6 +766,7 @@ def _launch_segment_offsets(
                 chunk_rows,
                 chunk_output,
                 minimum_chunk_rows,
+                validation,
             ],
             device=seglen.device,
         )
@@ -781,7 +843,14 @@ def _launch_grad_a(
         )
 
 
-def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> None:
+def segment_mm(
+    a: wp.array,
+    b: wp.array,
+    seglen: wp.array,
+    out: wp.array,
+    *,
+    validation: wp.array | None = None,
+) -> None:
     """Compute segmented matrix products with shared input and output channels.
 
     For ``offsets = [0, cumsum(seglen)]``, each segment ``g`` computes
@@ -805,6 +874,11 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
         OUTPUT: Pre-allocated contiguous product buffer. Must not overlap
         any input's memory span, including gaps in strided views. Every
         output element is overwritten.
+    validation : wp.array, shape (1,), dtype int32, optional
+        OUTPUT: Optional caller-owned status buffer, contiguous and on the
+        input device. Must not overlap any input or output memory span.
+        Every call writes one for valid lengths or zero for invalid lengths,
+        including empty inputs. Omit it to disable length value checks.
 
     Raises
     ------
@@ -816,7 +890,8 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
     -----
     Thread launch: cooperative blocks compute output tiles, and a separate
     elementwise launch zeroes padding rows.
-    Modifies: every element of ``out``. Inputs are read-only.
+    Modifies: every element of ``out`` and the optional ``validation`` status.
+    Inputs are read-only.
 
     All arrays must reside on the same CPU or CUDA device.
     ``in_channels`` and ``out_channels`` must be positive.
@@ -825,10 +900,16 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
     Products accumulate in float32 and are cast once to the output dtype.
     The float32 path does not request reduced-precision multiplication.
 
-    Segment lengths and prefix sums stay on the device. Their value
-    constraints are caller preconditions and are not checked on the host.
-    For bounds safety, device offsets treat negative lengths as zero and
-    truncate segment ranges at ``row_capacity`` without raising an error.
+    Segment lengths and prefix sums stay on the device. Without ``validation``,
+    value constraints are caller preconditions; offsets treat negative lengths
+    as zero and truncate ranges at ``row_capacity`` for bounds safety.
+    With ``validation``, negative lengths or a total above ``row_capacity``
+    write a zero status, including when the int32 sum would overflow.
+    Checks do not stop the product or raise an exception. Numerical outputs
+    are defined only for valid lengths. Status stays on-device without a host
+    read or synchronization; another kernel on the same stream can consume it.
+    Explicitly calling ``validation.numpy()`` copies it to the host and
+    synchronizes CUDA work.
     Array sizes and launch dimensions must fit the signed 32-bit index range.
     Work is enqueued on the current Warp stream for the input device.
 
@@ -846,14 +927,19 @@ def segment_mm(a: wp.array, b: wp.array, seglen: wp.array, out: wp.array) -> Non
     _validate_inputs(a, b, seglen)
     capacity, groups, n = a.shape[0], b.shape[0], b.shape[2]
     _validate_output(out, "out", (capacity, n), a, (a, b, seglen))
+    if validation is not None:
+        _validate_output(validation, "validation", (1,), seglen, (a, b, seglen, out))
     with wp.ScopedDevice(a.device):
-        if capacity == 0:
-            return
-        if groups == 0:
-            out.zero_()
+        if capacity == 0 or groups == 0:
+            if validation is not None:
+                _segment_offsets(seglen, capacity, validation=validation)
+            if capacity:
+                out.zero_()
             return
 
-        row_offsets, tile_offsets = _segment_offsets(seglen, capacity)
+        row_offsets, tile_offsets = _segment_offsets(
+            seglen, capacity, validation=validation
+        )
         _launch_forward(a, b, row_offsets, tile_offsets, out)
 
 
@@ -881,26 +967,31 @@ def _grad_b_reduction_elements(groups: int, k: int, n: int) -> int:
 def _grad_b_launch_config(
     capacity: int, groups: int, k: int, n: int, itemsize: int
 ) -> tuple[int, int]:
-    """Choose a static chunk ceiling and fixed scratch/launch capacity."""
+    """Choose a static chunk ceiling and bounded FP32 scratch slot count."""
     chunk_rows = 512 if groups >= 32 else 256
-    chunk_capacity = 0
+    scratch_slots = 0
+    extra_capacity = 0
     if capacity and groups:
-        slot_budget = min(max(groups, (64 << 20) // (k * n * 4)), max(128, 32 * groups))
-        minimum_rows = (capacity - 1) // (slot_budget - groups + 1) + 1
+        slot_budget = (64 << 20) // (k * n * 4)
+        extra_budget = min(
+            max(slot_budget // 2, slot_budget - groups), max(128, 32 * groups) - groups
+        )
+        minimum_rows = (capacity - 1) // (extra_budget + 1) + 1
         chunk_rows = (max(chunk_rows, minimum_rows) + _TILE_M - 1) // _TILE_M * _TILE_M
-        # Reserve the first groups slots for direct segment mapping. At least
-        # one active row is consumed before any segment can add extra chunks.
-        chunk_capacity = groups + (capacity - 1) // chunk_rows
+        extra_capacity = (capacity - 1) // chunk_rows
+        # Every split segment owns at least one extra chunk. Reserve first-chunk
+        # storage for at most that many owners, independent of singleton count.
+        scratch_slots = extra_capacity + min(groups, extra_capacity)
     channel_tiles = ((k + _TILE_K - 1) // _TILE_K) * ((n + _TILE_N - 1) // _TILE_N)
     direct = chunk_rows >= capacity
-    tasks = groups if direct else chunk_capacity
+    tasks = groups if direct else groups + extra_capacity
     elements_per_block = _grad_b_reduction_elements(groups, k, n)
     reduction_tiles = (k * n + elements_per_block - 1) // elements_per_block
     if (
         max(
             tasks * channel_tiles * _BLOCK_DIM,
             (0 if direct else groups) * reduction_tiles * _BLOCK_DIM,
-            (0 if direct else chunk_capacity) * k * n,
+            scratch_slots * k * n,
             capacity * itemsize,
             k * n * (itemsize if direct else 4),
         )
@@ -909,7 +1000,7 @@ def _grad_b_launch_config(
         raise ValueError(
             "Backward workspace or launch dimensions exceed the int32 index range"
         )
-    return chunk_rows, chunk_capacity
+    return chunk_rows, scratch_slots
 
 
 def _launch_grad_b(
@@ -924,7 +1015,7 @@ def _launch_grad_b(
     """Write weight gradients using caller-owned scratch on the current stream.
 
     Pass ``grad_b`` as ``partials`` when chunk_rows >= capacity; otherwise
-    pass a bounded FP32 ``(chunk_capacity, K, N)`` array. Chunk prefixes and
+    pass a bounded FP32 ``(scratch_slots, K, N)`` array. Chunk prefixes and
     shapes must have been validated before this allocation-free leaf is called.
     """
     groups, k, n = grad_b.shape
@@ -933,15 +1024,17 @@ def _launch_grad_b(
         return
     channel_tiles = ((k + _TILE_K - 1) // _TILE_K) * ((n + _TILE_N - 1) // _TILE_N)
     direct = chunk_rows >= a.shape[0]
+    extra_capacity = (
+        0 if direct else max(partials.shape[0] // 2, partials.shape[0] - groups)
+    )
     wp.launch_tiled(
         _segment_mm_grad_b_overloads[direct][a.dtype, partials.dtype],
-        dim=(groups if direct else partials.shape[0], channel_tiles),
+        dim=(groups + extra_capacity, channel_tiles),
         inputs=[a, grad_out, row_offsets, chunk_offsets, chunk_rows, partials, grad_b],
         block_dim=_BLOCK_DIM,
         device=a.device,
     )
     if not direct:
-        extra_capacity = partials.shape[0] - groups
         if 0 < extra_capacity < groups:
             tiles = (k * n + _BLOCK_DIM - 1) // _BLOCK_DIM
             work_blocks = min(512, extra_capacity * tiles)
@@ -964,7 +1057,12 @@ def _launch_grad_b(
 
 
 def segment_mm_backward_b(
-    a: wp.array, seglen: wp.array, grad_out: wp.array, grad_b: wp.array
+    a: wp.array,
+    seglen: wp.array,
+    grad_out: wp.array,
+    grad_b: wp.array,
+    *,
+    validation: wp.array | None = None,
 ) -> None:
     """Compute only the per-segment weight gradient ``a[g].T @ grad_out[g]``.
 
@@ -984,6 +1082,11 @@ def segment_mm_backward_b(
         OUTPUT: Pre-allocated contiguous weight gradient on the same device
         as ``a``. Must not overlap input memory spans, including gaps in
         strided views. Every element is overwritten.
+    validation : wp.array, shape (1,), dtype int32, optional
+        OUTPUT: Optional caller-owned status buffer, contiguous and on the
+        input device. Must not overlap any input or output memory span.
+        Every call writes one for valid lengths or zero for invalid lengths,
+        including empty inputs. Omit it to disable length value checks.
 
     Raises
     ------
@@ -995,7 +1098,8 @@ def segment_mm_backward_b(
     -----
     Thread launch: cooperative blocks compute channel tiles over equal-sized
     row chunks; an elementwise reduction combines multiple chunks when needed.
-    Modifies: every element of ``grad_b``. Inputs are read-only.
+    Modifies: every element of ``grad_b`` and the optional ``validation`` status.
+    Inputs are read-only.
 
     All arrays must reside on the same CPU or CUDA device.
     ``in_channels`` and ``out_channels`` must be positive.
@@ -1009,9 +1113,13 @@ def segment_mm_backward_b(
     tile at a time in shared memory; no full activation transpose is allocated.
     Singleton segments write ``grad_b`` directly. When ``row_capacity`` fits one chunk,
     no partial-gradient buffer or final reduction is needed.
-    Length values stay on the device and their constraints are caller preconditions.
-    For bounds safety, device offsets treat negative lengths as zero and
-    truncate segment ranges at ``row_capacity`` without raising an error.
+    Length values stay on the device. Without ``validation``, their constraints
+    are caller preconditions; offsets clip negative lengths and truncate ranges
+    for bounds safety. With ``validation``, the status reports negative lengths
+    or a total above ``row_capacity``, including int32 overflow. No host read,
+    synchronization, or exception occurs to report invalid lengths. Numerical
+    outputs are defined only for valid lengths. See ``segment_mm`` for status
+    consumption and explicit host inspection.
     Work uses the current Warp stream. CUDA graph capture requires kernel warmup.
 
     See Also
@@ -1028,22 +1136,32 @@ def segment_mm_backward_b(
         a,
         (a, seglen, grad_out),
     )
+    if validation is not None:
+        _validate_output(
+            validation, "validation", (1,), seglen, (a, seglen, grad_out, grad_b)
+        )
     with wp.ScopedDevice(a.device):
         if a.shape[0] == 0 or seglen.shape[0] == 0:
+            if validation is not None:
+                _segment_offsets(seglen, a.shape[0], validation=validation)
             grad_b.zero_()
             return
         groups, k, n = grad_b.shape
-        chunk_rows, chunk_capacity = _grad_b_launch_config(
+        chunk_rows, scratch_slots = _grad_b_launch_config(
             a.shape[0], groups, k, n, type_size_in_bytes(a.dtype)
         )
         row_offsets, chunk_offsets = _segment_offsets(
-            seglen, a.shape[0], chunk_rows, skip_first_tile=True
+            seglen,
+            a.shape[0],
+            chunk_rows,
+            skip_first_tile=True,
+            validation=validation,
         )
         if chunk_rows >= a.shape[0]:
             partials = grad_b
         else:
             partials = wp.empty(
-                (chunk_capacity, k, n), dtype=wp.float32, device=a.device
+                (scratch_slots, k, n), dtype=wp.float32, device=a.device
             )
         _launch_grad_b(
             a, row_offsets, chunk_offsets, grad_out, grad_b, partials, chunk_rows
@@ -1057,6 +1175,8 @@ def segment_mm_backward(
     grad_out: wp.array,
     grad_a: wp.array,
     grad_b: wp.array,
+    *,
+    validation: wp.array | None = None,
 ) -> None:
     """Compute gradients of segmented matrix multiplication with respect to A and B.
 
@@ -1086,6 +1206,11 @@ def segment_mm_backward(
     grad_b : wp.array, shape (num_segments, in_channels, out_channels), dtype matches a
         OUTPUT: Pre-allocated contiguous weight gradient. Every element is
         overwritten, and empty segments are set to zero.
+    validation : wp.array, shape (1,), dtype int32, optional
+        OUTPUT: Optional caller-owned status buffer, contiguous and on the
+        input device. Must not overlap any input or output memory span.
+        Every call writes one for valid lengths or zero for invalid lengths,
+        including empty inputs. Omit it to disable length value checks.
 
     Raises
     ------
@@ -1098,7 +1223,8 @@ def segment_mm_backward(
     Thread launch: cooperative blocks compute feature-gradient and
     weight-gradient tiles. Elementwise launches zero feature padding and
     combine weight-gradient chunks when needed.
-    Modifies: every element of ``grad_a`` and ``grad_b``. Inputs are read-only.
+    Modifies: every element of ``grad_a``, ``grad_b``, and the optional
+    ``validation`` status. Inputs are read-only.
 
     All arrays must reside on the same CPU or CUDA device. Inputs support nonnegative
     int32 byte strides. Outputs must not overlap each other or any input's
@@ -1114,14 +1240,17 @@ def segment_mm_backward(
     Weight gradients write directly to ``grad_b`` for singleton segments,
     otherwise using FP32 partial gradients.
     A is read directly and transposed one tile at a time in shared memory.
-    Partial storage is limited to 64 MiB or one FP32 B-sized buffer,
-    whichever is larger. The chunk ceiling and maximum task count depend only
-    on static buffer shapes. Runtime active rows can shorten chunks within the
-    same scratch capacity; prefixes assign more chunks to long segments.
-    Segment lengths stay on the device; their value constraints remain caller
-    preconditions. Work uses the current Warp stream for the input device.
-    For bounds safety, device offsets treat negative lengths as zero and
-    truncate segment ranges at ``row_capacity`` without raising an error.
+    Partial storage is limited to 64 MiB. First-chunk storage is bounded by
+    the number of possible split segments. The chunk ceiling and maximum task
+    count depend only on static buffer shapes. Runtime active rows can shorten
+    chunks within the same scratch capacity; prefixes assign more chunks to long segments.
+    Segment lengths stay on the device. Without ``validation``, their constraints
+    are caller preconditions; offsets clip negative lengths and truncate ranges
+    for bounds safety. With ``validation``, the status reports negative lengths
+    or a total above ``row_capacity``, including int32 overflow. No host read,
+    synchronization, or exception occurs to report invalid lengths. Numerical
+    outputs are defined only for valid lengths. See ``segment_mm`` for status
+    consumption and explicit host inspection. Work uses the current Warp stream.
 
     This is an explicit first-order backward operation, not an automatic Warp
     adjoint or a framework autodiff registration. CUDA graph capture requires
@@ -1139,14 +1268,20 @@ def segment_mm_backward(
     inputs = (a, b, seglen, grad_out)
     _validate_output(grad_a, "grad_a", a.shape, a, inputs)
     _validate_output(grad_b, "grad_b", b.shape, a, (*inputs, grad_a))
+    if validation is not None:
+        _validate_output(
+            validation, "validation", (1,), seglen, (*inputs, grad_a, grad_b)
+        )
 
     with wp.ScopedDevice(a.device):
         if capacity == 0 or groups == 0:
+            if validation is not None:
+                _segment_offsets(seglen, capacity, validation=validation)
             grad_a.zero_()
             grad_b.zero_()
             return
 
-        chunk_rows, chunk_capacity = _grad_b_launch_config(
+        chunk_rows, scratch_slots = _grad_b_launch_config(
             capacity, groups, k, n, type_size_in_bytes(a.dtype)
         )
         row_tasks = (capacity + _TILE_M - 1) // _TILE_M + groups
@@ -1159,10 +1294,16 @@ def segment_mm_backward(
         if chunk_rows < capacity:
             chunk_offsets = wp.empty(groups + 1, dtype=wp.int32, device=seglen.device)
             row_offsets, tile_offsets = _segment_offsets(
-                seglen, capacity, chunk_rows=chunk_rows, chunk_offsets=chunk_offsets
+                seglen,
+                capacity,
+                chunk_rows=chunk_rows,
+                chunk_offsets=chunk_offsets,
+                validation=validation,
             )
         else:
-            row_offsets, tile_offsets = _segment_offsets(seglen, capacity)
+            row_offsets, tile_offsets = _segment_offsets(
+                seglen, capacity, validation=validation
+            )
             chunk_offsets = tile_offsets
         b_transposed = b.transpose((0, 2, 1))
         if b.dtype == wp.float32 and not b_transposed.is_contiguous:
@@ -1172,7 +1313,7 @@ def segment_mm_backward(
             partials = grad_b
         else:
             partials = wp.empty(
-                (chunk_capacity, k, n), dtype=wp.float32, device=a.device
+                (scratch_slots, k, n), dtype=wp.float32, device=a.device
             )
         _launch_grad_b(
             a, row_offsets, chunk_offsets, grad_out, grad_b, partials, chunk_rows

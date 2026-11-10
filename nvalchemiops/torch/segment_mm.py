@@ -20,7 +20,7 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from nvalchemiops.batch_utils import _segment_counts
+from nvalchemiops.batch_utils import _segment_counts, _segment_counts_checked
 from nvalchemiops.segment_mm import (
     _BLOCK_DIM,
     _INDEX_LIMIT,
@@ -46,7 +46,7 @@ __all__ = ["segment_mm"]
 
 
 def _validate_inputs(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> None:
-    """Check tensor metadata without reading device segment lengths."""
+    """Check tensor metadata without inspecting runtime segment values."""
     for name, value, ndim in (("a", a, 2), ("b", b, 3), ("seglen", seglen, 1)):
         if not isinstance(value, torch.Tensor) or value.ndim != ndim:
             raise ValueError(f"{name} must be a {ndim}D tensor")
@@ -59,14 +59,33 @@ def _validate_inputs(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> 
         torch.bfloat16,
     ):
         raise ValueError("a and b must have float32 or bfloat16 dtype")
-    if seglen.dtype != torch.int32:
-        raise ValueError("seglen must have dtype int32")
+    if seglen.dtype not in (torch.int32, torch.int64):
+        raise ValueError("seglen must have dtype int32 or int64")
     if a.shape[1] <= 0 or b.shape[2] <= 0:
         raise ValueError("Channel dimensions K and N must be positive")
     if b.shape[1] != a.shape[1]:
         raise ValueError("Input channel dimensions of a and b must match")
     if seglen.shape[0] != b.shape[0]:
         raise ValueError("seglen must contain one length per segment in b")
+
+
+def _prepare_lengths(
+    seglen: torch.Tensor, capacity: int, validate: bool
+) -> torch.Tensor:
+    """Validate concrete CPU values and preserve wide CUDA lengths for checking."""
+    if validate and seglen.is_cuda:
+        return seglen
+    if validate and seglen.numel():
+        if seglen.min().item() < 0:
+            raise ValueError("seglen values must be nonnegative")
+        if (
+            seglen.dtype == torch.int64
+            and seglen.max().item() > torch.iinfo(torch.int32).max
+        ):
+            raise ValueError("seglen values must be representable as int32")
+        if seglen.sum(dtype=torch.int64).item() > capacity:
+            raise ValueError("seglen sum must be at most row_capacity")
+    return seglen.to(torch.int32)
 
 
 def _segment_offsets(
@@ -77,6 +96,7 @@ def _segment_offsets(
     skip_first_tile: bool = False,
     *,
     chunk_rows: int = 0,
+    validate: bool = False,
 ) -> tuple[wp.array, wp.array, wp.array]:
     """Build device schedules with Torch-owned offsets and scan workspace.
 
@@ -85,6 +105,16 @@ def _segment_offsets(
     schedule is requested, the third result aliases the tile offsets.
     """
     groups = seglen.shape[0]
+    validation = (
+        torch.empty(1, dtype=torch.int32, device=device)
+        if validate and seglen.device.is_cuda
+        else None
+    )
+    validation_wp = (
+        wp.from_torch(validation, requires_grad=False)
+        if validation is not None
+        else None
+    )
     rows = torch.empty(groups + 1, dtype=torch.int32, device=device)
     tiles = torch.empty_like(rows)
     chunks = torch.empty_like(rows) if chunk_rows else tiles
@@ -102,9 +132,11 @@ def _segment_offsets(
         prefix = torch.empty(groups + 1, dtype=torch.int64, device=device)
         row_prefix = wp.from_torch(prefix, requires_grad=False)
         wp.launch(
-            _segment_counts,
+            _segment_counts_checked if validation is not None else _segment_counts,
             dim=groups + 1,
-            inputs=[seglen, row_prefix],
+            inputs=[seglen, row_prefix, capacity]
+            if validation is not None
+            else [seglen, row_prefix],
             device=seglen.device,
         )
         torch.cumsum(prefix, dim=0, dtype=prefix.dtype, out=prefix)
@@ -118,7 +150,12 @@ def _segment_offsets(
         chunk_rows=chunk_rows,
         chunk_offsets=chunk_offsets if chunk_rows else None,
         row_prefix=row_prefix,
+        validation=validation_wp,
     )
+    if validation is not None:
+        torch._assert_async(
+            validation, "seglen must be nonnegative and sum to at most row_capacity"
+        )
     if needs_scan:
         torch.cumsum(tiles, dim=0, dtype=tiles.dtype, out=tiles)
         if chunk_rows:
@@ -126,26 +163,33 @@ def _segment_offsets(
     return row_offsets, tile_offsets, chunk_offsets
 
 
-def _forward(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.Tensor:
+def _forward(
+    a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor, validate: bool = False
+) -> torch.Tensor:
     """Wrap strided storage and use the current Torch stream on CUDA."""
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
+        seglen = _prepare_lengths(seglen, a.shape[0], validate)
         out = a.new_empty((a.shape[0], b.shape[2]))
         a_wp = wp.from_torch(a, requires_grad=False)
         b_wp = wp.from_torch(b, requires_grad=False)
         seglen_wp = wp.from_torch(seglen, requires_grad=False)
         out_wp = wp.from_torch(out, requires_grad=False)
-        _validate_warp_inputs(a_wp, b_wp, seglen_wp)
+        _validate_warp_inputs(a_wp, b_wp, seglen_wp, allow_int64_lengths=validate)
         _validate_output(out_wp, "out", out.shape, a_wp, (a_wp, b_wp, seglen_wp))
         if a.shape[0] == 0 or b.shape[0] == 0:
+            if validate and b.shape[0] > 0:
+                _segment_offsets(seglen_wp, 0, a.device, validate=True)
             out.zero_()
             return out
-        row_offsets, tile_offsets, _ = _segment_offsets(seglen_wp, a.shape[0], a.device)
+        row_offsets, tile_offsets, _ = _segment_offsets(
+            seglen_wp, a.shape[0], a.device, validate=validate
+        )
         _launch_forward(a_wp, b_wp, row_offsets, tile_offsets, out_wp)
     return out
 
 
 def _forward_fake(
-    a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor
+    a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor, validate: bool = False
 ) -> torch.Tensor:
     """Describe a fresh contiguous output without running a Warp kernel."""
     return a.new_empty((a.shape[0], b.shape[2]))
@@ -156,9 +200,11 @@ def _backward(
     a: torch.Tensor,
     b: torch.Tensor,
     seglen: torch.Tensor,
+    validate: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Allocate contiguous gradients and invoke the explicit first-order backward."""
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
+        seglen = _prepare_lengths(seglen, a.shape[0], validate)
         grad_a = a.new_empty(a.shape)
         grad_b = b.new_empty(b.shape)
         a_wp = wp.from_torch(a, requires_grad=False)
@@ -167,7 +213,7 @@ def _backward(
         grad_out_wp = wp.from_torch(grad_out, requires_grad=False)
         grad_a_wp = wp.from_torch(grad_a, requires_grad=False)
         grad_b_wp = wp.from_torch(grad_b, requires_grad=False)
-        _validate_warp_inputs(a_wp, b_wp, seglen_wp)
+        _validate_warp_inputs(a_wp, b_wp, seglen_wp, allow_int64_lengths=validate)
         capacity, k = a.shape
         groups, _, n = b.shape
         _validate_grad_out(a_wp, grad_out_wp, n)
@@ -175,11 +221,13 @@ def _backward(
         _validate_output(grad_a_wp, "grad_a", a.shape, a_wp, inputs)
         _validate_output(grad_b_wp, "grad_b", b.shape, a_wp, (*inputs, grad_a_wp))
         if capacity == 0 or groups == 0:
+            if validate and groups > 0:
+                _segment_offsets(seglen_wp, 0, a.device, validate=True)
             grad_a.zero_()
             grad_b.zero_()
             return grad_a, grad_b
 
-        chunk_rows, chunk_capacity = _grad_b_launch_config(
+        chunk_rows, scratch_slots = _grad_b_launch_config(
             capacity, groups, k, n, a.element_size()
         )
         row_tasks = (capacity + _TILE_M - 1) // _TILE_M + groups
@@ -193,6 +241,7 @@ def _backward(
             capacity,
             a.device,
             chunk_rows=chunk_rows if chunk_rows < capacity else 0,
+            validate=validate,
         )
         weights_wp = b_wp
         if b.dtype == torch.float32:
@@ -205,7 +254,7 @@ def _backward(
         partials_wp = grad_b_wp
         if chunk_rows < capacity:
             partials = torch.empty(
-                (chunk_capacity, k, n), dtype=torch.float32, device=a.device
+                (scratch_slots, k, n), dtype=torch.float32, device=a.device
             )
             partials_wp = wp.from_torch(partials, requires_grad=False)
         _launch_grad_b(
@@ -225,40 +274,52 @@ def _backward_fake(
     a: torch.Tensor,
     b: torch.Tensor,
     seglen: torch.Tensor,
+    validate: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Describe contiguous gradients even when the original inputs are strided."""
     return a.new_empty(a.shape), b.new_empty(b.shape)
 
 
 def _weight_product(
-    a: torch.Tensor, grad_out: torch.Tensor, seglen: torch.Tensor
+    a: torch.Tensor,
+    grad_out: torch.Tensor,
+    seglen: torch.Tensor,
+    validate: bool = False,
 ) -> torch.Tensor:
     """Compute only the segmented weight product, retaining native operand dtype."""
     with scoped_warp_stream(a.device), scoped_warp_capture(a.device):
+        seglen = _prepare_lengths(seglen, a.shape[0], validate)
         grad_b = a.new_empty((seglen.shape[0], a.shape[1], grad_out.shape[1]))
         a_wp = wp.from_torch(a, requires_grad=False)
         seglen_wp = wp.from_torch(seglen, requires_grad=False)
         grad_out_wp = wp.from_torch(grad_out, requires_grad=False)
         grad_b_wp = wp.from_torch(grad_b, requires_grad=False)
-        _validate_warp_inputs(a_wp, grad_b_wp, seglen_wp)
+        _validate_warp_inputs(a_wp, grad_b_wp, seglen_wp, allow_int64_lengths=validate)
         _validate_grad_out(a_wp, grad_out_wp, grad_out.shape[1])
         _validate_output(
             grad_b_wp, "grad_b", grad_b.shape, a_wp, (a_wp, seglen_wp, grad_out_wp)
         )
         if a.shape[0] == 0 or seglen.shape[0] == 0:
+            if validate and seglen.shape[0] > 0:
+                _segment_offsets(seglen_wp, 0, a.device, validate=True)
             grad_b.zero_()
             return grad_b
         groups, k, n = grad_b.shape
-        chunk_rows, chunk_capacity = _grad_b_launch_config(
+        chunk_rows, scratch_slots = _grad_b_launch_config(
             a.shape[0], groups, k, n, a.element_size()
         )
         row_offsets, chunk_offsets, _ = _segment_offsets(
-            seglen_wp, a.shape[0], a.device, chunk_rows, skip_first_tile=True
+            seglen_wp,
+            a.shape[0],
+            a.device,
+            chunk_rows,
+            skip_first_tile=True,
+            validate=validate,
         )
         partials_wp = grad_b_wp
         if chunk_rows < a.shape[0]:
             partials = torch.empty(
-                (chunk_capacity, k, n), dtype=torch.float32, device=a.device
+                (scratch_slots, k, n), dtype=torch.float32, device=a.device
             )
             partials_wp = wp.from_torch(partials, requires_grad=False)
         _launch_grad_b(
@@ -274,7 +335,10 @@ def _weight_product(
 
 
 def _weight_product_fake(
-    a: torch.Tensor, grad_out: torch.Tensor, seglen: torch.Tensor
+    a: torch.Tensor,
+    grad_out: torch.Tensor,
+    seglen: torch.Tensor,
+    validate: bool = False,
 ) -> torch.Tensor:
     """Describe a fresh contiguous weight-product output."""
     return a.new_empty((seglen.shape[0], a.shape[1], grad_out.shape[1]))
@@ -301,41 +365,43 @@ _WEIGHT_PRODUCT_OP = register_warp_op_chain(
 
 
 @torch.compiler.allow_in_graph
-def _apply_forward(a, b, seglen):
+def _apply_forward(a, b, seglen, validate=False):
     """Expose transformable autograd rules to AOTAutograd without Dynamo inlining."""
-    return _SegmentMMFunction.apply(a, b, seglen)
+    return _SegmentMMFunction.apply(a, b, seglen, validate)
 
 
 @torch.compiler.allow_in_graph
-def _apply_backward(grad_out, a, b, seglen):
+def _apply_backward(grad_out, a, b, seglen, validate=False):
     """Apply the shared backward with a derivative rule at every order."""
-    return _SegmentMMBackwardFunction.apply(grad_out, a, b, seglen)
+    return _SegmentMMBackwardFunction.apply(grad_out, a, b, seglen, validate)
 
 
 @torch.compiler.allow_in_graph
-def _apply_weight_product(a, grad_out, seglen):
+def _apply_weight_product(a, grad_out, seglen, validate=False):
     """Expose a weight-only product with composable derivative rules."""
-    return _SegmentMMWeightProductFunction.apply(a, grad_out, seglen)
+    return _SegmentMMWeightProductFunction.apply(a, grad_out, seglen, validate)
 
 
-def _backward_vjp(grad_out, a, b, seglen, grad_grad_a, grad_grad_b):
+def _backward_vjp(grad_out, a, b, seglen, grad_grad_a, grad_grad_b, validate=False):
     """Transpose the explicit backward using the same segmented products."""
     if grad_grad_a is None and grad_grad_b is None:
-        return None, None, None, None
+        return None, None, None, None, None
     if grad_grad_a is None:
-        grad_a = _apply_forward(grad_out, grad_grad_b.transpose(1, 2), seglen)
+        grad_a = _apply_forward(grad_out, grad_grad_b.transpose(1, 2), seglen, validate)
         grad_b = None
-        grad_grad_out = _apply_forward(a, grad_grad_b, seglen)
+        grad_grad_out = _apply_forward(a, grad_grad_b, seglen, validate)
     elif grad_grad_b is None:
         grad_a = None
-        grad_b = _apply_weight_product(grad_grad_a, grad_out, seglen)
-        grad_grad_out = _apply_forward(grad_grad_a, b, seglen)
+        grad_b = _apply_weight_product(grad_grad_a, grad_out, seglen, validate)
+        grad_grad_out = _apply_forward(grad_grad_a, b, seglen, validate)
     else:
-        grad_a, grad_b = _apply_backward(grad_out, grad_grad_a, grad_grad_b, seglen)
-        grad_grad_out = _apply_forward(grad_grad_a, b, seglen) + _apply_forward(
-            a, grad_grad_b, seglen
+        grad_a, grad_b = _apply_backward(
+            grad_out, grad_grad_a, grad_grad_b, seglen, validate
         )
-    return grad_grad_out, grad_a, grad_b, None
+        grad_grad_out = _apply_forward(
+            grad_grad_a, b, seglen, validate
+        ) + _apply_forward(a, grad_grad_b, seglen, validate)
+    return grad_grad_out, grad_a, grad_b, None, None
 
 
 # The shared registration helper owns opaque execution and fake metadata.
@@ -345,31 +411,45 @@ class _SegmentMMFunction(torch.autograd.Function):
     """Expose the opaque forward to PyTorch function transforms and forward AD."""
 
     @staticmethod
-    def forward(a, b, seglen):
-        return _FORWARD_OP(a, b, seglen)
+    def forward(a, b, seglen, validate):
+        return _FORWARD_OP(a, b, seglen, validate)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        ctx.save_for_backward(*inputs)
-        ctx.save_for_forward(*inputs)
+        ctx.save_for_backward(*inputs[:-1])
+        ctx.save_for_forward(*inputs[:-1])
+        ctx.validate = inputs[-1]
         ctx.set_materialize_grads(False)
 
     @staticmethod
     def backward(ctx, grad_out):
         if grad_out is None:
-            return None, None, None
+            return None, None, None, None
         a, b, seglen = ctx.saved_tensors
-        grad_a, grad_b = _apply_backward(grad_out, a, b, seglen)
-        return grad_a, grad_b, None
+        need_a, need_b = ctx.needs_input_grad[:2]
+        if need_a and need_b:
+            grad_a, grad_b = _apply_backward(grad_out, a, b, seglen, ctx.validate)
+        else:
+            grad_a = (
+                _apply_forward(grad_out, b.transpose(1, 2), seglen, ctx.validate)
+                if need_a
+                else None
+            )
+            grad_b = (
+                _apply_weight_product(a, grad_out, seglen, ctx.validate)
+                if need_b
+                else None
+            )
+        return grad_a, grad_b, None, None
 
     @staticmethod
-    def jvp(ctx, tangent_a, tangent_b, tangent_seglen):
+    def jvp(ctx, tangent_a, tangent_b, tangent_seglen, tangent_validate):
         a, b, seglen = ctx.saved_tensors
         tangent = None
         if tangent_a is not None:
-            tangent = _apply_forward(tangent_a, b, seglen)
+            tangent = _apply_forward(tangent_a, b, seglen, ctx.validate)
         if tangent_b is not None:
-            term = _apply_forward(a, tangent_b, seglen)
+            term = _apply_forward(a, tangent_b, seglen, ctx.validate)
             tangent = term if tangent is None else tangent + term
         if tangent is None:
             tangent = a.new_zeros((a.shape[0], b.shape[2]))
@@ -380,33 +460,42 @@ class _SegmentMMBackwardFunction(torch.autograd.Function):
     """Differentiate both operand gradients through the shared Warp backward."""
 
     @staticmethod
-    def forward(grad_out, a, b, seglen):
-        return _BACKWARD_OP(grad_out, a, b, seglen)
+    def forward(grad_out, a, b, seglen, validate):
+        return _BACKWARD_OP(grad_out, a, b, seglen, validate)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        ctx.save_for_backward(*inputs)
-        ctx.save_for_forward(*inputs)
+        ctx.save_for_backward(*inputs[:-1])
+        ctx.save_for_forward(*inputs[:-1])
+        ctx.validate = inputs[-1]
         ctx.set_materialize_grads(False)
 
     @staticmethod
     def backward(ctx, grad_grad_a, grad_grad_b):
-        return _backward_vjp(*ctx.saved_tensors, grad_grad_a, grad_grad_b)
+        return _backward_vjp(*ctx.saved_tensors, grad_grad_a, grad_grad_b, ctx.validate)
 
     @staticmethod
-    def jvp(ctx, tangent_grad_out, tangent_a, tangent_b, tangent_seglen):
+    def jvp(
+        ctx, tangent_grad_out, tangent_a, tangent_b, tangent_seglen, tangent_validate
+    ):
         grad_out, a, b, seglen = ctx.saved_tensors
         tangent_grad_a, tangent_grad_b = None, None
         if tangent_a is not None and tangent_b is not None:
             tangent_grad_a, tangent_grad_b = _apply_backward(
-                grad_out, tangent_a, tangent_b, seglen
+                grad_out, tangent_a, tangent_b, seglen, ctx.validate
             )
         elif tangent_a is not None:
-            tangent_grad_b = _apply_weight_product(tangent_a, grad_out, seglen)
+            tangent_grad_b = _apply_weight_product(
+                tangent_a, grad_out, seglen, ctx.validate
+            )
         elif tangent_b is not None:
-            tangent_grad_a = _apply_forward(grad_out, tangent_b.transpose(1, 2), seglen)
+            tangent_grad_a = _apply_forward(
+                grad_out, tangent_b.transpose(1, 2), seglen, ctx.validate
+            )
         if tangent_grad_out is not None:
-            term_a, term_b = _apply_backward(tangent_grad_out, a, b, seglen)
+            term_a, term_b = _apply_backward(
+                tangent_grad_out, a, b, seglen, ctx.validate
+            )
             tangent_grad_a = (
                 term_a if tangent_grad_a is None else tangent_grad_a + term_a
             )
@@ -424,41 +513,52 @@ class _SegmentMMWeightProductFunction(torch.autograd.Function):
     """Differentiate a weight product without allocating an input gradient."""
 
     @staticmethod
-    def forward(a, grad_out, seglen):
-        return _WEIGHT_PRODUCT_OP(a, grad_out, seglen)
+    def forward(a, grad_out, seglen, validate):
+        return _WEIGHT_PRODUCT_OP(a, grad_out, seglen, validate)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        ctx.save_for_backward(*inputs)
-        ctx.save_for_forward(*inputs)
+        ctx.save_for_backward(*inputs[:-1])
+        ctx.save_for_forward(*inputs[:-1])
+        ctx.validate = inputs[-1]
         ctx.set_materialize_grads(False)
 
     @staticmethod
     def backward(ctx, grad_b):
         if grad_b is None:
-            return None, None, None
+            return None, None, None, None
         a, grad_out, seglen = ctx.saved_tensors
+        need_a, need_grad_out = ctx.needs_input_grad[:2]
         return (
-            _apply_forward(grad_out, grad_b.transpose(1, 2), seglen),
-            _apply_forward(a, grad_b, seglen),
+            _apply_forward(grad_out, grad_b.transpose(1, 2), seglen, ctx.validate)
+            if need_a
+            else None,
+            _apply_forward(a, grad_b, seglen, ctx.validate) if need_grad_out else None,
+            None,
             None,
         )
 
     @staticmethod
-    def jvp(ctx, tangent_a, tangent_grad_out, tangent_seglen):
+    def jvp(ctx, tangent_a, tangent_grad_out, tangent_seglen, tangent_validate):
         a, grad_out, seglen = ctx.saved_tensors
         tangent = None
         if tangent_a is not None:
-            tangent = _apply_weight_product(tangent_a, grad_out, seglen)
+            tangent = _apply_weight_product(tangent_a, grad_out, seglen, ctx.validate)
         if tangent_grad_out is not None:
-            term = _apply_weight_product(a, tangent_grad_out, seglen)
+            term = _apply_weight_product(a, tangent_grad_out, seglen, ctx.validate)
             tangent = term if tangent is None else tangent + term
         if tangent is None:
             tangent = a.new_zeros((seglen.shape[0], a.shape[1], grad_out.shape[1]))
         return tangent
 
 
-def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.Tensor:
+def segment_mm(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    seglen: torch.Tensor,
+    *,
+    validate: bool = False,
+) -> torch.Tensor:
     """Multiply each segment of feature rows by its corresponding weight matrix.
 
     For ``offsets = [0, cumsum(seglen)]``, segment ``g`` computes
@@ -476,10 +576,16 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     b : torch.Tensor, shape (num_segments, in_channels, out_channels), dtype float32 or bfloat16
         One weight matrix per segment, on the same device as ``a``.
         The dtype must match ``a`` unless CUDA bfloat16 autocast is enabled.
-    seglen : torch.Tensor, shape (num_segments,), dtype torch.int32
+    seglen : torch.Tensor, shape (num_segments,), dtype torch.int32 or torch.int64
         Runtime lengths on the same device. Values must be nonnegative
         and sum to at most ``row_capacity``. Zero-length segments are supported.
-        These value constraints are caller preconditions, not host checks.
+        Int64 lengths must fit int32. Checked CUDA calls retain their original
+        values until validation; other calls narrow them on the input device.
+    validate : bool, optional
+        Check segment values during execution. Defaults to False; shape and
+        dtype checks always run. True raises ValueError for invalid CPU lengths
+        and uses an asynchronous device assertion on CUDA without a host read.
+        The option also applies to gradients and JVPs.
 
     Returns
     -------
@@ -491,17 +597,27 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     Raises
     ------
     ValueError
-        If ranks, shapes, dtypes, devices, or core stride/index limits are invalid.
+        If ranks, shapes, dtypes, devices, or core stride/index limits are invalid,
+        or if checked CPU segment lengths violate the value constraints.
     RuntimeError
-        If tensors are not on CPU or CUDA.
+        If tensors are not on CPU or CUDA. Invalid checked CUDA lengths trigger
+        a device assertion, reported asynchronously as a RuntimeError.
 
     Notes
     -----
-    ``in_channels`` and ``out_channels`` must be positive. Inputs are wrapped
-    without copying unless autocast requires dtype conversion; transposed,
-    sliced, and broadcast views with nonnegative int32 byte strides are supported.
-    Segment lengths and prefix sums remain on the input device. CUDA work,
-    including temporary allocation, uses the current PyTorch CUDA stream.
+    ``in_channels`` and ``out_channels`` must be positive. Feature and weight
+    inputs are wrapped without copying unless autocast requires dtype conversion;
+    transposed, sliced, and broadcast views with nonnegative int32 byte strides
+    are supported. Prefix sums and any int64-to-int32 conversion run on the input
+    device. CUDA work, including temporary allocation, uses the current PyTorch
+    CUDA stream.
+
+    With ``validate=False``, valid segment values are a caller precondition.
+    ``validate=True`` checks them in eager execution, ``torch.compile``, and
+    CUDA graph replay. CUDA checks run inside offset construction, followed
+    by an assertion kernel. A failed device assertion invalidates the process's
+    CUDA context; restart the process before further CUDA work. CPU checks raise
+    a recoverable ValueError. Validation adds work and is intended for debugging.
 
     CUDA bfloat16 autocast converts float32 or bfloat16 operands to bfloat16
     before the custom autograd function. Gradients propagate through these
@@ -548,10 +664,14 @@ def segment_mm(a: torch.Tensor, b: torch.Tensor, seglen: torch.Tensor) -> torch.
     ((6, 4), (3, 4, 2))
     """
     _validate_inputs(a, b, seglen)
+    if not isinstance(validate, bool):
+        raise ValueError("validate must be a bool")
+    if not validate:
+        seglen = seglen.to(torch.int32)
     if a.device.type == "cuda" and torch.is_autocast_enabled("cuda"):
         if torch.get_autocast_dtype("cuda") != torch.bfloat16:
             raise ValueError("segment_mm supports CUDA autocast only with bfloat16")
         a, b = a.to(torch.bfloat16), b.to(torch.bfloat16)
     elif a.dtype != b.dtype:
         raise ValueError("a and b must have the same dtype outside CUDA autocast")
-    return _apply_forward(a, b, seglen)
+    return _apply_forward(a, b, seglen, validate)

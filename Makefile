@@ -139,11 +139,13 @@ ARGS_segment_ops_min          := test/test_segment_ops.py
 ARGS_segment_ops_backward_min := test/test_segment_ops_backward.py
 ARGS_segment_ops_torch_min    := test/test_segment_ops_torch.py
 ARGS_segment_ops_jax_min      := test/test_segment_ops_jax.py
-# These three files cover SegMM's core and framework APIs; capture stress and
+# These groups cover SegMM's core and framework APIs; capture stress and
 # distributed tests remain in their full groups.
 ARGS_segment_mm_min          := test/test_segment_mm.py
-ARGS_segment_mm_jax_min      := test/bindings/jax/test_segment_mm.py
-ARGS_segment_mm_torch_min    := test/bindings/torch/test_segment_mm.py
+ARGS_segment_mm_jax_min      := test/bindings/jax/test_segment_mm.py \
+	test/bindings/jax/test_segment_mm_validation.py
+ARGS_segment_mm_torch_min    := test/bindings/torch/test_segment_mm.py \
+	test/bindings/torch/test_segment_mm_validation.py
 ARGS_interactions_min         := test/interactions/test_lj.py
 ARGS_electrostatics_jax_min   := test/interactions/electrostatics/bindings/jax/test_slab.py
 

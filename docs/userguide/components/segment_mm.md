@@ -34,7 +34,7 @@ are unused capacity, so `out[5:8]` is zero.
 | --- | --- | --- |
 | `a` | `(row_capacity, in_channels)` | Feature rows for all segments |
 | `b` | `(num_segments, in_channels, out_channels)` | One weight matrix per segment |
-| `seglen` | `(num_segments,)` | Number of rows in each segment, as `int32` |
+| `seglen` | `(num_segments,)` | Number of rows in each segment; `int32`, or `int64` in PyTorch |
 | Output | `(row_capacity, out_channels)` | Products followed by zero rows |
 
 `row_capacity` is the total number of allocated rows, including padding.
@@ -42,8 +42,7 @@ are unused capacity, so `out[5:8]` is zero.
 their sum must not exceed `row_capacity`. Input and output channel counts
 must be positive.
 
-All inputs belong on the same device. Segment lengths stay on that device;
-the operation does not read them back to the CPU. Both floating inputs must
+All inputs belong on the same device. Both floating inputs must
 have the same dtype, except when PyTorch CUDA BF16 autocast performs the casts.
 
 Unused feature rows are ignored, even if they contain NaNs. Their outputs and
@@ -113,9 +112,83 @@ six active rows and two padding rows. Keep the allocated row capacity,
 segment count, and channel counts fixed; change the values in `seglen`.
 
 Lengths describe contiguous groups, rather than the per-row indices used by
-[segment reductions](segment_ops.md). The caller is responsible for valid
-lengths. For bounds safety, invalid negative lengths are treated as zero and
-ranges past capacity are truncated, without reporting an input error.
+[segment reductions](segment_ops.md). They must be nonnegative and sum to at
+most the row capacity.
+
+Both frontends check input shapes, dtypes, and devices. By default, they
+rely on the caller to supply valid length values. Set `validate=True` to
+check values without reading lengths back to the host.
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+PyTorch accepts int32 or int64 lengths; all length values must fit int32.
+
+```python
+out = segment_mm(a, b, lengths, validate=True)
+```
+
+This checks that lengths are nonnegative, their sum fits the row capacity,
+and int64 values fit int32. It also works with `torch.compile` and CUDA
+graph capture, and applies to derivative computations. On CPU, invalid
+lengths raise `ValueError`. On CUDA, the check stays on the GPU without a host
+synchronization. An invalid length triggers an asynchronous device assertion;
+the error may appear at a later CUDA call, and the process must be restarted.
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+JAX requires int32 lengths. With validation enabled, the result is
+`(error, out)`. The error state stays on the device, and the call does not
+synchronize to inspect it. No separate `checkify` wrapper is needed.
+
+```python
+@jax.jit
+def checked_mm(a, b, lengths):
+    return segment_mm(a, b, lengths, validate=True)
+
+error, out = checked_mm(a, b, lengths)
+```
+
+Keep `validate` static when compiling. Checks detect negative lengths and
+totals above the row capacity, including int32 overflow. They work with
+`jit`, `scan`, and differentiation. For a checked loss, return
+`(loss, error)` and use `has_aux=True` to preserve the error alongside gradients.
+
+Validation reports an error without stopping the product. Discard results
+with invalid lengths. Calling `error.get()` or `error.throw()` explicitly
+reads the error state on the host and can synchronize; the operation never
+calls either method.
+
+:::
+
+::::
+
+For direct Warp calls, pass a caller-owned status buffer to enable checking.
+With Warp arrays `a`, `b`, `lengths`, and a preallocated `out`:
+
+```python
+import warp as wp
+from nvalchemiops.segment_mm import segment_mm as warp_segment_mm
+
+status = wp.empty(1, dtype=wp.int32, device=a.device)
+warp_segment_mm(a, b, lengths, out, validation=status)
+```
+
+Every call overwrites `status[0]`: `1` means valid lengths, and `0` means
+invalid lengths. The same option is available on `segment_mm_backward` and
+`segment_mm_backward_b`. The buffer must be contiguous, on the input device,
+and disjoint from all inputs and outputs. Warp lengths must be int32.
+
+The status stays on-device and can be consumed by another Warp kernel on
+the same stream. The operation does not read it back or raise an exception
+for invalid lengths; discard numerical results when the status is `0`.
+Calling `status.numpy()` explicitly copies the status to the host and
+synchronizes CUDA work. Omitting the buffer leaves value checking disabled.
 
 ## Gradients and mixed precision
 
@@ -188,9 +261,10 @@ rows are outside this interface.
 
 ## CUDA graph reuse
 
-JAX reuses CUDA graphs when buffer addresses repeat. Each dtype has separate
-caches for the forward operation and both gradient operations, holding up to
-256 graphs each. If many buffer combinations recur, set a larger static limit,
+JAX reuses CUDA graphs when callsites and input/output buffer addresses repeat.
+Each dtype has separate caches for the forward operation and both gradient
+operations, holding up to 256 graphs each. If many buffer combinations recur,
+set a larger static limit,
 for example
 `segment_mm(a, b, lengths, graph_cache_max=512)`. `None` removes the limit and
 allows graph memory to grow. Fresh buffer addresses still require capture.

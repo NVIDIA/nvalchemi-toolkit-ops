@@ -93,9 +93,11 @@ class TestSegmentMMCPU:
             assert torch.count_nonzero(da[sum(values) :]) == 0
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-    def test_higher_derivatives(self, dtype):
+    @pytest.mark.parametrize("length_dtype", [torch.int32, torch.int64])
+    def test_higher_derivatives(self, dtype, length_dtype):
         """CPU JVP-over-VJP and force-loss gradients use the analytical rules."""
         a, b, lengths = _inputs(dtype)
+        lengths = lengths.to(length_dtype)
 
         def evaluate(operation):
             def energy(a, b):
@@ -140,9 +142,12 @@ class TestSegmentMMCPU:
             raise AssertionError("CPU scope queried a CUDA stream")
 
         monkeypatch.setattr(torch.cuda, "current_stream", unexpected)
+        monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", unexpected)
         monkeypatch.setattr(wp, "get_stream", unexpected)
         with scoped_warp_stream("cpu"), scoped_warp_capture("cpu"):
             assert torch.ones(1).device.type == "cpu"
+        a, b, lengths = _inputs(torch.float32)
+        _close(segment_mm(a, b, lengths), _reference(a, b, (3, 0, 2)))
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
     def test_cpu_autocast_uses_explicit_dtype(self, dtype):

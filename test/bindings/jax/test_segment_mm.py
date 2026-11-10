@@ -654,6 +654,57 @@ class TestSegmentMM:
 class TestGraphCachePolicy:
     """Static cache choices survive transforms without mutating other callables."""
 
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+    @pytest.mark.parametrize("product", ["forward", "input", "weight"])
+    def test_eager_reuses_call_descriptors(self, execution_device, dtype, product):
+        """Repeated eager products reuse their compiled FFI call descriptors."""
+        module = importlib.import_module("nvalchemiops.jax.segment_mm")
+        index = ("forward", "input", "weight").index(product)
+        # A separate policy per route keeps unrelated tests out of these caches.
+        limit = 101 + index
+        mode = (
+            wp.JaxCallableGraphMode.NONE
+            if execution_device.platform == "cpu"
+            else wp.JaxCallableGraphMode.WARP
+        )
+        callback = module._callables(str(jnp.dtype(dtype)), mode, limit)[index]
+        a, b, g = _inputs(dtype)
+        lengths = jnp.array([3, 0, 9, 2], jnp.int32)
+        out, pullback = jax.vjp(lambda a, b: _reference(a, b, lengths), a, b)
+        expected = (out, *pullback(g))[index]
+        if product == "forward":
+            evaluate = partial(segment_mm, a, b, lengths, graph_cache_max=limit)
+        else:
+            # Bind the AD leaves directly so an independently allocated
+            # cotangent cannot change the graph's input-buffer addresses.
+            primitive, operands = (
+                (module._input_p, (g, b, lengths))
+                if product == "input"
+                else (module._weight_p, (a, g, lengths))
+            )
+            evaluate = partial(
+                module._bind_product, primitive, *operands, graph_cache_max=limit
+            )
+
+        try:
+            for _ in range(5):
+                actual = jax.block_until_ready(evaluate())
+                _assert_close(actual, expected)
+                del actual
+            descriptors = len(callback.call_descriptors)
+            assert descriptors > 0
+            assert (callback.graph_cache_size > 0) == (
+                execution_device.platform == "gpu"
+            )
+
+            for _ in range(5):
+                actual = jax.block_until_ready(evaluate())
+                _assert_close(actual, expected)
+                del actual
+                assert len(callback.call_descriptors) == descriptors
+        finally:
+            wp.clear_jax_callable_graph_cache(callback)
+
     @pytest.mark.parametrize("limit", [0, -1, True, False, 1.5, "256"])
     def test_validation(self, limit):
         """Reject invalid cache bounds before tracing or entering Warp."""

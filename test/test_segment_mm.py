@@ -865,9 +865,13 @@ class TestSegmentMMLengthBounds:
         expected_rows = np.concatenate(([0], np.cumsum(effective, dtype=np.int64)))
         original_offsets = segmm._segment_offsets
 
-        def checked_offsets(seglen, capacity, tile_rows=32, skip_first_tile=False):
+        def checked_offsets(
+            seglen, capacity, tile_rows=32, skip_first_tile=False, *, validation=None
+        ):
             """Stop before unsafe matrix access if the real GPU prefix builder regresses."""
-            rows, tiles = original_offsets(seglen, capacity, tile_rows, skip_first_tile)
+            rows, tiles = original_offsets(
+                seglen, capacity, tile_rows, skip_first_tile, validation=validation
+            )
             counts = (effective.astype(np.int64) + tile_rows - 1) // tile_rows
             if skip_first_tile:
                 counts = np.maximum(counts - 1, 0)
@@ -1031,6 +1035,82 @@ class TestSegmentMMValidation:
             segmm.segment_mm(**arrays, out=out)
 
 
+class TestSegmentMMCompactScratch:
+    """Keep splitting available when segment count exceeds the scratch budget."""
+
+    @pytest.mark.parametrize("groups", [1023, 1024, 1025])
+    def test_many_segments_retain_split_budget(self, groups):
+        """Short segments must not consume scratch needed by a long neighbor."""
+        capacity, k, n = 118784, 128, 128
+        chunk_rows, slots = segmm._grad_b_launch_config(capacity, groups, k, n, 4)
+        assert chunk_rows < 16000
+        extra_capacity = (capacity - 1) // chunk_rows
+        assert slots == extra_capacity + min(groups, extra_capacity)
+        assert slots * k * n * 4 <= 64 << 20
+        lengths = np.full(groups, 100, np.int64)
+        lengths[0] = 16000
+        extras = np.maximum((lengths + chunk_rows - 1) // chunk_rows - 1, 0)
+        assert extras[0] > 0
+        assert extras.sum() <= extra_capacity
+
+    @pytest.mark.parametrize(
+        "capacity,groups,chunk_rows,slots",
+        [(131072, 1, 1024, 128), (131072, 4, 1056, 128), (262144, 128, 512, 639)],
+    )
+    def test_existing_large_extra_budget_is_preserved(
+        self, capacity, groups, chunk_rows, slots
+    ):
+        """Compaction must preserve MD parallelism and avoid expanding padded scratch."""
+        assert segmm._grad_b_launch_config(capacity, groups, 128, 128, 4) == (
+            chunk_rows,
+            slots,
+        )
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("groups", [4, 32])
+    def test_compact_partials_change_split_owners(self, dtype, groups):
+        """Both scratch layouts ignore stale slots between changing split owners."""
+        capacity, k, n = 4096, 3, 5
+        chunk_rows, slots = segmm._grad_b_launch_config(
+            capacity, groups, k, n, 2 if dtype == wp.bfloat16 else 4
+        )
+        extra_capacity = (capacity - 1) // chunk_rows
+        assert slots == extra_capacity + min(groups, extra_capacity)
+        partials = wp.array(np.full((slots, k, n), np.nan, np.float32), device="cpu")
+        output = _device_array(np.full((groups, k, n), np.nan), dtype, "cpu")
+        states = (
+            ([513, 0, 1, 1025], [0, 257, 769, 0], [0, 0, 0, 0], [1, 0, 31, 0])
+            if groups == 4
+            else (
+                [0, 1, 1025, 0, 513, 0, 0, 257],
+                [513, 0, 1, 0, 0, 2049, 0, 3],
+                [0] * 8,
+                [1, 0, 31, 0, 0, 0, 0, 0],
+            )
+        )
+        for state in states:
+            values = np.pad(np.asarray(state, np.int32), (0, groups - len(state)))
+            a_np = np.full((capacity, k), np.nan, np.float32)
+            g_np = np.full((capacity, n), np.nan, np.float32)
+            expected = np.zeros((groups, k, n), np.float32)
+            start = 0
+            for group, length in enumerate(values):
+                stop = start + int(length)
+                a_np[start:stop] = (group + 1) / 8
+                g_np[start:stop] = (group % 3 + 1) / 16
+                expected[group] = int(length) * (group + 1) * (group % 3 + 1) / 128
+                start = stop
+            a, g = (_device_array(x, dtype, "cpu") for x in (a_np, g_np))
+            lengths = wp.array(values, device="cpu")
+            rows, chunks = segmm._segment_offsets(
+                lengths, capacity, chunk_rows, skip_first_tile=True
+            )
+            segmm._launch_grad_b(a, rows, chunks, g, output, partials, chunk_rows)
+            np.testing.assert_array_equal(
+                _numpy(output), _round_output(expected, dtype)
+            )
+
+
 class TestSegmentMMPersistentReduction:
     """Check sparse split reduction, including fixed graph replay and CPU lanes."""
 
@@ -1048,9 +1128,7 @@ class TestSegmentMMPersistentReduction:
         tiles = (k * n + 127) // 128
         work_blocks = min(512, extra_capacity * tiles)
         rng = np.random.default_rng(731)
-        partials = wp.empty(
-            (groups + extra_capacity, k, n), dtype=wp.float32, device=device
-        )
+        partials = wp.empty((2 * extra_capacity, k, n), dtype=wp.float32, device=device)
         offsets = wp.empty(groups + 1, dtype=wp.int32, device=device)
         for active in ({}, {37: 127}, {1: 1, 7: 3, 96: 2}, {}):
             extras = np.zeros(groups, np.int32)
@@ -1061,13 +1139,14 @@ class TestSegmentMMPersistentReduction:
             initial = np.full((groups, k, n), 0.25, np.float32)
             expected = initial.copy()
             for group in active:
-                scratch[group] = rng.normal(size=(k, n)).astype(np.float32)
-                scratch[group, 0, 0] = 1.0
-                value = scratch[group].copy()
+                first = extra_capacity + int(prefix[group])
+                scratch[first] = rng.normal(size=(k, n)).astype(np.float32)
+                scratch[first, 0, 0] = 1.0
+                value = scratch[first].copy()
                 for chunk in range(int(prefix[group]), int(prefix[group + 1])):
-                    scratch[groups + chunk] = rng.normal(size=(k, n)).astype(np.float32)
-                    scratch[groups + chunk, 0, 0] = 2**-8
-                    value = np.add(value, scratch[groups + chunk], dtype=np.float32)
+                    scratch[chunk] = rng.normal(size=(k, n)).astype(np.float32)
+                    scratch[chunk, 0, 0] = 2**-8
+                    value = np.add(value, scratch[chunk], dtype=np.float32)
                 expected[group] = value
             partials.assign(scratch)
             offsets.assign(prefix)
@@ -1095,7 +1174,9 @@ class TestSegmentMMPersistentReduction:
         chunk_rows, slots = segmm._grad_b_launch_config(
             capacity, groups, k, n, 2 if dtype == wp.bfloat16 else 4
         )
-        assert chunk_rows < capacity and 0 < slots - groups < groups
+        extra_capacity = (capacity - 1) // chunk_rows
+        assert chunk_rows < capacity and 0 < extra_capacity < groups
+        assert slots == 2 * extra_capacity
         states = [
             np.full(groups, 96, np.int32),
             np.zeros(groups, np.int32),
@@ -1158,7 +1239,7 @@ class TestSegmentMMCPU:
             ([2147483647, -1, 0, 0], [124, 0, 0, 0]),
         )
         if groups == 129:
-            # Q=256, so 128 additional-slot choices round 100k active rows to 800.
+            # The fixed extra-slot bound rounds 100k active rows to 800-row chunks.
             cases = (
                 ([25000] * 4, [31] * 4),
                 ([0, 0, 0, 0], [0, 0, 0, 0]),
@@ -1174,7 +1255,9 @@ class TestSegmentMMCPU:
             expected = np.concatenate(([0], np.cumsum(extra_counts)))
             expected = np.pad(expected, (0, groups - 4), mode="edge")
             np.testing.assert_array_equal(extras.numpy(), expected)
-            assert groups + int(extras.numpy()[-1]) <= slots
+            active_extras = int(extras.numpy()[-1])
+            assert active_extras <= (capacity - 1) // chunk_rows
+            assert active_extras + min(groups, active_extras) <= slots
             fused = wp.empty(groups + 1, dtype=wp.int32, device="cpu")
             fused_rows, _ = segmm._segment_offsets(
                 lengths, capacity, chunk_rows=chunk_rows, chunk_offsets=fused
@@ -1255,11 +1338,15 @@ class TestSegmentMMCPU:
         lengths[:nonempty] = 1
         lengths[nonempty - 1] += capacity - nonempty
         counts = lengths // chunk_rows + (lengths % chunk_rows != 0)
-        assert groups + np.maximum(counts - 1, 0).sum() <= chunk_capacity
+        extras = np.maximum(counts - 1, 0)
+        assert extras.sum() + np.count_nonzero(extras) <= chunk_capacity
         one_segment_chunks = capacity // chunk_rows + (capacity % chunk_rows != 0)
-        assert groups + one_segment_chunks - 1 <= chunk_capacity
-        assert chunk_capacity * k * n * 4 <= max(64 << 20, groups * k * n * 4)
-        assert chunk_capacity <= max(128, 32 * groups)
+        assert one_segment_chunks - 1 + int(one_segment_chunks > 1) <= chunk_capacity
+        assert chunk_capacity * k * n * 4 <= 64 << 20
+        extra_capacity = (capacity - 1) // chunk_rows
+        assert groups + extra_capacity <= max(128, 32 * groups)
+        if chunk_rows >= capacity:
+            assert chunk_capacity == 0
         assert chunk_rows % 32 == 0
 
     @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
@@ -1395,3 +1482,311 @@ class TestSegmentMMCPU:
         expected_a, expected_b = _backward_reference(a_np, b_np, values, g_np, dtype)
         np.testing.assert_array_equal(_numpy(da), expected_a)
         np.testing.assert_array_equal(_numpy(db), expected_b)
+
+
+class TestSegmentMMDeviceValidation:
+    """Expose device length validity without reading lengths or status on the host."""
+
+    @pytest.fixture(params=["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+    def validation_device(self, request):
+        """Run the same public status contract on CPU and CUDA."""
+        if request.param == "cuda" and not wp.is_cuda_available():
+            pytest.skip("CUDA is unavailable")
+        return wp.get_device(request.param)
+
+    @staticmethod
+    def _buffers(device, dtype=wp.float32, capacity=7, groups=4):
+        """Build small exact-valued operands and poisoned caller-owned outputs."""
+        arrays = {}
+        for name, shape, divisor in (
+            ("a", (capacity, 3), 8),
+            ("b", (groups, 3, 5), 4),
+            ("grad_out", (capacity, 5), 8),
+        ):
+            values = (np.arange(np.prod(shape)).reshape(shape) % 7 - 3) / divisor
+            arrays[name] = _device_array(values, dtype, device)
+        arrays["seglen"] = wp.zeros(groups, dtype=wp.int32, device=device)
+        for name, shape in (
+            ("out", (capacity, 5)),
+            ("grad_a", (capacity, 3)),
+            ("grad_b", (groups, 3, 5)),
+            ("grad_b_only", (groups, 3, 5)),
+        ):
+            arrays[name] = _device_array(np.full(shape, np.nan), dtype, device)
+        return arrays
+
+    @staticmethod
+    def _calls(arrays):
+        """List the real public calls and their positional operands."""
+        return (
+            (
+                segmm.segment_mm,
+                tuple(arrays[name] for name in ("a", "b", "seglen", "out")),
+            ),
+            (
+                segmm.segment_mm_backward,
+                tuple(
+                    arrays[name]
+                    for name in ("a", "b", "seglen", "grad_out", "grad_a", "grad_b")
+                ),
+            ),
+            (
+                segmm.segment_mm_backward_b,
+                tuple(
+                    arrays[name] for name in ("a", "seglen", "grad_out", "grad_b_only")
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _assert_results(arrays, values, dtype):
+        """Check public results against independent NumPy products and gradients."""
+        a, b, grad_out = (_numpy(arrays[name]) for name in ("a", "b", "grad_out"))
+        expected_a, expected_b = _backward_reference(a, b, values, grad_out, dtype)
+        np.testing.assert_array_equal(
+            _numpy(arrays["out"]), _reference(a, b, values, dtype)
+        )
+        np.testing.assert_array_equal(_numpy(arrays["grad_a"]), expected_a)
+        np.testing.assert_array_equal(_numpy(arrays["grad_b"]), expected_b)
+        np.testing.assert_array_equal(_numpy(arrays["grad_b_only"]), expected_b)
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("groups", [4, 129, 1025])
+    def test_status_tracks_live_lengths(self, validation_device, dtype, groups):
+        """Checked scalar, cooperative, and scanned paths replace stale validity."""
+        arrays = self._buffers(validation_device, dtype, capacity=513, groups=groups)
+        # Preserve support for strided raw int32 lengths in the checked path.
+        storage = wp.zeros(2 * groups, dtype=wp.int32, device=validation_device)
+        arrays["seglen"] = storage[::2]
+        validation = wp.array([-7, -7, -7], dtype=wp.int32, device=validation_device)
+        for leading, expected in (
+            ([0, 257, 1, 0], 1),
+            ([-1, 2, 0, 1], 0),
+            ([513, 0, 0, 0], 1),
+            ([1, 513, 0, 0], 0),
+            ([1, 0, 512, 0], 1),
+            ([-(2**31), 2, 0, 0], 0),
+            ([2**31 - 1, 2**31 - 1, 1, 0], 0),
+            ([0, 0, 0, 0], 1),
+        ):
+            values = np.pad(np.asarray(leading, dtype=np.int32), (0, groups - 4))
+            arrays["seglen"].assign(values)
+            for index, (call, arguments) in enumerate(self._calls(arrays)):
+                assert (
+                    call(*arguments, validation=validation[index : index + 1]) is None
+                )
+            np.testing.assert_array_equal(validation.numpy(), [expected] * 3)
+            np.testing.assert_array_equal(arrays["seglen"].numpy(), values)
+            if expected:
+                self._assert_results(arrays, values, dtype)
+
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize(
+        "capacity,values,expected",
+        [
+            (0, [0, 0], 1),
+            (0, [1, 0], 0),
+            (0, [-1, 0], 0),
+            (0, [-(2**31), 2**31 - 1], 0),
+            (0, [], 1),
+            (7, [], 1),
+        ],
+    )
+    def test_empty_calls_overwrite_status(
+        self, validation_device, dtype, capacity, values, expected
+    ):
+        """Capacity and group early returns must still write the current validity."""
+        arrays = self._buffers(validation_device, dtype, capacity, len(values))
+        arrays["seglen"].assign(np.asarray(values, dtype=np.int32))
+        validation = wp.array([-7], dtype=wp.int32, device=validation_device)
+        for call, arguments in self._calls(arrays):
+            validation.fill_(-7)
+            call(*arguments, validation=validation)
+            np.testing.assert_array_equal(validation.numpy(), [expected])
+        if expected:
+            self._assert_results(arrays, values, dtype)
+
+    @pytest.mark.parametrize(
+        "invalid,match",
+        [
+            ("not_warp", "Warp array"),
+            ("rank", "1D|shape"),
+            ("shape", "shape"),
+            ("float", "dtype"),
+            ("int64", "dtype"),
+            ("strided", "contiguous"),
+        ],
+    )
+    def test_status_metadata_is_rejected(self, validation_device, invalid, match):
+        """All entry points reject status buffers that cannot hold one contiguous int32."""
+        arrays = self._buffers(validation_device)
+        storage = wp.zeros(2, dtype=wp.int32, device=validation_device)
+        if invalid == "not_warp":
+            validation = np.zeros(1, dtype=np.int32)
+        elif invalid == "rank":
+            validation = wp.zeros((1, 1), dtype=wp.int32, device=validation_device)
+        elif invalid == "shape":
+            validation = storage
+        elif invalid in ("float", "int64"):
+            dtype = wp.float32 if invalid == "float" else wp.int64
+            validation = wp.zeros(1, dtype=dtype, device=validation_device)
+        else:
+            validation = wp.array(
+                ptr=storage.ptr,
+                shape=(1,),
+                strides=(8,),
+                dtype=wp.int32,
+                device=validation_device,
+                copy=False,
+            )
+        for call, arguments in self._calls(arrays):
+            with pytest.raises(ValueError, match=match):
+                call(*arguments, validation=validation)
+
+    @pytest.mark.gpu
+    def test_status_must_share_the_operand_device(self, device):
+        """Reject a host status buffer for CUDA operands before launching work."""
+        arrays = self._buffers(device)
+        validation = wp.zeros(1, dtype=wp.int32, device="cpu")
+        for call, arguments in self._calls(arrays):
+            with pytest.raises(ValueError, match="device"):
+                call(*arguments, validation=validation)
+
+    @pytest.mark.parametrize(
+        "operation,source",
+        [
+            (0, "a"),
+            (0, "b"),
+            (0, "seglen"),
+            (0, "out"),
+            (1, "a"),
+            (1, "b"),
+            (1, "seglen"),
+            (1, "grad_out"),
+            (1, "grad_a"),
+            (1, "grad_b"),
+            (2, "a"),
+            (2, "seglen"),
+            (2, "grad_out"),
+            (2, "grad_b_only"),
+        ],
+    )
+    def test_status_cannot_alias_any_operand(
+        self, validation_device, operation, source
+    ):
+        """Reject interior int32 views of inputs or outputs, including float storage."""
+        arrays = self._buffers(validation_device)
+        validation = wp.array(
+            ptr=arrays[source].ptr + 4,
+            shape=(1,),
+            dtype=wp.int32,
+            device=validation_device,
+            copy=False,
+        )
+        call, arguments = self._calls(arrays)[operation]
+        with pytest.raises(ValueError, match="overlap"):
+            call(*arguments, validation=validation)
+
+    def test_status_cannot_occupy_a_strided_input_gap(self, validation_device):
+        """The entire strided input span is excluded from status storage."""
+        arrays = self._buffers(validation_device)
+        storage = wp.ones((14, 3), device=validation_device)
+        arrays["a"] = storage[::2]
+        validation = wp.array(
+            ptr=storage.ptr + 3 * 4,
+            shape=(1,),
+            dtype=wp.int32,
+            device=validation_device,
+            copy=False,
+        )
+        for call, arguments in self._calls(arrays):
+            with pytest.raises(ValueError, match="overlap"):
+                call(*arguments, validation=validation)
+
+    def test_checked_calls_still_require_raw_int32_lengths(self, validation_device):
+        """Opting into status reporting must not widen the raw length dtype contract."""
+        arrays = self._buffers(validation_device)
+        arrays["seglen"] = wp.zeros(4, dtype=wp.int64, device=validation_device)
+        validation = wp.zeros(1, dtype=wp.int32, device=validation_device)
+        for call, arguments in self._calls(arrays):
+            with pytest.raises(ValueError, match="int32"):
+                call(*arguments, validation=validation)
+
+    def test_status_does_not_require_host_readback(
+        self, validation_device, monkeypatch
+    ):
+        """Public checked calls enqueue work without NumPy reads or host synchronization."""
+        arrays = self._buffers(validation_device)
+        values = np.array([0, 2, 1, 0], dtype=np.int32)
+        arrays["seglen"].assign(values)
+        validation = wp.array([-7, -7, -7], dtype=wp.int32, device=validation_device)
+        calls = self._calls(arrays)
+        for index, (call, arguments) in enumerate(calls):
+            call(*arguments, validation=validation[index : index + 1])
+        validation.fill_(-7)
+
+        def reject_readback(*args, **kwargs):
+            """Fail only when the real call attempts an explicitly forbidden operation."""
+            pytest.fail("checked calls must not read back or synchronize device data")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(wp.array, "numpy", reject_readback)
+            for name in ("synchronize", "synchronize_device", "synchronize_stream"):
+                patch.setattr(wp, name, reject_readback)
+            for index, (call, arguments) in enumerate(calls):
+                call(*arguments, validation=validation[index : index + 1])
+        np.testing.assert_array_equal(validation.numpy(), [1, 1, 1])
+        self._assert_results(arrays, values, wp.float32)
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", [wp.float32, wp.bfloat16])
+    @pytest.mark.parametrize("groups", [4, 129, 1025])
+    def test_graph_replay_and_device_status_consumer(self, device, dtype, groups):
+        """A later kernel on a non-default stream observes each replay's live status."""
+        with wp.ScopedStream(wp.Stream(device)):
+            arrays = self._buffers(device, dtype, capacity=513, groups=groups)
+            validation = wp.array([-7, -7, -7], dtype=wp.int32, device=device)
+            observed = wp.empty(3, dtype=wp.int32, device=device)
+            calls = self._calls(arrays)
+            statuses = [validation[index : index + 1] for index in range(3)]
+            for (call, arguments), status in zip(calls, statuses, strict=True):
+                call(*arguments, validation=status)
+            wp.launch(
+                _consume_segmm_validation,
+                dim=3,
+                inputs=[validation, observed],
+                device=device,
+            )
+            with wp.ScopedCapture(device=device) as capture:
+                for (call, arguments), status in zip(calls, statuses, strict=True):
+                    call(*arguments, validation=status)
+                wp.launch(
+                    _consume_segmm_validation,
+                    dim=3,
+                    inputs=[validation, observed],
+                    device=device,
+                )
+            for state, expected in ((0, 1), (-1, 0), (2, 1), (8, 0), (5, 1)):
+                wp.launch(
+                    _write_lengths,
+                    dim=groups,
+                    inputs=[arrays["seglen"], state],
+                    device=device,
+                )
+                wp.capture_launch(capture.graph)
+                np.testing.assert_array_equal(observed.numpy(), [expected] * 3)
+                if expected:
+                    values = np.pad(
+                        np.array([state, 0, 5 - state], dtype=np.int32),
+                        (0, groups - 3),
+                    )
+                    self._assert_results(arrays, values, dtype)
+
+
+@wp.kernel
+def _consume_segmm_validation(
+    validation: wp.array(dtype=wp.int32), observed: wp.array(dtype=wp.int32)
+):
+    """Read validation from a later launch on the current stream."""
+    index = wp.tid()
+    observed[index] = validation[index]

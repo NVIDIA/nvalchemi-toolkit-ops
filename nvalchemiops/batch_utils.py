@@ -284,12 +284,72 @@ def _segment_chunk_rows(active_rows: int, extra_slots: int, minimum_rows: int):
     return wp.max(minimum_rows, (required + 31) / 32 * 32)
 
 
-def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
+@wp.func
+def _checked_segment_length(value: Any, capacity: int):
+    """Bound wide counts and encode invalid lengths as capacity plus one."""
+    raw = wp.int64(value)
+    ceiling = wp.int64(capacity) + wp.int64(1)
+    if raw < wp.int64(0):
+        return ceiling
+    return wp.min(raw, ceiling)
+
+
+@wp.kernel(enable_backward=False)
+def _segment_counts_checked(
+    seglen: wp.array(dtype=Any),
+    row_counts: wp.array(dtype=wp.int64),
+    capacity: int,
+):
+    """Prepare counts whose scanned total also detects invalid segment lengths.
+
+    Negative or oversized lengths contribute ``capacity + 1``. Each count
+    fits this bound, so an int64 scan is safe for int32-sized segment counts.
+
+    Notes
+    -----
+    Thread launch: ``R + 1`` threads, one per output element.
+    Modifies: every element of caller-owned ``row_counts``.
+    """
+    index = wp.tid()
+    if index == 0:
+        row_counts[0] = wp.int64(0)
+    else:
+        row_counts[index] = _checked_segment_length(seglen[index - 1], capacity)
+
+
+register_overloads(
+    _segment_counts_checked,
+    lambda dtype: [wp.array(dtype=dtype), wp.array(dtype=wp.int64), wp.int32],
+    dtypes=(wp.int32, wp.int64),
+)
+
+
+def _register_segment_offset_overloads(kernel: wp.Kernel, validate: bool) -> None:
+    """Register length types before CUDA graphs can retain the module executable."""
+    register_overloads(
+        kernel,
+        lambda dtype: [
+            wp.array(dtype=dtype),
+            wp.int32,
+            wp.int32,
+            wp.bool,
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=wp.int32),
+            wp.int32,
+            wp.array(dtype=wp.int32),
+            wp.int32,
+            wp.array(dtype=wp.int32),
+        ],
+        dtypes=(wp.int32, wp.int64) if validate else (wp.int32,),
+    )
+
+
+def _make_segment_offsets_small(with_chunks: bool, validate: bool = False) -> wp.Kernel:
     """Specialize the small prefix builder with an optional second work schedule."""
 
     @wp.kernel(enable_backward=False)
     def _segment_offsets_small(
-        seglen: wp.array(dtype=wp.int32),
+        seglen: wp.array(dtype=Any),
         capacity: int,
         tile_rows: int,
         skip_first_tile: bool,
@@ -298,13 +358,15 @@ def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
         chunk_rows: int,
         chunk_offsets: wp.array(dtype=wp.int32),
         minimum_chunk_rows: int,
+        validation: wp.array(dtype=wp.int32),
     ):
         """Build capacity-bounded prefix arrays directly for small segment counts.
 
         Parameters
         ----------
-        seglen : wp.array, shape (R,), dtype int32
-            Runtime segment lengths. Negative values are treated as zero.
+        seglen : wp.array, shape (R,), dtype int32 or int64
+            Runtime segment lengths. Int64 is supported by the checked
+            specialization; unchecked calls treat negative int32 values as zero.
         capacity : int
             Maximum number of active rows, stored as an int32 scalar.
         tile_rows : int
@@ -326,6 +388,9 @@ def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
         minimum_chunk_rows : int
             Positive floor for adapting the chunk schedule to active rows, or zero
             to retain its static size and skip the total-row pass.
+        validation : wp.array, shape (1,), dtype int32, or None
+            OUTPUT: One for valid lengths, zero otherwise, in the checked
+            specialization. Unused in the unchecked specialization.
 
         Notes
         -----
@@ -334,6 +399,7 @@ def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
         Callers choose a bounded segment count appropriate to their launch overhead.
         Modifies: every element of ``row_offsets`` and ``tile_offsets``; the fused
         specialization also overwrites every element of ``chunk_offsets``.
+        The checked specialization also overwrites ``validation[0]``.
 
         See Also
         --------
@@ -343,7 +409,15 @@ def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
         if minimum_chunk_rows > 0:
             total = int(0)
             for group in range(seglen.shape[0]):
-                total += wp.min(wp.max(seglen[group], 0), capacity - total)
+                if wp.static(validate):
+                    total += int(
+                        wp.min(
+                            wp.max(wp.int64(seglen[group]), wp.int64(0)),
+                            wp.int64(capacity - total),
+                        )
+                    )
+                else:
+                    total += wp.min(wp.max(seglen[group], 0), capacity - total)
             if wp.static(with_chunks):
                 chunk_rows = _segment_chunk_rows(
                     total, (capacity - 1) / chunk_rows, minimum_chunk_rows
@@ -355,8 +429,17 @@ def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
         rows = int(0)
         tiles = int(0)
         chunks = int(0)
+        valid = int(1)
         for group in range(index):
-            length = wp.min(wp.max(seglen[group], 0), capacity - rows)
+            if wp.static(validate):
+                raw = wp.int64(seglen[group])
+                if raw < wp.int64(0) or raw > wp.int64(capacity - rows):
+                    valid = 0
+                length = int(
+                    wp.min(wp.max(raw, wp.int64(0)), wp.int64(capacity - rows))
+                )
+            else:
+                length = wp.min(wp.max(seglen[group], 0), capacity - rows)
             rows += length
             count = length / tile_rows + int(length % tile_rows != 0)
             if skip_first_tile:
@@ -365,19 +448,27 @@ def _make_segment_offsets_small(with_chunks: bool) -> wp.Kernel:
             if wp.static(with_chunks):
                 chunk_count = length / chunk_rows + int(length % chunk_rows != 0)
                 chunks += wp.max(chunk_count - 1, 0)
+        if wp.static(validate):
+            if index == seglen.shape[0]:
+                validation[0] = valid
         row_offsets[index] = rows
         tile_offsets[index] = tiles
         if wp.static(with_chunks):
             chunk_offsets[index] = chunks
 
+    _register_segment_offset_overloads(_segment_offsets_small, validate)
     return _segment_offsets_small
 
 
 _segment_offsets_small = _make_segment_offsets_small(False)
 _segment_offsets_small_fused = _make_segment_offsets_small(True)
+_segment_offsets_small_checked = _make_segment_offsets_small(False, True)
+_segment_offsets_small_fused_checked = _make_segment_offsets_small(True, True)
 
 
-def _make_segment_offsets_clamped(with_chunks: bool) -> wp.Kernel:
+def _make_segment_offsets_clamped(
+    with_chunks: bool, validate: bool = False
+) -> wp.Kernel:
     """Specialize bounded count construction with an optional chunk-count output."""
 
     @wp.kernel(enable_backward=False)
@@ -391,6 +482,7 @@ def _make_segment_offsets_clamped(with_chunks: bool) -> wp.Kernel:
         chunk_rows: int,
         chunk_offsets: wp.array(dtype=wp.int32),
         minimum_chunk_rows: int,
+        validation: wp.array(dtype=wp.int32),
     ):
         """Clamp wide row prefixes to capacity and count tiles over the clipped ranges.
 
@@ -419,12 +511,16 @@ def _make_segment_offsets_clamped(with_chunks: bool) -> wp.Kernel:
         minimum_chunk_rows : int
             Positive floor for adapting the chunk schedule to active rows, or zero
             to retain its static size.
+        validation : wp.array, shape (1,), dtype int32, or None
+            OUTPUT: Validity of the checked count prefix. Unused in the
+            unchecked specialization.
 
         Notes
         -----
         Thread launch: ``R + 1`` threads, one per prefix element.
         Modifies: every element of ``row_offsets`` and ``tile_offsets``; the fused
         specialization also overwrites every element of ``chunk_offsets``.
+        The checked specialization also overwrites ``validation[0]``.
 
         See Also
         --------
@@ -432,6 +528,11 @@ def _make_segment_offsets_clamped(with_chunks: bool) -> wp.Kernel:
         _segment_offsets_small : Build row and tile offsets directly for small inputs.
         """
         index = wp.tid()
+        if wp.static(validate):
+            if index == 0:
+                validation[0] = int(
+                    row_prefix[row_prefix.shape[0] - 1] <= wp.int64(capacity)
+                )
         if minimum_chunk_rows > 0:
             total = int(wp.min(row_prefix[row_prefix.shape[0] - 1], wp.int64(capacity)))
             if wp.static(with_chunks):
@@ -464,6 +565,8 @@ def _make_segment_offsets_clamped(with_chunks: bool) -> wp.Kernel:
 
 _segment_offsets_clamped = _make_segment_offsets_clamped(False)
 _segment_offsets_clamped_fused = _make_segment_offsets_clamped(True)
+_segment_offsets_clamped_checked = _make_segment_offsets_clamped(False, True)
+_segment_offsets_clamped_fused_checked = _make_segment_offsets_clamped(True, True)
 
 
 @wp.func
@@ -476,6 +579,18 @@ def _segment_length_low_limb(value: int):
 def _segment_length_high_limb(value: int):
     """Return the high 16 bits of a nonnegative segment length."""
     return wp.max(value, 0) >> 16
+
+
+@wp.func
+def _checked_length_low_limb(value: wp.int64):
+    """Extract the low limb of a checked count, including the overflow sentinel."""
+    return int(value & wp.int64(65535))
+
+
+@wp.func
+def _checked_length_high_limb(value: wp.int64):
+    """Extract the high limb without narrowing capacity plus one to int32."""
+    return int(value >> wp.int64(16))
 
 
 @wp.func
@@ -496,6 +611,16 @@ def _segment_scanned_length(low: int, high: int, length: int, capacity: int):
 
 
 @wp.func
+def _checked_scanned_length(low: int, high: int, length: wp.int64, capacity: int):
+    """Recover bounded ranges from the normalized counts used by the scan."""
+    prefix = wp.int64(high) * wp.int64(65536) + wp.int64(low)
+    previous = prefix - length
+    return int(
+        wp.min(prefix, wp.int64(capacity)) - wp.min(previous, wp.int64(capacity))
+    )
+
+
+@wp.func
 def _segment_work_count(length: int, tile_rows: int, skip_first: int):
     """Count work tiles without overflowing a rounded-up row numerator."""
     count = length / tile_rows + int(length % tile_rows != 0)
@@ -504,12 +629,12 @@ def _segment_work_count(length: int, tile_rows: int, skip_first: int):
     return count
 
 
-def _make_segment_offsets_cooperative(bucket: int) -> wp.Kernel:
+def _make_segment_offsets_cooperative(bucket: int, validate: bool = False) -> wp.Kernel:
     """Specialize one-block fused prefixes for a power-of-two segment bucket."""
 
     @wp.kernel(enable_backward=False)
     def _segment_offsets_cooperative_kernel(
-        seglen: wp.array(dtype=wp.int32),
+        seglen: wp.array(dtype=Any),
         capacity: int,
         tile_rows: int,
         skip_first_tile: bool,
@@ -518,13 +643,15 @@ def _make_segment_offsets_cooperative(bucket: int) -> wp.Kernel:
         chunk_rows: int,
         chunk_offsets: wp.array(dtype=wp.int32),
         minimum_chunk_rows: int,
+        validation: wp.array(dtype=wp.int32),
     ):
         """Build all three bounded prefixes with four cooperative int32 scans.
 
         Parameters
         ----------
-        seglen : wp.array, shape (R,), dtype int32
-            Segment lengths, with R <= bucket. Negative lengths count as zero.
+        seglen : wp.array, shape (R,), dtype int32 or int64
+            Segment lengths, with R <= bucket. Int64 is supported by the checked
+            specialization; unchecked calls treat negative int32 values as zero.
         capacity : int
             Nonnegative upper bound for the cumulative active row count.
         tile_rows : int
@@ -543,6 +670,9 @@ def _make_segment_offsets_cooperative(bucket: int) -> wp.Kernel:
         minimum_chunk_rows : int
             Positive lower bound for adapting chunks to the active row total,
             or zero to retain the static chunk size.
+        validation : wp.array, shape (1,), dtype int32, or None
+            OUTPUT: One for valid lengths, zero otherwise, in the checked
+            specialization. Unused in the unchecked specialization.
 
         Notes
         -----
@@ -553,13 +683,33 @@ def _make_segment_offsets_cooperative(bucket: int) -> wp.Kernel:
         Thread launch: one tiled block with ``block_dim=min(bucket, 128)``.
         Modifies: every element of ``row_offsets``, ``tile_offsets``, and
         ``chunk_offsets``.
+        The checked specialization also overwrites ``validation[0]``.
         """
         _, lane = wp.tid()
-        lengths = wp.tile_load(seglen, shape=(bucket,), offset=(0,))
-        low = wp.tile_scan_inclusive(wp.tile_map(_segment_length_low_limb, lengths))
-        high = wp.tile_scan_inclusive(wp.tile_map(_segment_length_high_limb, lengths))
+        raw_lengths = wp.tile_load(seglen, shape=(bucket,), offset=(0,))
+        if wp.static(validate):
+            lengths = wp.tile_map(_checked_segment_length, raw_lengths, capacity)
+            low = wp.tile_scan_inclusive(wp.tile_map(_checked_length_low_limb, lengths))
+            high = wp.tile_scan_inclusive(
+                wp.tile_map(_checked_length_high_limb, lengths)
+            )
+            clipped = wp.tile_map(_checked_scanned_length, low, high, lengths, capacity)
+            total_low = wp.tile_extract(low, bucket - 1)
+            total_high = wp.tile_extract(high, bucket - 1)
+            if lane == 0:
+                total = wp.int64(total_high) * wp.int64(65536) + wp.int64(total_low)
+                validation[0] = int(total <= wp.int64(capacity))
+        else:
+            low = wp.tile_scan_inclusive(
+                wp.tile_map(_segment_length_low_limb, raw_lengths)
+            )
+            high = wp.tile_scan_inclusive(
+                wp.tile_map(_segment_length_high_limb, raw_lengths)
+            )
+            clipped = wp.tile_map(
+                _segment_scanned_length, low, high, raw_lengths, capacity
+            )
         rows = wp.tile_map(_segment_clamped_scan, low, high, capacity)
-        clipped = wp.tile_map(_segment_scanned_length, low, high, lengths, capacity)
         if minimum_chunk_rows > 0:
             chunk_rows = _segment_chunk_rows(
                 wp.tile_extract(rows, bucket - 1),
@@ -580,11 +730,16 @@ def _make_segment_offsets_cooperative(bucket: int) -> wp.Kernel:
             tile_offsets[0] = 0
             chunk_offsets[0] = 0
 
+    _register_segment_offset_overloads(_segment_offsets_cooperative_kernel, validate)
     return _segment_offsets_cooperative_kernel
 
 
 _segment_offsets_cooperative = {
     bucket: _make_segment_offsets_cooperative(bucket)
+    for bucket in (32, 64, 128, 256, 512, 1024)
+}
+_segment_offsets_cooperative_checked = {
+    bucket: _make_segment_offsets_cooperative(bucket, True)
     for bucket in (32, 64, 128, 256, 512, 1024)
 }
 
