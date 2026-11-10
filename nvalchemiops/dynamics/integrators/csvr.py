@@ -94,8 +94,8 @@ def _csvr_scale_kernel(
 ):
     """Sample the CSVR velocity scale factor of each system.
 
-    Arithmetic is done in float64. Systems with ``ke <= 0`` or ``ndof <= 0``
-    get ``scale = 1``.
+    Arithmetic is done in float64. Systems with ``ke <= 0``, ``ndof <= 0`` or
+    ``dt <= 0`` get ``scale = 1``.
 
     Launch Grid: dim = [num_systems]
 
@@ -105,13 +105,14 @@ def _csvr_scale_kernel(
     kin = wp.float64(ke[s])
     n = wp.float64(ndof[s])
     alpha = wp.float64(1.0)
-    if kin > wp.float64(0.0) and n > wp.float64(0.0):
+    step = wp.float64(dt[s])
+    if kin > wp.float64(0.0) and n > wp.float64(0.0) and step > wp.float64(0.0):
         state = wp.rand_init(int(random_seed), s)
         r1 = wp.float64(wp.randn(state))
         chi2 = wp.float64(2.0) * _sample_gamma(
             state, wp.float64(0.5) * (n - wp.float64(1.0))
         )
-        c = wp.exp(-wp.float64(dt[s]) / wp.float64(tau[s]))
+        c = wp.exp(-step / wp.float64(tau[s]))
         # r = (1 - c) * K_target / (ndof * K) with K_target = ndof * kT / 2
         r = (wp.float64(1.0) - c) * wp.float64(target_temp[s]) / (wp.float64(2.0) * kin)
         t = wp.sqrt(c) + r1 * wp.sqrt(r)
@@ -235,12 +236,12 @@ def csvr_thermostat(
     masses : wp.array(dtype=wp.float32 or wp.float64)
         Atomic masses. Shape (N,).
     target_temp : wp.array
-        Target temperature :math:`k_B T`.
+        Target temperature :math:`k_B T`, ``>= 0``.
     tau : wp.array
-        Relaxation time :math:`\tau`. ``0`` resamples the kinetic energy from
-        the canonical distribution; ``inf`` disables the thermostat.
+        Relaxation time :math:`\tau`, ``>= 0``. ``0`` resamples the kinetic
+        energy from the canonical distribution; ``inf`` disables the thermostat.
     dt : wp.array
-        Time step.
+        Time step. ``dt <= 0`` leaves the system unchanged.
     ndof : wp.array
         Degrees of freedom :math:`N_f`.
     random_seed : int

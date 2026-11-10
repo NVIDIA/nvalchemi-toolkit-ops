@@ -526,6 +526,40 @@ class TestCSVRReference:
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_nonpositive_dt_is_noop(self, device, dtype_vec, dtype_scalar, np_dtype):
+        """dt <= 0 gives scale = 1, including tau = 0 with dt = 0."""
+        vel_np, _, velocities, masses = _random_system(
+            40, np_dtype, dtype_vec, dtype_scalar, device
+        )
+        target_temp, tau, dt, ndof, ke, scale = _params(
+            dtype_scalar,
+            device,
+            num_systems=4,
+            tau=[0.0, 0.5, 0.5, 0.5],
+            dt=[0.0, 0.0, -0.1, 0.1],
+        )
+
+        csvr_thermostat(
+            velocities,
+            masses,
+            target_temp,
+            tau,
+            dt,
+            ndof,
+            5,
+            ke,
+            scale,
+            **_batch_kwargs("batch_idx", [10, 10, 10, 10], device),
+        )
+        wp.synchronize_device(device)
+
+        s = scale.numpy()
+        np.testing.assert_array_equal(s[:3], 1.0)
+        assert np.isfinite(s[3]) and s[3] != 1.0
+        np.testing.assert_array_equal(velocities.numpy()[:30], vel_np[:30])
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
     def test_seed_reproducibility(self, device, dtype_vec, dtype_scalar, np_dtype):
         """The same seed reproduces the scale; a different seed changes it."""
         _, _, velocities, masses = _random_system(
