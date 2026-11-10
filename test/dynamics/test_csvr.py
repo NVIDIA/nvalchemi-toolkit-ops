@@ -24,6 +24,7 @@ Tests cover:
 - Equilibration and the conserved effective energy
 """
 
+import math
 from typing import Any
 
 import numpy as np
@@ -425,6 +426,45 @@ class TestCSVRDistribution:
         se_var = ((k_new - k_new.mean()) ** 2).std() / np.sqrt(num_samples)
         assert abs(k_new.mean() - expected_mean) < 5 * se_mean
         assert abs(k_new.var() - expected_var) < 5 * se_var
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("c", [0.0, 0.5])
+    def test_negative_scale_fraction(
+        self, device, dtype_vec, dtype_scalar, np_dtype, c
+    ):
+        """P(scale < 0) = Phi(-sqrt(c / r)) within 5 sigma, pinning the sign of alpha."""
+        num_samples, kT, k, ndof, dt_val = 20000, 1.0, 0.225, 3.0, 0.1
+        tau_val = 0.0 if c == 0.0 else -dt_val / np.log(c)
+        target_temp, tau, dt, ndof_arr, ke, scale = _params(
+            dtype_scalar, device, num_samples, kT, tau_val, dt_val, ndof
+        )
+        ke.fill_(k)
+        velocities = wp.zeros(num_samples, dtype=dtype_vec, device=device)
+        masses = wp.ones(num_samples, dtype=dtype_scalar, device=device)
+        batch_idx = wp.array(
+            np.arange(num_samples, dtype=np.int32), dtype=wp.int32, device=device
+        )
+
+        csvr_thermostat(
+            velocities,
+            masses,
+            target_temp,
+            tau,
+            dt,
+            ndof_arr,
+            7,
+            ke,
+            scale,
+            batch_idx=batch_idx,
+            compute_ke=False,
+        )
+        wp.synchronize_device(device)
+
+        r = (1.0 - c) * kT / (2.0 * k)
+        expected = 0.5 * math.erfc(math.sqrt(c / r) / math.sqrt(2.0))
+        se = math.sqrt(expected * (1.0 - expected) / num_samples)
+        assert abs((scale.numpy() < 0).mean() - expected) < 5 * se
 
 
 # ==============================================================================
