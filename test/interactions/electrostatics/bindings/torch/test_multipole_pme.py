@@ -1529,6 +1529,63 @@ class TestParticleMeshEwald:
         shifted = op(*args, sigma=sigma, alpha=alpha, total_charge=total + 1.0, **extra)
         assert not torch.allclose(shifted, base)
 
+    @staticmethod
+    def _assert_partial_grads_match_full(
+        energy, positions, moments, cell, *, pass_total_charge, tol=1e-12
+    ):
+        """Two owned-row holders match the whole system in energy and gradients.
+
+        ``energy(positions, moments, cell, **kwargs)`` returns per-atom
+        energies. The peer partial stays on the autograd graph, as a
+        ``torch.distributed.nn.functional.all_reduce`` would leave it, and
+        each holder sums only the rows it owns.
+        """
+        n = positions.shape[0]
+        own0 = (torch.arange(n, device=positions.device) < 3).to(positions.dtype)
+        owners = [own0, 1.0 - own0]
+
+        def leaves():
+            return tuple(
+                t.detach().clone().requires_grad_() for t in (positions, moments, cell)
+            )
+
+        p, m, c = leaves()
+        full = energy(p, m, c).sum()
+        full_grads = torch.autograd.grad(full, (p, m, c))
+
+        p, m, c = leaves()
+        meshes = []
+        for w in owners:
+            energy(
+                p,
+                m,
+                c,
+                source_weights=w,
+                reduce_partial=lambda mesh: meshes.append(mesh) or mesh,
+            )
+        total = sum((m[:, 0] * w).sum() for w in owners).reshape(1)
+        extra = {"total_charge": total} if pass_total_charge else {}
+        partial = 0.0
+        for rank, w in enumerate(owners):
+            peer = meshes[1 - rank]
+            e = energy(
+                p,
+                m,
+                c,
+                source_weights=w,
+                reduce_partial=lambda mesh, peer=peer: mesh + peer,
+                **extra,
+            )
+            partial = partial + (e * w).sum()
+        partial_grads = torch.autograd.grad(partial, (p, m, c))
+
+        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
+        for name, got, ref in zip(
+            ("positions", "moments", "cell"), partial_grads, full_grads
+        ):
+            assert ref.abs().max() > 0, name
+            torch.testing.assert_close(got, ref, rtol=tol, atol=tol, msg=name)
+
     @pytest.mark.parametrize("with_dipoles", [False, True])
     def test_partial_mesh_reduction_matches_full(self, with_dipoles):
         """Two weighted partial spreads, summed, reproduce the full reciprocal energy."""
@@ -1545,33 +1602,15 @@ class TestParticleMeshEwald:
             "spline_order": 5,
             "batch_idx": batch_idx,
         }
-        cell_b = cell.unsqueeze(0)
-        full = multipole_pme_reciprocal_space(positions, moments, cell_b, **common)
-
-        half = (torch.arange(6, device=positions.device) < 3).to(positions.dtype)
-        captured = []
-
-        def capture(mesh):
-            captured.append(mesh.detach())
-            return mesh
-
-        multipole_pme_reciprocal_space(
+        self._assert_partial_grads_match_full(
+            lambda p, m, c, **kw: multipole_pme_reciprocal_space(
+                p, m, c, **common, **kw
+            ),
             positions,
             moments,
-            cell_b,
-            source_weights=1.0 - half,
-            reduce_partial=capture,
-            **common,
+            cell.unsqueeze(0),
+            pass_total_charge=True,
         )
-        partial = multipole_pme_reciprocal_space(
-            positions,
-            moments,
-            cell_b,
-            source_weights=half,
-            reduce_partial=lambda mesh: mesh + captured[0],
-            **common,
-        )
-        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
 
     @pytest.mark.parametrize("l_max", [0, 1, 2])
     def test_partial_structure_factor_matches_full(self, l_max):
@@ -1588,39 +1627,21 @@ class TestParticleMeshEwald:
         if l_max == 2:
             moments = torch.cat([moments, cartesian_quadrupole_to_e3nn(quad)], dim=-1)
         batch_idx = torch.zeros(n, dtype=torch.int32, device=positions.device)
-        cell_b = cell.unsqueeze(0)
         common = {
             "sigma": sigma,
             "alpha": alpha,
             "k_cutoff": kcut,
             "batch_idx": batch_idx,
         }
-        full = multipole_reciprocal_space_energy(positions, moments, cell_b, **common)
-
-        half = (torch.arange(n, device=positions.device) < 3).to(positions.dtype)
-        captured = []
-
-        def capture(rho):
-            captured.append(rho.detach())
-            return rho
-
-        multipole_reciprocal_space_energy(
+        self._assert_partial_grads_match_full(
+            lambda p, m, c, **kw: multipole_reciprocal_space_energy(
+                p, m, c, **common, **kw
+            ),
             positions,
             moments,
-            cell_b,
-            source_weights=1.0 - half,
-            reduce_partial=capture,
-            **common,
+            cell.unsqueeze(0),
+            pass_total_charge=False,
         )
-        partial = multipole_reciprocal_space_energy(
-            positions,
-            moments,
-            cell_b,
-            source_weights=half,
-            reduce_partial=lambda rho: rho + captured[0],
-            **common,
-        )
-        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
 
     @pytest.mark.parametrize("l_max", [0, 1, 2])
     def test_ewald_summation_partial_matches_full(self, l_max):
@@ -1643,26 +1664,15 @@ class TestParticleMeshEwald:
             "k_cutoff": kcut,
             "batch_idx": batch_idx,
         }
-        args = (positions, moments, cell.unsqueeze(0), idx_j, nptr, sh)
-        full = multipole_ewald_summation(*args, **common)
-
-        half = (torch.arange(n, device=positions.device) < 3).to(positions.dtype)
-        captured = []
-
-        def capture(rho):
-            captured.append(rho.detach())
-            return rho
-
-        multipole_ewald_summation(
-            *args, source_weights=1.0 - half, reduce_partial=capture, **common
+        self._assert_partial_grads_match_full(
+            lambda p, m, c, **kw: multipole_ewald_summation(
+                p, m, c, idx_j, nptr, sh, **common, **kw
+            ),
+            positions,
+            moments,
+            cell.unsqueeze(0),
+            pass_total_charge=True,
         )
-        partial = multipole_ewald_summation(
-            *args,
-            source_weights=half,
-            reduce_partial=lambda rho: rho + captured[0],
-            **common,
-        )
-        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
 
     def test_ewald_partial_arguments_need_the_batched_path(self):
         sigma, alpha = 1.0, 0.5
