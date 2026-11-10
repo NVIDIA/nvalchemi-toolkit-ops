@@ -29,6 +29,8 @@ fire2
 segment_ops
     Differentiable PyTorch wrappers for segmented reductions and broadcasts
     with explicit first- and second-order backward support.
+segment_mm
+    Segmented matrix multiplication with runtime lengths and higher-order gradients.
 """
 
 import importlib
@@ -57,6 +59,7 @@ from nvalchemiops.torch.lbfgs import (
     lbfgs_step_coord,
     lbfgs_step_coord_cell,
 )
+from nvalchemiops.torch.segment_mm import segment_mm
 from nvalchemiops.torch.segment_ops import (
     segmented_dot,
     segmented_matvec,
@@ -83,6 +86,7 @@ __all__ = [
     "fire2_step_coord_cell_apply",
     "fire2_compute_extended_reductions",
     "fire2_step_extended",
+    "segment_mm",
     "segmented_dot",
     "segmented_matvec",
     "segmented_mean",
