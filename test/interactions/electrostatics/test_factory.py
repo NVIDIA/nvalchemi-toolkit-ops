@@ -39,6 +39,7 @@ import warp as wp
 
 from nvalchemiops.interactions.electrostatics._factory_common import (
     _DerivState,
+    _resolve_core_scalar,
     get_backward_scale_kernel,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -180,11 +181,14 @@ def _launch_factory_energy(
     """Launch the factory energy kernel, filling inactive slots with sentinels."""
     out = wp.zeros(num_atoms, dtype=wp.float64, device=device)
     s = alloc_ewald_real_sentinels(wp_dtype, device)
+    # Match the launcher's device-aware core precision. The factory default
+    # has no device and intentionally also permits float32 cores on CPU.
     kernel = get_ewald_real_kernel(
         wp_dtype,
         batched=batched,
         neighbor_input=neighbor_input,
         deriv_state=_DerivState.E,
+        core_scalar=_resolve_core_scalar(wp_dtype, device),
     )
     wp.launch(
         kernel,
@@ -283,7 +287,11 @@ class TestFactoryEnergyParity:
         out = wp.zeros(n, dtype=wp.float64, device=device)
         s = alloc_ewald_real_sentinels(dtype, device)
         kernel = get_ewald_real_kernel(
-            dtype, batched=False, neighbor_input="matrix", deriv_state=_DerivState.E
+            dtype,
+            batched=False,
+            neighbor_input="matrix",
+            deriv_state=_DerivState.E,
+            core_scalar=_resolve_core_scalar(dtype, device),
         )
         wp.launch(
             kernel,
@@ -386,7 +394,11 @@ class TestFactoryEnergyParity:
         out = wp.zeros(n, dtype=wp.float64, device=device)
         s = alloc_ewald_real_sentinels(dtype, device)
         kernel = get_ewald_real_kernel(
-            dtype, batched=True, neighbor_input="matrix", deriv_state=_DerivState.E
+            dtype,
+            batched=True,
+            neighbor_input="matrix",
+            deriv_state=_DerivState.E,
+            core_scalar=_resolve_core_scalar(dtype, device),
         )
         wp.launch(
             kernel,
