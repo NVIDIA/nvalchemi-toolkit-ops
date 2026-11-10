@@ -27,7 +27,8 @@ All kernels use direct array inputs (no structs) and provide both:
 Submodules
 ----------
 integrators
-    MD integrators: velocity Verlet (NVE), Langevin (NVT), Nosé-Hoover (NVT)
+    MD integrators: velocity Verlet (NVE), Langevin (NVT), Nosé-Hoover (NVT),
+    CSVR (NVT)
 optimizers
     Geometry optimizers: FIRE, FIRE2
 utils
