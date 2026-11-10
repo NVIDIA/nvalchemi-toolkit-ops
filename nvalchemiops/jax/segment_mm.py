@@ -456,8 +456,7 @@ def segment_mm(
     validate : bool, optional
         Check runtime length values and return ``(error, out)`` instead of
         ``out``. Defaults to ``False``. The error is a
-        ``jax.experimental.checkify.Error`` with device-resident state;
-        this operation never inspects it or synchronizes to report errors.
+        ``jax.experimental.checkify.Error``.
         Close over this flag or mark it static under ``jax.jit``.
 
     Returns
@@ -480,14 +479,10 @@ def segment_mm(
     -----
     ``in_channels`` and ``out_channels`` must be positive. Products accumulate
     in float32 and round to the native output dtype. Inputs are read-only.
-    Lengths and prefix sums stay on the device. By default, length value
-    constraints are caller preconditions. With ``validate=True``, checks
-    report negative lengths or a total above the row capacity, including
-    inputs whose int32 sum would overflow. Errors do not stop the product
-    from executing; outputs for invalid lengths must not be used.
-    Inspecting ``error.get()`` or calling ``error.throw()`` explicitly reads
-    error state on the host and can synchronize. Preserve errors as auxiliary
-    outputs with ``has_aux=True`` when differentiating a checked loss.
+    Length values are checked only with ``validate=True``. Negative lengths or
+    a total above the row capacity produce an error value. Discard outputs when
+    validation fails. Use ``has_aux=True`` to preserve the error when
+    differentiating a checked loss.
 
     Supports ``jax.jit``, ``jax.lax.scan``, JVP, VJP, and higher-order
     differentiation with respect to either or both floating operands.

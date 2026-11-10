@@ -900,16 +900,9 @@ def segment_mm(
     Products accumulate in float32 and are cast once to the output dtype.
     The float32 path does not request reduced-precision multiplication.
 
-    Segment lengths and prefix sums stay on the device. Without ``validation``,
-    value constraints are caller preconditions; offsets treat negative lengths
-    as zero and truncate ranges at ``row_capacity`` for bounds safety.
-    With ``validation``, negative lengths or a total above ``row_capacity``
-    write a zero status, including when the int32 sum would overflow.
-    Checks do not stop the product or raise an exception. Numerical outputs
-    are defined only for valid lengths. Status stays on-device without a host
-    read or synchronization; another kernel on the same stream can consume it.
-    Explicitly calling ``validation.numpy()`` copies it to the host and
-    synchronizes CUDA work.
+    Length values are checked only when ``validation`` is provided. Negative
+    lengths or a total above ``row_capacity`` set the status to zero without
+    raising an exception. Discard outputs when the status is zero.
     Array sizes and launch dimensions must fit the signed 32-bit index range.
     Work is enqueued on the current Warp stream for the input device.
 
@@ -1113,13 +1106,9 @@ def segment_mm_backward_b(
     tile at a time in shared memory; no full activation transpose is allocated.
     Singleton segments write ``grad_b`` directly. When ``row_capacity`` fits one chunk,
     no partial-gradient buffer or final reduction is needed.
-    Length values stay on the device. Without ``validation``, their constraints
-    are caller preconditions; offsets clip negative lengths and truncate ranges
-    for bounds safety. With ``validation``, the status reports negative lengths
-    or a total above ``row_capacity``, including int32 overflow. No host read,
-    synchronization, or exception occurs to report invalid lengths. Numerical
-    outputs are defined only for valid lengths. See ``segment_mm`` for status
-    consumption and explicit host inspection.
+    Length validation follows ``segment_mm``: the optional status is zero for
+    negative lengths or a total above ``row_capacity``. Discard gradients when
+    the status is zero; invalid lengths do not raise an exception.
     Work uses the current Warp stream. CUDA graph capture requires kernel warmup.
 
     See Also
@@ -1244,13 +1233,10 @@ def segment_mm_backward(
     the number of possible split segments. The chunk ceiling and maximum task
     count depend only on static buffer shapes. Runtime active rows can shorten
     chunks within the same scratch capacity; prefixes assign more chunks to long segments.
-    Segment lengths stay on the device. Without ``validation``, their constraints
-    are caller preconditions; offsets clip negative lengths and truncate ranges
-    for bounds safety. With ``validation``, the status reports negative lengths
-    or a total above ``row_capacity``, including int32 overflow. No host read,
-    synchronization, or exception occurs to report invalid lengths. Numerical
-    outputs are defined only for valid lengths. See ``segment_mm`` for status
-    consumption and explicit host inspection. Work uses the current Warp stream.
+    Length validation follows ``segment_mm``: the optional status is zero for
+    negative lengths or a total above ``row_capacity``. Discard gradients when
+    the status is zero; invalid lengths do not raise an exception.
+    Work uses the current Warp stream.
 
     This is an explicit first-order backward operation, not an automatic Warp
     adjoint or a framework autodiff registration. CUDA graph capture requires

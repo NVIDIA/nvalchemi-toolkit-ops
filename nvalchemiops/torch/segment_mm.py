@@ -579,12 +579,11 @@ def segment_mm(
     seglen : torch.Tensor, shape (num_segments,), dtype torch.int32 or torch.int64
         Runtime lengths on the same device. Values must be nonnegative
         and sum to at most ``row_capacity``. Zero-length segments are supported.
-        Int64 lengths must fit int32. Checked CUDA calls retain their original
-        values until validation; other calls narrow them on the input device.
+        Int64 lengths must fit int32.
     validate : bool, optional
         Check segment values during execution. Defaults to False; shape and
         dtype checks always run. True raises ValueError for invalid CPU lengths
-        and uses an asynchronous device assertion on CUDA without a host read.
+        and uses an asynchronous device assertion on CUDA.
         The option also applies to gradients and JVPs.
 
     Returns
@@ -614,10 +613,7 @@ def segment_mm(
 
     With ``validate=False``, valid segment values are a caller precondition.
     ``validate=True`` checks them in eager execution, ``torch.compile``, and
-    CUDA graph replay. CUDA checks run inside offset construction, followed
-    by an assertion kernel. A failed device assertion invalidates the process's
-    CUDA context; restart the process before further CUDA work. CPU checks raise
-    a recoverable ValueError. Validation adds work and is intended for debugging.
+    CUDA graph replay. Restart the process after a failed CUDA device assertion.
 
     CUDA bfloat16 autocast converts float32 or bfloat16 operands to bfloat16
     before the custom autograd function. Gradients propagate through these

@@ -117,7 +117,7 @@ most the row capacity.
 
 Both frontends check input shapes, dtypes, and devices. By default, they
 rely on the caller to supply valid length values. Set `validate=True` to
-check values without reading lengths back to the host.
+check length values as well.
 
 ::::{tab-set}
 
@@ -130,21 +130,16 @@ PyTorch accepts int32 or int64 lengths; all length values must fit int32.
 out = segment_mm(a, b, lengths, validate=True)
 ```
 
-This checks that lengths are nonnegative, their sum fits the row capacity,
-and int64 values fit int32. It also works with `torch.compile` and CUDA
-graph capture, and applies to derivative computations. On CPU, invalid
-lengths raise `ValueError`. On CUDA, the check stays on the GPU without a host
-synchronization. An invalid length triggers an asynchronous device assertion;
-the error may appear at a later CUDA call, and the process must be restarted.
+Invalid lengths raise `ValueError` on CPU or trigger a device assertion on
+CUDA. Validation also works with `torch.compile` and CUDA graph capture.
 
 :::
 
 :::{tab-item} JAX
 :sync: jax
 
-JAX requires int32 lengths. With validation enabled, the result is
-`(error, out)`. The error state stays on the device, and the call does not
-synchronize to inspect it. No separate `checkify` wrapper is needed.
+JAX requires int32 lengths. With `validate=True`, it returns `(error, out)`
+instead of just `out`.
 
 ```python
 @jax.jit
@@ -154,15 +149,10 @@ def checked_mm(a, b, lengths):
 error, out = checked_mm(a, b, lengths)
 ```
 
-Keep `validate` static when compiling. Checks detect negative lengths and
-totals above the row capacity, including int32 overflow. They work with
-`jit`, `scan`, and differentiation. For a checked loss, return
-`(loss, error)` and use `has_aux=True` to preserve the error alongside gradients.
-
-Validation reports an error without stopping the product. Discard results
-with invalid lengths. Calling `error.get()` or `error.throw()` explicitly
-reads the error state on the host and can synchronize; the operation never
-calls either method.
+Keep `validate` static when compiling. The returned `error` is a JAX
+`checkify.Error`; only use `out` when validation succeeds. For a differentiated
+loss, return `(loss, error)` and use `has_aux=True` to keep the error alongside
+the gradients.
 
 :::
 
@@ -179,16 +169,10 @@ status = wp.empty(1, dtype=wp.int32, device=a.device)
 warp_segment_mm(a, b, lengths, out, validation=status)
 ```
 
-Every call overwrites `status[0]`: `1` means valid lengths, and `0` means
-invalid lengths. The same option is available on `segment_mm_backward` and
-`segment_mm_backward_b`. The buffer must be contiguous, on the input device,
-and disjoint from all inputs and outputs. Warp lengths must be int32.
-
-The status stays on-device and can be consumed by another Warp kernel on
-the same stream. The operation does not read it back or raise an exception
-for invalid lengths; discard numerical results when the status is `0`.
-Calling `status.numpy()` explicitly copies the status to the host and
-synchronizes CUDA work. Omitting the buffer leaves value checking disabled.
+Each call sets `status[0]` to `1` for valid lengths or `0` for invalid lengths.
+Only use the output when the status is `1`. The same option is available on
+`segment_mm_backward` and `segment_mm_backward_b`. Warp lengths must be int32;
+omitting `validation` leaves value checking disabled.
 
 ## Gradients and mixed precision
 
