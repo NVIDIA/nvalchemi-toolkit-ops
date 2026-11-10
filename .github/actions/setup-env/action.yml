@@ -45,8 +45,17 @@ runs:
         DEBIAN_FRONTEND: "noninteractive"
         TZ: "Etc/UTC"
       run: |
-        apt-get update
-        apt-get install -y curl git build-essential
+        for attempt in 1 2 3; do
+          if apt-get update && apt-get install -y curl git build-essential; then
+            exit 0
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            echo "apt attempt $attempt failed; package index may have shifted, retrying in 15s"
+            sleep 15
+          fi
+        done
+        echo "apt install failed after 3 attempts; a fresh 'apt-get update' usually fixes this"
+        exit 1
 
     - name: Setup UV
       shell: bash -x -e -u -o pipefail {0}
