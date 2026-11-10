@@ -255,36 +255,41 @@ class TestCSVRAPI:
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
-    def test_compute_ke_false_matches_default(
+    def test_compute_ke_false_uses_supplied_ke(
         self, device, dtype_vec, dtype_scalar, np_dtype
     ):
-        """A caller-supplied ke gives bit-identical results to the internal one."""
+        """With compute_ke=False, a supplied ke is used as given and left unchanged."""
         vel_np, _, velocities, masses = _random_system(
             50, np_dtype, dtype_vec, dtype_scalar, device
         )
         target_temp, tau, dt, ndof, ke, scale = _params(dtype_scalar, device)
-        csvr_thermostat(velocities, masses, target_temp, tau, dt, ndof, 9, ke, scale)
-
-        velocities_2 = wp.array(vel_np, dtype=dtype_vec, device=device)
-        ke_2 = wp.empty_like(ke)
-        scale_2 = wp.empty_like(scale)
-        compute_kinetic_energy(velocities_2, masses, ke_2)
+        # Reference: default call on 2v, whose kinetic energy is 4x that of v.
+        velocities_ref = wp.array(2 * vel_np, dtype=dtype_vec, device=device)
         csvr_thermostat(
-            velocities_2,
+            velocities_ref, masses, target_temp, tau, dt, ndof, 9, ke, scale
+        )
+        ke_supplied = ke.numpy().copy()
+        scale_2 = wp.empty_like(scale)
+
+        csvr_thermostat(
+            velocities,
             masses,
             target_temp,
             tau,
             dt,
             ndof,
             9,
-            ke_2,
+            ke,
             scale_2,
             compute_ke=False,
         )
         wp.synchronize_device(device)
 
+        np.testing.assert_array_equal(ke.numpy(), ke_supplied)
         np.testing.assert_array_equal(scale_2.numpy(), scale.numpy())
-        np.testing.assert_array_equal(velocities_2.numpy(), velocities.numpy())
+        np.testing.assert_allclose(
+            velocities.numpy(), vel_np * scale.numpy()[0], rtol=1e-6
+        )
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_out_requires_velocities_out(self, device):
