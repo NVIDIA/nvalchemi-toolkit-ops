@@ -101,6 +101,7 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
     fire2_reduce,
     fire2_step,
     fire2_update,
+    fire2_update_absent_systems,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGSCellState,
@@ -120,6 +121,7 @@ __all__ = [
     "fire2_update",
     "fire2_apply_step",
     "fire2_reduce",
+    "fire2_update_absent_systems",
     # L-BFGS: state, preparation, and one step per call. The phase functions
     # the step is built from are decomposition points, not operations, so they
     # stay in the module rather than on the public surface.

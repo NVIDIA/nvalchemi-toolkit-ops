@@ -4780,3 +4780,104 @@ class TestFire2PartialSystems:
         for shard in shards:
             for key in ("cell", "cell_velocities", "alpha", "dt", "nsteps_inc"):
                 torch.testing.assert_close(shard[key], ref[key], rtol=1e-11, atol=1e-11)
+
+    # Which atoms each emulated rank holds (N=16: atoms 0-7 are system 0, 8-15
+    # are system 1). ``None`` entries are filled in by ``_layout``.
+    LAYOUTS = {
+        "each_rank_lacks_a_system": (slice(0, 8), slice(8, 16)),
+        "one_rank_lacks_a_system": (slice(0, 12), slice(12, 16)),
+        "empty_rank": (slice(0, 16), slice(0, 0)),
+        "empty_middle_rank": (slice(0, 6), slice(0, 0), slice(6, 16)),
+    }
+
+    @classmethod
+    def _layout(cls, name, device):
+        idx = torch.arange(16, device=device)
+        return [idx[s] for s in cls.LAYOUTS[name]]
+
+    @staticmethod
+    def _make_uphill(full, system):
+        """Point system ``system`` uphill (vf <= 0) so alpha and dt change."""
+        mask = full["batch_idx"] == system
+        full["velocities"][mask] = -full["forces"][mask]
+        full["alpha"].fill_(0.05)
+        full["nsteps_inc"].fill_(3)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("uphill", [0, 1])
+    @pytest.mark.parametrize("layout", list(LAYOUTS))
+    def test_coordinate_controls_match_on_every_shard(self, device, layout, uphill):
+        """Alpha, dt and nsteps_inc agree with the whole-system step on every shard.
+
+        Includes shards that hold no atom of a system and shards with no atoms.
+        """
+        full = self._system(device, with_cell=False)
+        self._make_uphill(full, uphill)
+        initial = {k: full[k].clone() for k in ("alpha", "dt", "nsteps_inc")}
+        ref = {k: v.clone() for k, v in full.items()}
+        fire2_step_coord(
+            ref["positions"],
+            ref["velocities"],
+            ref["forces"],
+            ref["batch_idx"],
+            ref["alpha"],
+            ref["dt"],
+            ref["nsteps_inc"],
+            **self.HP,
+        )
+        # The controls must actually move for both systems.
+        for key in ("alpha", "dt", "nsteps_inc"):
+            assert (ref[key] != initial[key]).all()
+
+        keeps = self._layout(layout, device)
+        zero = tuple(
+            torch.zeros(2, dtype=torch.float64, device=device) for _ in range(3)
+        )
+
+        def run(shard, peers, peer_max):
+            seen = {}
+
+            def sum_partials(vf, vv, ff):
+                seen["local"] = (vf.clone(), vv.clone(), ff.clone())
+                for buf, other in zip((vf, vv, ff), peers):
+                    buf += other
+
+            def max_reduce(mn):
+                seen["max"] = mn.clone()
+                if peer_max is not None:
+                    torch.maximum(mn, peer_max, out=mn)
+
+            fire2_step_coord(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+                reduce_partials=sum_partials,
+                reduce_max_norm=max_reduce,
+                **self.HP,
+            )
+            return seen
+
+        local = [run(self._shard(full, k), zero, None)["local"] for k in keeps]
+        combined = tuple(sum(loc[q] for loc in local) for q in range(3))
+        peers = [tuple(combined[q] - loc[q] for q in range(3)) for loc in local]
+        maxima = [
+            run(self._shard(full, k), peers[i], None)["max"]
+            for i, k in enumerate(keeps)
+        ]
+        global_max = torch.stack(maxima).max(dim=0).values
+        shards = [self._shard(full, k) for k in keeps]
+        for i, shard in enumerate(shards):
+            run(shard, peers[i], global_max)
+
+        for key in ("positions", "velocities"):
+            merged = torch.empty_like(ref[key])
+            for shard, keep in zip(shards, keeps):
+                merged[keep] = shard[key]
+            torch.testing.assert_close(merged, ref[key], rtol=1e-12, atol=1e-12)
+        for shard in shards:
+            for key in ("alpha", "dt", "nsteps_inc"):
+                torch.testing.assert_close(shard[key], ref[key], rtol=1e-12, atol=1e-12)

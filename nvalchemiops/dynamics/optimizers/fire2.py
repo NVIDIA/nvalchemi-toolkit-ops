@@ -554,6 +554,101 @@ def _fire2_clamp_apply_recompute_kernel(
 
 
 # =============================================================================
+# Kernel 4: Control update for systems with no local atoms
+# =============================================================================
+
+
+@wp.kernel(enable_backward=False)
+def _fire2_update_absent_systems_kernel(
+    atom_counts: wp.array(dtype=wp.int32),
+    vf: wp.array(dtype=Any),
+    max_norm: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    dt: wp.array(dtype=Any),
+    nsteps_inc: wp.array(dtype=wp.int32),
+    delaystep: wp.int32,
+    dtgrow: Any,
+    dtshrink: Any,
+    alphashrink: Any,
+    alpha0: Any,
+    tmax: Any,
+    tmin: Any,
+    maxstep: Any,
+):
+    r"""Update ``alpha``, ``dt`` and ``nsteps_inc`` of systems with no local atoms.
+
+    A caller that holds only part of each system runs the fused mixing and
+    clamp kernels over its local atoms, and those kernels write the per-system
+    controls only through a local atom. For a system with no local atom this
+    kernel applies the same rules from the whole-system ``vf`` and ``max_norm``
+    so every caller ends the step with the same controls:
+
+    1. Adaptive update (same order as the fused mixing kernel): downhill
+       (``vf[s] > 0``) increments ``nsteps_inc`` and, past ``delaystep``, grows
+       ``dt`` (capped at ``tmax``) and shrinks ``alpha``; uphill resets
+       ``nsteps_inc`` and ``alpha`` and shrinks ``dt`` (floored at ``tmin``).
+    2. Clamp scaling (same as the clamp kernel):
+       ``dt[s] *= min(1, maxstep / max_norm[s])``.
+
+    Systems with at least one local atom are skipped, so the fused kernels stay
+    their only writer.
+
+    Launch Grid
+    -----------
+    dim = M (number of systems)
+
+    Parameters
+    ----------
+    atom_counts : wp.array, shape (M,), dtype int32
+        Local atom count per system (read-only).
+    vf : wp.array, shape (M,), dtype float32/float64
+        Whole-system :math:`v \cdot f` (read-only).
+    max_norm : wp.array, shape (M,), dtype float32/float64
+        Whole-system maximum step norm used for the clamp (read-only).
+    alpha : wp.array, shape (M,), dtype float32/float64
+        FIRE2 mixing parameter. Modified in-place for systems without local atoms.
+    dt : wp.array, shape (M,), dtype float32/float64
+        Per-system timestep. Modified in-place for systems without local atoms.
+    nsteps_inc : wp.array, shape (M,), dtype int32
+        Positive-power step counter. Modified in-place for systems without local
+        atoms.
+    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin :
+        FIRE2 hyperparameters, as in :func:`fire2_update`.
+    maxstep : float32/float64
+        Maximum allowed step size, as in :func:`fire2_apply_step`.
+
+    Modifies
+    --------
+    alpha, dt, nsteps_inc
+        For systems with ``atom_counts[s] == 0`` only.
+    """
+    s = wp.tid()
+    if atom_counts[s] > 0:
+        return
+
+    _dt = dt[s]
+    _a = alpha[s]
+    zero = type(_dt)(0.0)
+    one = type(_dt)(1.0)
+
+    if vf[s] > zero:
+        _nsi = nsteps_inc[s] + 1
+        if _nsi > delaystep:
+            _dt = wp.min(dtgrow * _dt, tmax)
+            _a = alphashrink * _a
+    else:
+        _nsi = 0
+        _a = alpha0
+        _dt = wp.max(dtshrink * _dt, tmin)
+
+    inv = wp.min(one, maxstep / max_norm[s])
+
+    alpha[s] = _a
+    dt[s] = _dt * inv
+    nsteps_inc[s] = _nsi
+
+
+# =============================================================================
 # Overloads
 # =============================================================================
 
@@ -564,6 +659,7 @@ _fire2_reduce_only_overloads = {}
 _fire2_reduce_only_tiled_overloads = {}
 _fire2_fused_mix_maxnorm_overloads = {}
 _fire2_clamp_apply_recompute_overloads = {}
+_fire2_update_absent_systems_overloads = {}
 
 for _t, _v in zip(_T, _V):
     _fire2_reduce_only_overloads[_v] = wp.overload(
@@ -629,6 +725,26 @@ for _t, _v in zip(_T, _V):
             wp.array(dtype=wp.int32),  # batch_idx
             wp.array(dtype=_t),  # max_norm
             wp.array(dtype=_t),  # vf (v.f inner product)
+            _t,  # maxstep
+        ],
+    )
+
+    _fire2_update_absent_systems_overloads[_t] = wp.overload(
+        _fire2_update_absent_systems_kernel,
+        [
+            wp.array(dtype=wp.int32),  # atom_counts
+            wp.array(dtype=_t),  # vf
+            wp.array(dtype=_t),  # max_norm
+            wp.array(dtype=_t),  # alpha
+            wp.array(dtype=_t),  # dt
+            wp.array(dtype=wp.int32),  # nsteps_inc
+            wp.int32,  # delaystep
+            _t,  # dtgrow
+            _t,  # dtshrink
+            _t,  # alphashrink
+            _t,  # alpha0
+            _t,  # tmax
+            _t,  # tmin
             _t,  # maxstep
         ],
     )
@@ -1108,4 +1224,74 @@ def fire2_update(
             tmin,
         ],
         device=device,
+    )
+
+
+def fire2_update_absent_systems(
+    atom_counts: wp.array,
+    vf: wp.array,
+    max_norm: wp.array,
+    alpha: wp.array,
+    dt: wp.array,
+    nsteps_inc: wp.array,
+    *,
+    delaystep: int = 60,
+    dtgrow: float = 1.05,
+    dtshrink: float = 0.75,
+    alphashrink: float = 0.985,
+    alpha0: float = 0.09,
+    tmax: float = 0.08,
+    tmin: float = 0.005,
+    maxstep: float = 0.1,
+) -> None:
+    r"""Update the per-system controls of systems with no local atoms.
+
+    :func:`fire2_update` and :func:`fire2_apply_step` write ``alpha``, ``dt``
+    and ``nsteps_inc`` only through a local atom of each system. A caller that
+    holds part of each system can have systems with no local atoms (or no atoms
+    at all); this helper applies the same FIRE2 rules to those systems from the
+    whole-system ``vf`` and ``max_norm``, so all callers keep identical controls.
+    Run it once per step, after ``max_norm`` has been combined across callers.
+    Systems with local atoms are left alone, so nothing is updated twice.
+
+    Parameters
+    ----------
+    atom_counts : wp.array, shape (M,), dtype int32
+        Local atom count per system.
+    vf : wp.array, shape (M,), dtype float*
+        Whole-system :math:`\mathbf{v}\cdot\mathbf{F}` after the reduction hook.
+    max_norm : wp.array, shape (M,), dtype float*
+        Whole-system maximum step norm used for the clamp.
+    alpha, dt : wp.array, shape (M,), dtype float*
+        Updated in-place for systems with ``atom_counts[s] == 0``.
+    nsteps_inc : wp.array, shape (M,), dtype int32
+        Updated in-place for systems with ``atom_counts[s] == 0``.
+    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin :
+        As in :func:`fire2_update`.
+    maxstep : float
+        As in :func:`fire2_apply_step`.
+    """
+    M = alpha.shape[0]
+    if M == 0:
+        return
+    wp.launch(
+        _fire2_update_absent_systems_overloads[alpha.dtype],
+        dim=M,
+        inputs=[
+            atom_counts,
+            vf,
+            max_norm,
+            alpha,
+            dt,
+            nsteps_inc,
+            delaystep,
+            dtgrow,
+            dtshrink,
+            alphashrink,
+            alpha0,
+            tmax,
+            tmin,
+            maxstep,
+        ],
+        device=alpha.device,
     )

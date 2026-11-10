@@ -63,12 +63,17 @@ from collections.abc import Callable
 import torch
 import warp as wp
 
-from nvalchemiops.batch_utils import atom_ptr_to_batch_idx, batch_idx_to_atom_ptr
+from nvalchemiops.batch_utils import (
+    atom_ptr_to_batch_idx,
+    atoms_per_system_from_batch_idx,
+    batch_idx_to_atom_ptr,
+)
 from nvalchemiops.dynamics.optimizers.fire2 import (
     fire2_apply_step,
     fire2_reduce,
     fire2_step,
     fire2_update,
+    fire2_update_absent_systems,
 )
 from nvalchemiops.dynamics.utils.cell_filter import (
     _apply_fire2_coord_cell_step,
@@ -471,6 +476,8 @@ def _fire2_step_coord_shared(
     them: ``reduce_partials`` combines the per-system sums and
     ``reduce_max_norm`` combines the step norm. Every hook is called even when
     this caller holds no atoms, so collective hooks stay matched across callers.
+    Systems with no local atoms get their ``alpha``, ``dt`` and ``nsteps_inc``
+    from the reduced sums, so every caller ends with the same controls.
     """
     vec_type = _TORCH_TO_WP_VEC[positions.dtype]
     has_atoms = positions.shape[0] > 0
@@ -520,6 +527,26 @@ def _fire2_step_coord_shared(
             wp_max_norm,
             wp_vf,
             maxstep=maxstep,
+        )
+    if reduce_partials is not None:
+        # The mixing and clamp kernels write the controls only through a local
+        # atom; update the systems this caller holds no atom of.
+        atom_counts = torch.zeros(
+            alpha.shape[0], dtype=torch.int32, device=alpha.device
+        )
+        if has_atoms:
+            atoms_per_system_from_batch_idx(
+                wp_bidx, wp.from_torch(atom_counts, dtype=wp.int32)
+            )
+        fire2_update_absent_systems(
+            wp.from_torch(atom_counts, dtype=wp.int32),
+            wp.from_torch(vf),
+            wp.from_torch(max_norm),
+            wp.from_torch(alpha.detach()),
+            wp.from_torch(dt.detach()),
+            wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
+            maxstep=maxstep,
+            **params,
         )
 
 
