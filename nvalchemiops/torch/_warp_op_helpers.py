@@ -78,6 +78,11 @@ def _capture_safe_inverse(matrix: torch.Tensor) -> torch.Tensor:
     return torch.linalg.inv(matrix)
 
 
+# Keep stream selection out of Dynamo traces. When a compiled call falls back
+# to eager inside a trace, Dynamo builds wp.Stream example objects with
+# object.__new__, so __init__ never sets cuda_stream and Warp's Stream.__del__
+# raises AttributeError at garbage collection.
+@torch.compiler.disable
 def scoped_warp_stream(
     device: torch.device | str,
     *,
