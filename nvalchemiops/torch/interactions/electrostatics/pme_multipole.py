@@ -4347,6 +4347,8 @@ def _multipole_background_energy_per_atom(
         when ``charges`` holds only part of the system (a distributed shard),
         so ``Q_b`` is the global sum rather than the sum of the rows seen.
         When omitted it is summed from ``charges``.
+        Keep it on the autograd graph, or ``dE/dq`` and the forces and stress of
+        a charged cell are wrong.
 
     Returns
     -------
@@ -5943,6 +5945,8 @@ def multipole_pme_reciprocal_space(
         Per-system total charge for the background correction, ``(1,)`` single
         or ``(B,)`` batched. Supply it when the moments are one shard of a
         distributed system; when ``None`` it is summed from the charges given.
+        Keep it on the autograd graph (the differentiable sum of the owned
+        charges), or ``dE/dq`` and the charged-cell forces and stress are wrong.
     source_weights : torch.Tensor or None, optional
         Per-atom weights ``(N,)`` applied to each atom's contribution to the
         spread only (batched path). With ``reduce_partial`` this lets a caller
@@ -5951,6 +5955,11 @@ def multipole_pme_reciprocal_space(
     reduce_partial : callable or None, optional
         Applied to the spread mesh ``(B, nx, ny, nz)`` before the FFT, to sum
         partial meshes held by several callers (batched path).
+        Keep it on the autograd graph, for example with
+        ``torch.distributed.nn.functional.all_reduce``, so forces, stress and charge
+        gradients stay correct; a detached sum such as ``torch.distributed.all_reduce``
+        leaves the energy exact but those gradients wrong. A caller sums only the
+        per-atom energies of the atoms it owns.
 
     Returns
     -------
@@ -6241,10 +6250,14 @@ def multipole_particle_mesh_ewald(
 
     total_charge : torch.Tensor or None, optional
         Per-system total charge for the background correction; see
-        :func:`multipole_pme_reciprocal_space`.
+        :func:`multipole_pme_reciprocal_space`. Keep it on the autograd graph.
     source_weights, reduce_partial : optional
         Spread weights and mesh reduction for callers holding part of a system;
         see :func:`multipole_pme_reciprocal_space` (batched path only).
+        ``reduce_partial`` must stay on the autograd graph, for example
+        ``torch.distributed.nn.functional.all_reduce``, for correct forces, stress
+        and charge gradients. A caller sums only the per-atom energies of the
+        atoms it owns.
 
     Returns
     -------

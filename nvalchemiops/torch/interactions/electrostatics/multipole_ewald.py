@@ -4964,7 +4964,8 @@ def _multipole_ewald_background_energy_per_atom(
     total_charge : torch.Tensor, optional
         Per-system total charge, ``(1,)`` or ``(B,)``, for callers whose
         ``source_feats`` hold only part of the system. Summed from the
-        monopole channel when omitted.
+        monopole channel when omitted. Keep it on the autograd graph, or
+        ``dE/dq`` is wrong.
 
     Returns
     -------
@@ -5113,9 +5114,15 @@ def multipole_ewald_summation(
         Per-system total charge for the background correction, ``(1,)`` single
         or ``(B,)`` batched. Supply it when the moments are one shard of a
         distributed system; summed from ``multipole_moments`` when omitted.
+        Keep it on the autograd graph (the differentiable sum of the owned
+        charges), or ``dE/dq`` and the charged-cell forces and stress are wrong.
     source_weights, reduce_partial : optional
         Structure-factor weights and reduction for callers holding part of a
         system; see :func:`multipole_scf_step_energy` (batched path only).
+        ``reduce_partial`` must stay on the autograd graph, for example
+        ``torch.distributed.nn.functional.all_reduce``, for correct forces, stress
+        and charge gradients. A caller sums only the per-atom energies of the
+        atoms it owns.
 
     Returns
     -------

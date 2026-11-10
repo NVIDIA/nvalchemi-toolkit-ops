@@ -546,6 +546,10 @@ def multipole_reciprocal_space_energy(
     source_weights, reduce_partial : optional
         Structure-factor weights and reduction for callers holding part of a
         system; see :func:`multipole_scf_step_energy` (batched path only).
+        ``reduce_partial`` must stay on the autograd graph, for example
+        ``torch.distributed.nn.functional.all_reduce``, for correct forces, stress
+        and charge gradients. A caller sums only the per-atom energies of the
+        atoms it owns.
 
     Returns
     -------
