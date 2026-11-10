@@ -21,7 +21,7 @@ kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
   - Automatic method selection and custom pair functions
 - **Molecular dynamics**
   - NVE, NVT, NPT, and NPH ensembles
-  - Langevin, Nosé-Hoover Chain, and velocity-rescaling thermostats
+  - Langevin, Nosé-Hoover Chain, CSVR, and velocity-rescaling thermostats
 - **Geometry optimization with FIRE2 and L-BFGS**, supporting coordinate and
   lattice relaxation
 - **Interatomic interactions**

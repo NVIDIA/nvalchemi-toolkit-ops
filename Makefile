@@ -148,6 +148,7 @@ ARGS_math_min := test/math/test_spline.py \
 	test/math/bindings/torch/test_spline.py
 
 ARGS_dynamics_min := test/dynamics/test_constraints.py \
+	test/dynamics/test_csvr.py \
 	test/dynamics/test_fire.py \
 	test/dynamics/test_fire2.py \
 	test/dynamics/test_utils.py \
