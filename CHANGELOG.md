@@ -20,9 +20,9 @@
   domain-decomposed run, gets whole-system values in the mixing and step clamp.
   Omitting them keeps the previous behavior.
   `fire2_update_absent_systems` updates the per-system controls of systems with
-  no local atoms, and with `reduce_partials` plus `global_atom_counts` the cell
-  mix accepts ranks that hold no atoms of a system (such a rank passes
-  `whole_system_sums=True` to `fire2_step_coord_cell_apply`).
+  no local atoms. With `reduce_partials` plus `global_atom_counts`, the cell
+  mix accepts ranks that hold no atoms of a system. A rank with no atoms at all
+  also passes `whole_system_sums=True` to `fire2_step_coord_cell_apply`.
 
 ### Fixed
 
@@ -36,16 +36,6 @@
   device mismatch raises instead of moving the topology.
 - The multipole real-space cell-gradient autograd Function stays traceable
   under dynamic shapes.
-
-### Changed
-
-- The per-(order, lmax) PME multipole kernel modules no longer generate
-  Warp adjoint code. Gradients are computed with hand-written backward
-  kernels, and skipping the adjoint removes most of the cold
-  whole-package compile time.
-
-### Fixed
-
 - JAX `batch_query_cell_list` with `rebuild_flags` needed temporary memory
   for a second neighbor list and was slower than a full query. The previous
   neighbor matrix, counts and shifts were merged back with `jnp.where`,
@@ -55,6 +45,13 @@
   inverted the cell with `jnp.linalg.inv`, which runs cuSOLVER/cuBLAS on GPU and
   cannot be captured in XLA command buffers. They now use the Warp cell-inverse
   kernel that some routes already used.
+
+### Changed
+
+- The per-(order, lmax) PME multipole kernel modules no longer generate
+  Warp adjoint code. Gradients are computed with hand-written backward
+  kernels, and skipping the adjoint removes most of the cold
+  whole-package compile time.
 
 ## 0.5.0
 

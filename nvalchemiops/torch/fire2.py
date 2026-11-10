@@ -1274,7 +1274,9 @@ def fire2_step_coord_cell_mix(
     that holds no atoms or lacks some system; such a caller must pass
     ``global_atom_counts`` (otherwise ``ValueError``) and still updates every
     system's ``alpha``, ``dt`` and ``nsteps_inc`` through the cell degrees of
-    freedom. Without ``reduce_partials`` every system must have an atom.
+    freedom. A caller with no atoms at all then passes ``whole_system_sums=True``
+    to :func:`fire2_step_coord_cell_apply`, so that it applies the cell step.
+    Without ``reduce_partials`` every system must have an atom.
 
     See :func:`fire2_step_coord_cell` for parameter descriptions.
     """
