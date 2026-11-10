@@ -203,7 +203,9 @@ def _coord_cell_mix_impl(
     Packs atomic + cell DOFs, runs the FIRE2 reduction (gated by
     ``compute_reductions``) and velocity mix on the packed DOFs, and unpacks the
     mixed velocities. Does **not** apply positions/cell. Returns the Warp
-    handles the apply phase needs, or ``None`` for an empty system.
+    handles the apply phase needs, or ``None`` for an empty system (unless
+    ``reduce_partials`` is given: the hook must still run, and the cell degrees
+    of freedom still update the per-system controls).
 
     ``global_atom_counts`` (``(M,)``) replaces the per-system atom count in the
     cell-force scaling for a caller that holds only part of each system.
@@ -228,7 +230,7 @@ def _coord_cell_mix_impl(
             DeprecationWarning,
             stacklevel=3,
         )
-    if N == 0:
+    if N == 0 and reduce_partials is None:
         for buf in (vf, v_sumsq, f_sumsq, max_norm):
             if buf is not None:
                 buf.zero_()
@@ -269,8 +271,18 @@ def _coord_cell_mix_impl(
     )
 
     atom_counts = atom_ptr[1:] - atom_ptr[:-1]
-    if torch.any(atom_counts <= 0).item():
-        raise ValueError("fire2_step_coord_cell requires at least one atom per system")
+    if reduce_partials is None or global_atom_counts is None:
+        # With a hook and the whole-system counts a caller may hold no atom of
+        # a system, so this host-synchronizing check is skipped.
+        if torch.any(atom_counts <= 0).item():
+            if reduce_partials is not None:
+                raise ValueError(
+                    "fire2_step_coord_cell_mix: a caller holding no atom of a "
+                    "system (or no atoms) must pass global_atom_counts"
+                )
+            raise ValueError(
+                "fire2_step_coord_cell requires at least one atom per system"
+            )
     scale_counts = atom_counts if global_atom_counts is None else global_atom_counts
     cell_force_divisor = (
         scale_counts.to(dtype=dtype).reshape(M, 1, 1) * cell_force_scale
@@ -1258,7 +1270,11 @@ def fire2_step_coord_cell_mix(
     part of each system: the hook sums the per-system ``(vf, v_sumsq, f_sumsq)``
     over the atoms given across callers (the replicated cell DOFs are counted
     once), and the counts are the whole-system atom counts used to scale the cell
-    force. Every caller must hold at least one atom of each system.
+    force. The hook is called exactly once on every caller, including a caller
+    that holds no atoms or lacks some system; such a caller must pass
+    ``global_atom_counts`` (otherwise ``ValueError``) and still updates every
+    system's ``alpha``, ``dt`` and ``nsteps_inc`` through the cell degrees of
+    freedom. Without ``reduce_partials`` every system must have an atom.
 
     See :func:`fire2_step_coord_cell` for parameter descriptions.
     """
@@ -1419,6 +1435,9 @@ def fire2_step_coord_cell_apply(
     ``positions``, ``cell``, ``cell_velocities`` (uphill zeroing), and the clamped
     ``dt`` in-place.
 
+    A caller holding no atoms (``N == 0``) still applies the cell step and the
+    ``dt`` clamp, so every caller of a partitioned system keeps the same cell.
+
     Parameters
     ----------
     positions : torch.Tensor, shape (N, 3), dtype float32/float64
@@ -1452,8 +1471,6 @@ def fire2_step_coord_cell_apply(
     """
     device = positions.device
     M = dt.shape[0]
-    if positions.shape[0] == 0:
-        return
     vec_type = _TORCH_TO_WP_VEC[positions.dtype]
     mat_type = _TORCH_TO_WP_MAT[cell.dtype]
     wp_device = wp.device_from_torch(device)

@@ -4881,3 +4881,166 @@ class TestFire2PartialSystems:
         for shard in shards:
             for key in ("alpha", "dt", "nsteps_inc"):
                 torch.testing.assert_close(shard[key], ref[key], rtol=1e-12, atol=1e-12)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("uphill", [0, 1])
+    @pytest.mark.parametrize("layout", list(LAYOUTS))
+    def test_variable_cell_controls_match_on_every_shard(self, device, layout, uphill):
+        """Every shard, empty or missing a system, ends the cell step like the whole system.
+
+        Compares positions, velocities, cell, cell velocities, alpha, dt and
+        nsteps_inc, and checks the reduction hook runs exactly once per shard
+        and pass.
+        """
+        full = self._system(device, with_cell=True)
+        self._make_uphill(full, uphill)
+        initial = {k: full[k].clone() for k in ("alpha", "dt", "nsteps_inc")}
+        ref = {k: v.clone() for k, v in full.items()}
+        fire2_step_coord_cell(
+            ref["positions"],
+            ref["velocities"],
+            ref["forces"],
+            ref["cell"],
+            ref["cell_velocities"],
+            ref["cell_force"],
+            ref["batch_idx"],
+            ref["alpha"],
+            ref["dt"],
+            ref["nsteps_inc"],
+            **self.HP,
+        )
+        for key in ("alpha", "dt", "nsteps_inc"):
+            assert (ref[key] != initial[key]).all()
+
+        keeps = self._layout(layout, device)
+        counts = torch.bincount(full["batch_idx"].long(), minlength=2)
+        mix_hp = {k: v for k, v in self.HP.items() if k != "maxstep"}
+
+        def mix(shard, peers):
+            seen = {"calls": 0}
+
+            def sum_partials(vf, vv, ff):
+                seen["calls"] += 1
+                seen["local"] = (vf.clone(), vv.clone(), ff.clone())
+                for buf, other in zip((vf, vv, ff), peers):
+                    buf += other
+
+            vf = torch.zeros(2, dtype=torch.float64, device=device)
+            vv, ff, mn = (
+                torch.zeros_like(vf),
+                torch.zeros_like(vf),
+                torch.zeros_like(vf),
+            )
+            fire2_step_coord_cell_mix(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["cell_force"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+                vf=vf,
+                v_sumsq=vv,
+                f_sumsq=ff,
+                max_norm=mn,
+                reduce_partials=sum_partials,
+                global_atom_counts=counts,
+                **mix_hp,
+            )
+            seen["vf"], seen["max_norm"] = vf, mn
+            return seen
+
+        zero = tuple(
+            torch.zeros(2, dtype=torch.float64, device=device) for _ in range(3)
+        )
+        local = []
+        for k in keeps:
+            seen = mix(self._shard(full, k), zero)
+            assert seen["calls"] == 1
+            local.append(seen["local"])
+        combined = tuple(sum(loc[q] for loc in local) for q in range(3))
+        peers = [tuple(combined[q] - loc[q] for q in range(3)) for loc in local]
+
+        shards = [self._shard(full, k) for k in keeps]
+        seen = []
+        for i, shard in enumerate(shards):
+            seen.append(mix(shard, peers[i]))
+            assert seen[-1]["calls"] == 1
+        for shard, s in zip(shards, seen):
+            fire2_step_coord_cell_couple(
+                shard["positions"],
+                shard["velocities"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["dt"],
+                s["vf"],
+                shard["batch_idx"],
+                s["max_norm"],
+            )
+        global_max = torch.stack([s["max_norm"] for s in seen]).max(dim=0).values
+        for shard, s in zip(shards, seen):
+            s["max_norm"].copy_(global_max)
+            fire2_step_coord_cell_apply(
+                shard["positions"],
+                shard["velocities"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["dt"],
+                s["vf"],
+                shard["batch_idx"],
+                s["max_norm"],
+                maxstep=self.HP["maxstep"],
+            )
+
+        for key in ("positions", "velocities"):
+            merged = torch.empty_like(ref[key])
+            for shard, keep in zip(shards, keeps):
+                merged[keep] = shard[key]
+            torch.testing.assert_close(merged, ref[key], rtol=1e-11, atol=1e-11)
+        for shard in shards:
+            for key in ("cell", "cell_velocities", "alpha", "dt", "nsteps_inc"):
+                torch.testing.assert_close(shard[key], ref[key], rtol=1e-11, atol=1e-11)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_variable_cell_hook_requires_global_atom_counts(self, device):
+        """A hooked mix without ``global_atom_counts`` raises before any hook runs."""
+        full = self._system(device, with_cell=True)
+        shard = self._shard(full, torch.arange(0, device=device))
+        calls = []
+        with pytest.raises(ValueError, match="global_atom_counts"):
+            fire2_step_coord_cell_mix(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["cell_force"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+                reduce_partials=lambda *sums: calls.append(1),
+            )
+        assert not calls
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_variable_cell_without_hook_still_rejects_missing_system(self, device):
+        """Without a hook, a system with no atoms keeps raising its ValueError."""
+        full = self._system(device, with_cell=True)
+        shard = self._shard(full, torch.arange(8, device=device))
+        with pytest.raises(ValueError, match="at least one atom per system"):
+            fire2_step_coord_cell_mix(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["cell"],
+                shard["cell_velocities"],
+                shard["cell_force"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+            )
