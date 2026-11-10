@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The per-(order, lmax) PME multipole kernel modules no longer generate
+  Warp adjoint code. Gradients are computed with hand-written backward
+  kernels, and skipping the adjoint removes most of the cold
+  whole-package compile time.
+
+### Fixed
+
+- JAX `batch_query_cell_list` with `rebuild_flags` needed temporary memory
+  for a second neighbor list and was slower than a full query. The previous
+  neighbor matrix, counts and shifts were merged back with `jnp.where`,
+  although the kernel already leaves rows of unflagged systems untouched.
+- JAX neighbor lists were slower than needed with periodic cells: the naive,
+  cluster-tile and cell-list routes and the prepared neighbor-list state
+  inverted the cell with `jnp.linalg.inv`, which runs cuSOLVER/cuBLAS on GPU and
+  cannot be captured in XLA command buffers. They now use the Warp cell-inverse
+  kernel that some routes already used.
+
 ## 0.5.0
 
 ### Added

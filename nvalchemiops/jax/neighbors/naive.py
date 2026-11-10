@@ -1678,7 +1678,7 @@ def _naive_pair_outputs_forward(
         if wrap_positions:
             inv_cell = fixed_inverse if fixed_inverse is not None else inv_cell
             if inv_cell is None:
-                inv_cell = jnp.linalg.inv(cell)
+                inv_cell = _compute_cell_inverse(cell, jnp.empty_like(cell))
             if positions_wrapped is not None:
                 positions_kernel = positions_wrapped
             elif positions_kernel is positions:
@@ -2756,7 +2756,7 @@ def naive_neighbor_list(
             num_shifts = int(max_shifts_per_system)
             if wrap_positions:
                 if inv_cell is None:
-                    inv_cell = jnp.linalg.inv(cell)
+                    inv_cell = _compute_cell_inverse(cell, jnp.empty_like(cell))
                 if positions_wrapped is None:
                     positions_wrapped = jnp.zeros_like(positions)
                 if per_atom_cell_offsets is None:
@@ -2908,7 +2908,7 @@ def naive_neighbor_list(
 
         if wrap_positions:
             if inv_cell is None:
-                inv_cell = jnp.linalg.inv(cell)
+                inv_cell = _compute_cell_inverse(cell, jnp.empty_like(cell))
             if positions_wrapped is None:
                 positions_wrapped = jnp.zeros_like(positions)
             if per_atom_cell_offsets is None:
