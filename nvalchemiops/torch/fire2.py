@@ -58,15 +58,22 @@ pre-computation recipes.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 
 import torch
 import warp as wp
 
-from nvalchemiops.batch_utils import atom_ptr_to_batch_idx, batch_idx_to_atom_ptr
+from nvalchemiops.batch_utils import (
+    atom_ptr_to_batch_idx,
+    atoms_per_system_from_batch_idx,
+    batch_idx_to_atom_ptr,
+)
 from nvalchemiops.dynamics.optimizers.fire2 import (
+    fire2_apply_step,
     fire2_reduce,
     fire2_step,
     fire2_update,
+    fire2_update_absent_systems,
 )
 from nvalchemiops.dynamics.utils.cell_filter import (
     _apply_fire2_coord_cell_step,
@@ -156,6 +163,48 @@ def _coord_cell_ext_metadata(
     return atom_ptr, wp_atom_ptr, wp_ext_atom_ptr, wp_ext_batch_idx
 
 
+def _cell_row_reductions(
+    wp_ext_vel, wp_ext_forces, wp_dt, wp_ext_atom_ptr, out, *, vec_type
+) -> None:
+    """Fill ``out`` with the FIRE2 sums over each system's 2 cell rows.
+
+    Reduces the cell rows of the packed arrays directly with ``fire2_reduce``
+    instead of subtracting the atom sums from whole-packed sums, which loses
+    digits when the atom sums dominate. The cell rows of system ``s`` sit at
+    ``ext_atom_ptr[s + 1] - 2`` and ``- 1``. The gather is a device index with no
+    host sync.
+
+    Parameters
+    ----------
+    wp_ext_vel, wp_ext_forces : wp.array
+        Packed ``(N + 2M,)`` velocities and forces.
+    wp_dt : wp.array
+        Per-system timestep, shape ``(M,)``.
+    wp_ext_atom_ptr : wp.array
+        Extended CSR pointers, shape ``(M + 1,)``.
+    out : tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(vf, v_sumsq, f_sumsq)`` of shape ``(M,)``; overwritten.
+    vec_type : type
+        Warp vector type of the packed arrays.
+    """
+    vf = out[0]
+    M = vf.shape[0]
+    ends = wp.to_torch(wp_ext_atom_ptr)[1:].long()
+    rows = torch.stack((ends - 2, ends - 1), dim=1).reshape(-1)
+    cell_vel = wp.to_torch(wp_ext_vel)[rows].contiguous()
+    cell_forces = wp.to_torch(wp_ext_forces)[rows].contiguous()
+    cell_bidx = torch.arange(M, dtype=torch.int32, device=vf.device).repeat_interleave(
+        2
+    )
+    fire2_reduce(
+        wp.from_torch(cell_vel, dtype=vec_type),
+        wp.from_torch(cell_forces, dtype=vec_type),
+        wp_dt,
+        wp.from_torch(cell_bidx, dtype=wp.int32),
+        *(wp.from_torch(buf) for buf in out),
+    )
+
+
 @scoped_torch_warp_stream
 def _coord_cell_mix_impl(
     positions,
@@ -188,13 +237,23 @@ def _coord_cell_mix_impl(
     cell_force_scale,
     compute_reductions,
     ext_positions,
+    reduce_partials=None,
+    global_atom_counts=None,
 ):
     """Shared front half of the variable-cell FIRE2 step.
 
     Packs atomic + cell DOFs, runs the FIRE2 reduction (gated by
     ``compute_reductions``) and velocity mix on the packed DOFs, and unpacks the
     mixed velocities. Does **not** apply positions/cell. Returns the Warp
-    handles the apply phase needs, or ``None`` for an empty system.
+    handles the apply phase needs, or ``None`` for an empty system (unless
+    ``reduce_partials`` is given: the hook must still run, and the cell degrees
+    of freedom still update the per-system controls).
+
+    ``global_atom_counts`` (``(M,)``) replaces the per-system atom count in the
+    cell-force scaling for a caller that holds only part of each system.
+    ``reduce_partials`` is called with the per-system ``(vf, v_sumsq, f_sumsq)``
+    sums over the atoms given, in place; the replicated cell degrees of freedom
+    are counted once, outside the hook.
     """
     dtype = positions.dtype
     device = positions.device
@@ -213,7 +272,7 @@ def _coord_cell_mix_impl(
             DeprecationWarning,
             stacklevel=3,
         )
-    if N == 0:
+    if N == 0 and reduce_partials is None:
         for buf in (vf, v_sumsq, f_sumsq, max_norm):
             if buf is not None:
                 buf.zero_()
@@ -224,7 +283,7 @@ def _coord_cell_mix_impl(
     if ext_forces is None:
         ext_forces = torch.empty(N_ext, 3, dtype=dtype, device=device)
 
-    if compute_reductions:
+    if compute_reductions or reduce_partials is not None:
         vf = _alloc_or_zero(vf, M, dtype, device)
         v_sumsq = _alloc_or_zero(v_sumsq, M, dtype, device)
         f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
@@ -254,9 +313,22 @@ def _coord_cell_mix_impl(
     )
 
     atom_counts = atom_ptr[1:] - atom_ptr[:-1]
-    if torch.any(atom_counts <= 0).item():
-        raise ValueError("fire2_step_coord_cell requires at least one atom per system")
-    cell_force_divisor = atom_counts.to(dtype=dtype).reshape(M, 1, 1) * cell_force_scale
+    if reduce_partials is None or global_atom_counts is None:
+        # With a hook and the whole-system counts a caller may hold no atom of
+        # a system, so this host-synchronizing check is skipped.
+        if torch.any(atom_counts <= 0).item():
+            if reduce_partials is not None:
+                raise ValueError(
+                    "fire2_step_coord_cell_mix: a caller holding no atom of a "
+                    "system (or no atoms) must pass global_atom_counts"
+                )
+            raise ValueError(
+                "fire2_step_coord_cell requires at least one atom per system"
+            )
+    scale_counts = atom_counts if global_atom_counts is None else global_atom_counts
+    cell_force_divisor = (
+        scale_counts.to(dtype=dtype).reshape(M, 1, 1) * cell_force_scale
+    )
     cell_force_work = (cell_force.detach() / cell_force_divisor).contiguous()
     wp_cell_force = wp.from_torch(cell_force_work, dtype=mat_type)
 
@@ -286,6 +358,25 @@ def _coord_cell_mix_impl(
     wp_dt = wp.from_torch(dt.detach())
     wp_vf = wp.from_torch(vf)
     wp_max_norm = wp.from_torch(max_norm)
+    if reduce_partials is not None:
+        # Whole-system sums = atoms (combined across callers) + cell DOFs (the
+        # same on every caller, so counted once).
+        wp_vv = wp.from_torch(v_sumsq)
+        wp_ff = wp.from_torch(f_sumsq)
+        fire2_reduce(wp_vel, wp_forces, wp_dt, wp_bidx, wp_vf, wp_vv, wp_ff)
+        cell_parts = tuple(torch.empty_like(buf) for buf in (vf, v_sumsq, f_sumsq))
+        _cell_row_reductions(
+            wp_ext_vel,
+            wp_ext_forces,
+            wp_dt,
+            wp_ext_atom_ptr,
+            cell_parts,
+            vec_type=vec_type,
+        )
+        reduce_partials(vf, v_sumsq, f_sumsq)
+        for total, cell_part in zip((vf, v_sumsq, f_sumsq), cell_parts):
+            total.add_(cell_part)
+        compute_reductions = False
     fire2_update(
         wp_ext_vel,
         wp_ext_forces,
@@ -411,6 +502,110 @@ def _fire2_step_coord_op(
     )
 
 
+@scoped_torch_warp_stream
+def _fire2_step_coord_shared(
+    positions,
+    velocities,
+    forces,
+    batch_idx,
+    alpha,
+    dt,
+    nsteps_inc,
+    vf,
+    v_sumsq,
+    f_sumsq,
+    max_norm,
+    params,
+    maxstep,
+    reduce_partials,
+    reduce_max_norm,
+    compute_reductions=True,
+) -> None:
+    """Coordinate-only FIRE2 step for a caller that holds part of each system.
+
+    Runs the documented phases (reduce, mix, apply) with a caller hook between
+    them: ``reduce_partials`` combines the per-system sums and
+    ``reduce_max_norm`` combines the step norm. Every hook is called even when
+    this caller holds no atoms, so collective hooks stay matched across callers.
+    Systems with no local atoms get their ``alpha``, ``dt`` and ``nsteps_inc``
+    from the reduced sums, so every caller ends with the same controls.
+
+    ``reduce_partials`` takes the place of ``compute_reductions``. With only
+    ``reduce_max_norm``, ``compute_reductions=False`` keeps the caller's sums,
+    which are then whole-system sums.
+    """
+    vec_type = _TORCH_TO_WP_VEC[positions.dtype]
+    has_atoms = positions.shape[0] > 0
+    if has_atoms:
+        wp_vel = wp.from_torch(velocities.detach(), dtype=vec_type)
+        wp_forces = wp.from_torch(forces.detach(), dtype=vec_type)
+        wp_bidx = wp.from_torch(batch_idx.detach(), dtype=wp.int32)
+        wp_dt = wp.from_torch(dt.detach())
+        wp_vf = wp.from_torch(vf)
+        wp_vv = wp.from_torch(v_sumsq)
+        wp_ff = wp.from_torch(f_sumsq)
+        wp_max_norm = wp.from_torch(max_norm)
+    if reduce_partials is not None:
+        if has_atoms:
+            fire2_reduce(wp_vel, wp_forces, wp_dt, wp_bidx, wp_vf, wp_vv, wp_ff)
+        else:
+            vf.zero_()
+            v_sumsq.zero_()
+            f_sumsq.zero_()
+        reduce_partials(vf, v_sumsq, f_sumsq)
+    if has_atoms:
+        fire2_update(
+            wp_vel,
+            wp_forces,
+            wp_bidx,
+            wp.from_torch(alpha.detach()),
+            wp_dt,
+            wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
+            wp_vf,
+            wp_vv,
+            wp_ff,
+            wp_max_norm,
+            compute_max_norm=True,
+            compute_reductions=compute_reductions and reduce_partials is None,
+            **params,
+        )
+    else:
+        max_norm.zero_()
+    if reduce_max_norm is not None:
+        reduce_max_norm(max_norm)
+    if has_atoms:
+        fire2_apply_step(
+            wp.from_torch(positions.detach(), dtype=vec_type),
+            wp_vel,
+            wp_dt,
+            wp_bidx,
+            wp_max_norm,
+            wp_vf,
+            maxstep=maxstep,
+        )
+    if reduce_partials is not None or not compute_reductions:
+        # The mixing and clamp kernels write the controls only through a local
+        # atom; update the systems this caller holds no atom of. This needs
+        # whole-system sums: the hook's, or the caller's own when they are kept.
+        atom_counts = torch.zeros(
+            alpha.shape[0], dtype=torch.int32, device=alpha.device
+        )
+        if has_atoms:
+            atoms_per_system_from_batch_idx(
+                wp_bidx, wp.from_torch(atom_counts, dtype=wp.int32)
+            )
+        fire2_update_absent_systems(
+            wp.from_torch(atom_counts, dtype=wp.int32),
+            wp.from_torch(vf),
+            wp.from_torch(max_norm),
+            wp.from_torch(alpha.detach()),
+            wp.from_torch(dt.detach()),
+            wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
+            maxstep=maxstep,
+            **params,
+        )
+
+
 def fire2_step_coord(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -433,6 +628,9 @@ def fire2_step_coord(
     tmin: float = 0.005,
     maxstep: float = 0.1,
     compute_reductions: bool = True,
+    reduce_partials: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], None]
+    | None = None,
+    reduce_max_norm: Callable[[torch.Tensor], None] | None = None,
 ) -> None:
     r"""FIRE2 coordinate-only optimization step.
 
@@ -511,6 +709,17 @@ def fire2_step_coord(
         use the caller-supplied values in those buffers instead of recomputing
         them (they must be provided and are not zeroed); the ``maxstep`` clamp
         still uses this call's internally-computed ``max_norm``.
+    reduce_partials : callable, optional
+        Called with the per-system ``(vf, v_sumsq, f_sumsq)`` partial sums, in
+        place, after they are computed over the atoms given and before they
+        drive the mixing. A caller that holds only part of each system sums the
+        partials across its peers here, so every holder mixes against the same
+        whole-system values. Takes the place of ``compute_reductions``.
+    reduce_max_norm : callable, optional
+        Called with the per-system ``max_norm`` (``(M,)``), in place, after it
+        is measured and before it clamps the step. A caller holding part of a
+        system takes the maximum across its peers here so every holder clamps
+        by the same factor.
 
     Notes
     -----
@@ -545,7 +754,7 @@ def fire2_step_coord(
     device = positions.device
     M = alpha.shape[0]
 
-    if compute_reductions:
+    if compute_reductions or reduce_partials is not None:
         vf = _alloc_if_none(vf, M, dtype=dtype, device=device)
         v_sumsq = _alloc_if_none(v_sumsq, M, dtype=dtype, device=device)
         f_sumsq = _alloc_if_none(f_sumsq, M, dtype=dtype, device=device)
@@ -554,6 +763,35 @@ def fire2_step_coord(
             "vf, v_sumsq, f_sumsq must be provided when compute_reductions=False"
         )
     max_norm = _alloc_if_none(max_norm, M, dtype=dtype, device=device)
+
+    if reduce_partials is not None or reduce_max_norm is not None:
+        _fire2_step_coord_shared(
+            positions,
+            velocities,
+            forces,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf,
+            v_sumsq,
+            f_sumsq,
+            max_norm,
+            dict(
+                delaystep=delaystep,
+                dtgrow=dtgrow,
+                dtshrink=dtshrink,
+                alphashrink=alphashrink,
+                alpha0=alpha0,
+                tmax=tmax,
+                tmin=tmin,
+            ),
+            maxstep,
+            reduce_partials,
+            reduce_max_norm,
+            compute_reductions,
+        )
+        return
 
     _fire2_step_coord_op(
         positions,
@@ -1047,6 +1285,9 @@ def fire2_step_coord_cell_mix(
     tmin: float = 0.005,
     cell_force_scale: float = 1.0,
     compute_reductions: bool = True,
+    reduce_partials: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], None]
+    | None = None,
+    global_atom_counts: torch.Tensor | None = None,
 ) -> None:
     r"""Phase 1 of the coupled variable-cell FIRE2 step: reduce + mix only.
 
@@ -1069,6 +1310,18 @@ def fire2_step_coord_cell_mix(
     position/cell step — pair it with :func:`fire2_step_coord_cell_couple` and
     :func:`fire2_step_coord_cell_apply` so the displacement clamp can use a
     ``max_norm`` post-processed between the couple and apply phases.
+
+    ``reduce_partials`` and ``global_atom_counts`` serve a caller that holds only
+    part of each system: the hook sums the per-system ``(vf, v_sumsq, f_sumsq)``
+    over the atoms given across callers (the replicated cell DOFs are counted
+    once), and the counts are the whole-system atom counts used to scale the cell
+    force. The hook is called exactly once on every caller, including a caller
+    that holds no atoms or lacks some system; such a caller must pass
+    ``global_atom_counts`` (otherwise ``ValueError``) and still updates every
+    system's ``alpha``, ``dt`` and ``nsteps_inc`` through the cell degrees of
+    freedom. A caller with no atoms at all then passes ``whole_system_sums=True``
+    to :func:`fire2_step_coord_cell_apply`, so that it applies the cell step.
+    Without ``reduce_partials`` every system must have an atom.
 
     See :func:`fire2_step_coord_cell` for parameter descriptions.
     """
@@ -1102,6 +1355,8 @@ def fire2_step_coord_cell_mix(
         cell_force_scale=cell_force_scale,
         compute_reductions=compute_reductions,
         ext_positions=None,
+        reduce_partials=reduce_partials,
+        global_atom_counts=global_atom_counts,
     )
 
 
@@ -1208,6 +1463,7 @@ def fire2_step_coord_cell_apply(
     atom_ptr: torch.Tensor | None = None,
     ext_atom_ptr: torch.Tensor | None = None,
     ext_batch_idx: torch.Tensor | None = None,
+    whole_system_sums: bool = False,
 ) -> None:
     r"""Phase 3 of the coupled variable-cell FIRE2 step: clamp + apply.
 
@@ -1226,6 +1482,13 @@ def fire2_step_coord_cell_apply(
     :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`vf[s] \le 0`). Writes
     ``positions``, ``cell``, ``cell_velocities`` (uphill zeroing), and the clamped
     ``dt`` in-place.
+
+    With no atoms (``N == 0``) this returns without doing anything, because the
+    mix phase zeroes ``vf`` there and the cell would be wrongly treated as
+    uphill. A caller whose ``vf`` holds whole-system sums (the mix ran with
+    ``reduce_partials``) sets ``whole_system_sums=True`` so that a caller
+    holding no atoms still applies the cell step and the ``dt`` clamp, and every
+    caller of a partitioned system keeps the same cell.
 
     Parameters
     ----------
@@ -1257,10 +1520,14 @@ def fire2_step_coord_cell_apply(
         Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
     ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
         System index for each element of the extended layout. Computed if ``None``.
+    whole_system_sums : bool, default False
+        Set when ``vf`` holds whole-system sums, i.e. the mix phase ran with
+        ``reduce_partials``. Only matters for ``N == 0``: if ``False`` the call
+        returns early, if ``True`` the cell step is applied.
     """
     device = positions.device
     M = dt.shape[0]
-    if positions.shape[0] == 0:
+    if positions.shape[0] == 0 and not whole_system_sums:
         return
     vec_type = _TORCH_TO_WP_VEC[positions.dtype]
     mat_type = _TORCH_TO_WP_MAT[cell.dtype]
@@ -1422,7 +1689,7 @@ def fire2_compute_extended_reductions(
         wp.from_torch(atom_partial[2]),
     )
 
-    # total: pack the extended (atom + cell) DOFs and reduce over them.
+    # cell term: pack the extended (atom + cell) DOFs and reduce the cell rows.
     if ext_velocities is None:
         ext_velocities = torch.empty(N_ext, 3, dtype=dtype, device=device)
     if ext_forces is None:
@@ -1474,20 +1741,14 @@ def fire2_compute_extended_reductions(
             batch_idx=wp_bidx,
         )
 
-    total = _triple()
-    fire2_reduce(
+    _cell_row_reductions(
         wp_ext_vel,
         wp_ext_forces,
         wp_dt,
-        wp_ext_batch_idx,
-        wp.from_torch(total[0]),
-        wp.from_torch(total[1]),
-        wp.from_torch(total[2]),
+        wp_ext_atom_ptr,
+        cell_term,
+        vec_type=vec_type,
     )
-
-    # cell term = total (atom + cell) - atom partial.
-    for i in range(3):
-        cell_term[i].copy_(total[i] - atom_partial[i])
 
     return atom_partial, cell_term
 

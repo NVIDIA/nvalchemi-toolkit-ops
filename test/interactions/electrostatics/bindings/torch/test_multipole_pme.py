@@ -1105,6 +1105,60 @@ class TestEnergyCorrectionsPerAtom:
         torch.testing.assert_close(h_pa[0], h_red[0], rtol=1e-12, atol=1e-12)
         torch.testing.assert_close(h_pa[1], h_red[1], rtol=1e-12, atol=1e-12)
 
+    @pytest.mark.parametrize("batched", [False, True])
+    def test_total_charge_override_serves_a_shard(self, batched):
+        """A shard's background uses the supplied global ``Q``, not its own sum."""
+        td = (
+            torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+        )
+        rng = np.random.default_rng(0xB6 + int(batched))
+        sigma, alpha = 0.9, 0.37
+        if batched:
+            batch_idx = torch.tensor(
+                [0, 0, 0, 0, 1, 1, 1, 2, 2, 2], dtype=torch.int32, device=td
+            )
+            volume = torch.tensor([700.0, 800.0, 900.0], dtype=torch.float64, device=td)
+        else:
+            batch_idx = None
+            volume = torch.tensor(729.0, dtype=torch.float64, device=td)
+        N = 10 if batched else 8
+        charges = torch.from_numpy(rng.uniform(-1.0, 1.0, N)).to(td, torch.float64)
+
+        def _total(q):
+            if batch_idx is None:
+                return q.sum().reshape(1)
+            return torch.zeros(3, dtype=torch.float64, device=td).scatter_add(
+                0, batch_idx.long(), q
+            )
+
+        full = multipole_pme_energy_corrections_per_atom(
+            charges, None, sigma, alpha, volume, batch_idx=batch_idx, n_systems=3
+        )
+        explicit = multipole_pme_energy_corrections_per_atom(
+            charges,
+            None,
+            sigma,
+            alpha,
+            volume,
+            batch_idx=batch_idx,
+            n_systems=3,
+            total_charge=_total(charges),
+        )
+        torch.testing.assert_close(explicit, full, rtol=1e-14, atol=1e-14)
+
+        keep = torch.arange(N, device=td) % 2 == 0
+        shard = multipole_pme_energy_corrections_per_atom(
+            charges[keep],
+            None,
+            sigma,
+            alpha,
+            volume,
+            batch_idx=None if batch_idx is None else batch_idx[keep],
+            n_systems=3,
+            total_charge=_total(charges),
+        )
+        torch.testing.assert_close(shard, full[keep], rtol=1e-14, atol=1e-14)
+
 
 class TestReciprocalSpace:
     """Full PME reciprocal pipeline vs Path A reciprocal-self.
@@ -1212,6 +1266,41 @@ class TestReciprocalSpace:
         )
         target = self._path_a_oracle(
             positions, charges, dipoles, cell, sigma, alpha, k_cutoff=12.0
+        )
+        torch.testing.assert_close(ours.sum(), target, rtol=1e-4, atol=1e-4)
+
+    @pytest.mark.parametrize("shear", [0.2, 0.4])
+    @pytest.mark.parametrize("with_dipoles", [False, True])
+    def test_triclinic_cell_matches_path_a(self, shear, with_dipoles):
+        """A sheared (non-symmetric) cell matches Path A.
+
+        The k-grid must use ``inv(cell)`` for row-stored lattice vectors; its
+        transpose coincides with it only for symmetric cells, so orthorhombic
+        cells cannot catch the difference.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("Path A reference uses Warp launchers (GPU-only)")
+        _, positions, charges, dipoles, cell = self._setup_neutral_system(
+            N=8, L=10.0, seed=0xBEEF
+        )
+        if not with_dipoles:
+            dipoles = torch.zeros_like(dipoles)
+        cell = cell.reshape(3, 3)
+        sheared = cell.clone()
+        sheared[1, 0] += shear * 10.0
+        positions = positions @ torch.linalg.inv(cell) @ sheared
+
+        ours = multipole_pme_reciprocal_space(
+            positions,
+            pack_multipole_moments(charges, dipoles),
+            sheared,
+            sigma=1.0,
+            alpha=0.5,
+            mesh_dimensions=(60, 60, 60),
+            spline_order=6,
+        )
+        target = self._path_a_oracle(
+            positions, charges, dipoles, sheared, 1.0, 0.5, k_cutoff=12.0
         )
         torch.testing.assert_close(ours.sum(), target, rtol=1e-4, atol=1e-4)
 
@@ -1411,6 +1500,236 @@ class TestParticleMeshEwald:
             ),
         )
         torch.testing.assert_close(snapshot, expected)
+
+    @pytest.mark.parametrize("method", ["pme", "ewald"])
+    def test_explicit_total_charge_matches_default(self, method):
+        """A supplied global ``Q`` reproduces the default on a non-neutral system."""
+        sigma, alpha = 1.0, 0.5
+        td, positions, charges, dipoles, cell, idx_j, nptr, sh, kcut = self._setup(
+            N=6, L=9.0, seed=0x70C, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        sf = pack_charges_dipoles(charges, dipoles)
+        total = charges.sum().reshape(1)
+        if method == "pme":
+            op, extra = (
+                multipole_particle_mesh_ewald,
+                {
+                    "mesh_dimensions": (24, 24, 24),
+                    "spline_order": 5,
+                },
+            )
+        else:
+            op, extra = multipole_ewald_summation, {"k_cutoff": kcut}
+        args = (positions, sf, cell, idx_j, nptr, sh)
+        base = op(*args, sigma=sigma, alpha=alpha, **extra)
+        with_q = op(*args, sigma=sigma, alpha=alpha, total_charge=total, **extra)
+        torch.testing.assert_close(with_q, base, rtol=1e-13, atol=1e-13)
+
+        # The background term must actually follow the supplied value.
+        shifted = op(*args, sigma=sigma, alpha=alpha, total_charge=total + 1.0, **extra)
+        assert not torch.allclose(shifted, base)
+
+    @staticmethod
+    def _assert_partial_grads_match_full(
+        energy, positions, moments, cell, *, pass_total_charge, tol=1e-12
+    ):
+        """Two owned-row holders match the whole system in energy and gradients.
+
+        ``energy(positions, moments, cell, **kwargs)`` returns per-atom
+        energies. The peer partial stays on the autograd graph, as a
+        ``torch.distributed.nn.functional.all_reduce`` would leave it, and
+        each holder sums only the rows it owns.
+        """
+        n = positions.shape[0]
+        own0 = (torch.arange(n, device=positions.device) < 3).to(positions.dtype)
+        owners = [own0, 1.0 - own0]
+
+        def leaves():
+            return tuple(
+                t.detach().clone().requires_grad_() for t in (positions, moments, cell)
+            )
+
+        p, m, c = leaves()
+        full = energy(p, m, c).sum()
+        full_grads = torch.autograd.grad(full, (p, m, c))
+
+        p, m, c = leaves()
+        meshes = []
+        for w in owners:
+            energy(
+                p,
+                m,
+                c,
+                source_weights=w,
+                reduce_partial=lambda mesh: meshes.append(mesh) or mesh,
+            )
+        total = sum((m[:, 0] * w).sum() for w in owners).reshape(1)
+        extra = {"total_charge": total} if pass_total_charge else {}
+        partial = 0.0
+        for rank, w in enumerate(owners):
+            peer = meshes[1 - rank]
+            e = energy(
+                p,
+                m,
+                c,
+                source_weights=w,
+                reduce_partial=lambda mesh, peer=peer: mesh + peer,
+                **extra,
+            )
+            partial = partial + (e * w).sum()
+        partial_grads = torch.autograd.grad(partial, (p, m, c))
+
+        torch.testing.assert_close(partial, full, rtol=1e-12, atol=1e-12)
+        for name, got, ref in zip(
+            ("positions", "moments", "cell"), partial_grads, full_grads
+        ):
+            assert ref.abs().max() > 0, name
+            torch.testing.assert_close(got, ref, rtol=tol, atol=tol, msg=name)
+
+    @pytest.mark.parametrize("with_dipoles", [False, True])
+    def test_partial_mesh_reduction_matches_full(self, with_dipoles):
+        """Two weighted partial spreads, summed, reproduce the full reciprocal energy."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, dipoles, cell, _, _, _, _ = self._setup(
+            N=6, L=9.0, seed=0x5EED, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        moments = pack_charges_dipoles(charges, dipoles if with_dipoles else None)
+        batch_idx = torch.zeros(6, dtype=torch.int32, device=positions.device)
+        common = {
+            "sigma": sigma,
+            "alpha": alpha,
+            "mesh_dimensions": (24, 24, 24),
+            "spline_order": 5,
+            "batch_idx": batch_idx,
+        }
+        self._assert_partial_grads_match_full(
+            lambda p, m, c, **kw: multipole_pme_reciprocal_space(
+                p, m, c, **common, **kw
+            ),
+            positions,
+            moments,
+            cell.unsqueeze(0),
+            pass_total_charge=True,
+        )
+
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
+    def test_partial_structure_factor_matches_full(self, l_max):
+        """Two weighted partial structure factors, summed, match the full Ewald sum."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, dipoles, cell, _, _, _, kcut = self._setup(
+            N=6, L=9.0, seed=0xE11, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        n = positions.shape[0]
+        g = torch.Generator(device="cpu").manual_seed(5)
+        quad = 0.1 * torch.randn(n, 3, 3, generator=g, dtype=torch.float64)
+        quad = (0.5 * (quad + quad.mT)).to(positions.device)
+        moments = pack_charges_dipoles(charges, dipoles if l_max >= 1 else None)
+        if l_max == 2:
+            moments = torch.cat([moments, cartesian_quadrupole_to_e3nn(quad)], dim=-1)
+        batch_idx = torch.zeros(n, dtype=torch.int32, device=positions.device)
+        common = {
+            "sigma": sigma,
+            "alpha": alpha,
+            "k_cutoff": kcut,
+            "batch_idx": batch_idx,
+        }
+        self._assert_partial_grads_match_full(
+            lambda p, m, c, **kw: multipole_reciprocal_space_energy(
+                p, m, c, **common, **kw
+            ),
+            positions,
+            moments,
+            cell.unsqueeze(0),
+            pass_total_charge=False,
+        )
+
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
+    def test_ewald_summation_partial_matches_full(self, l_max):
+        """The partial-source arguments reach every batched branch of the summation."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, dipoles, cell, idx_j, nptr, sh, kcut = self._setup(
+            N=6, L=9.0, seed=0xE12, sigma=sigma, alpha=alpha, total_charge=1.5
+        )
+        n = positions.shape[0]
+        g = torch.Generator(device="cpu").manual_seed(6)
+        quad = 0.1 * torch.randn(n, 3, 3, generator=g, dtype=torch.float64)
+        quad = (0.5 * (quad + quad.mT)).to(positions.device)
+        moments = pack_charges_dipoles(charges, dipoles if l_max >= 1 else None)
+        if l_max == 2:
+            moments = torch.cat([moments, cartesian_quadrupole_to_e3nn(quad)], dim=-1)
+        batch_idx = torch.zeros(n, dtype=torch.int32, device=positions.device)
+        common = {
+            "sigma": sigma,
+            "alpha": alpha,
+            "k_cutoff": kcut,
+            "batch_idx": batch_idx,
+        }
+        self._assert_partial_grads_match_full(
+            lambda p, m, c, **kw: multipole_ewald_summation(
+                p, m, c, idx_j, nptr, sh, **common, **kw
+            ),
+            positions,
+            moments,
+            cell.unsqueeze(0),
+            pass_total_charge=True,
+        )
+
+    def test_ewald_partial_arguments_need_the_batched_path(self):
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, _, cell, idx_j, nptr, sh, kcut = self._setup(
+            N=6, L=9.0, seed=0xE11, sigma=sigma, alpha=alpha
+        )
+        with pytest.raises(ValueError, match="batched path"):
+            multipole_ewald_summation(
+                positions,
+                pack_charges_dipoles(charges, None),
+                cell,
+                idx_j,
+                nptr,
+                sh,
+                sigma=sigma,
+                alpha=alpha,
+                k_cutoff=kcut,
+                reduce_partial=lambda rho: rho,
+            )
+
+    def test_partial_arguments_need_the_batched_path(self):
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, _, cell, _, _, _, _ = self._setup(
+            N=6, L=9.0, seed=0x5EED, sigma=sigma, alpha=alpha
+        )
+        with pytest.raises(ValueError, match="batched path"):
+            multipole_pme_reciprocal_space(
+                positions,
+                pack_charges_dipoles(charges, None),
+                cell,
+                sigma=sigma,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                source_weights=torch.ones_like(charges),
+            )
+
+    @pytest.mark.parametrize("name", ["source_weights", "reduce_partial"])
+    def test_total_energy_partial_arguments_need_the_batched_path(self, name):
+        """The single-system total energy rejects the partial-system arguments."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, _, cell, idx_j, nptr, sh, _ = self._setup(
+            N=6, L=9.0, seed=0x5EED, sigma=sigma, alpha=alpha
+        )
+        value = torch.ones_like(charges) if name == "source_weights" else (lambda m: m)
+        with pytest.raises(ValueError, match="batched path"):
+            multipole_particle_mesh_ewald(
+                positions,
+                pack_charges_dipoles(charges, None),
+                cell,
+                idx_j,
+                nptr,
+                sh,
+                sigma=sigma,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                **{name: value},
+            )
 
     @pytest.mark.parametrize("alpha", [0.4, 0.6])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
@@ -3454,3 +3773,57 @@ class TestMultipolePMESymbolicBatch:
         torch.testing.assert_close(value, reference_value, rtol=1e-13, atol=1e-13)
         torch.testing.assert_close(gradient, reference_gradient, rtol=1e-11, atol=1e-11)
         torch.testing.assert_close(hvp, reference_hvp, rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+class TestCompiledReciprocalGradients:
+    """``torch.compile`` (Inductor) gradients of the batched reciprocal half
+    match eager.
+
+    Regression: Inductor dropped the Hermitian RFFT interior-frequency
+    weighting (``slice * 2`` scatter) ahead of the opaque convolve backward, so
+    position and cell gradients were wrong for ``l_max >= 1``. Each case
+    compiles twice because the miscompile depended on how many graphs had
+    already been lowered in the process.
+    """
+
+    @staticmethod
+    def _grads(fn, positions, moments, cell, batch_idx, **kw):
+        pos = positions.detach().clone().requires_grad_(True)
+        cel = cell.detach().clone().requires_grad_(True)
+        energy = fn(pos, moments, cel, batch_idx=batch_idx, **kw)
+        return torch.autograd.grad(energy.sum(), [pos, cel])
+
+    @pytest.mark.parametrize("lmax", [0, 1, 2])
+    def test_compiled_grads_match_eager(self, lmax, monkeypatch):
+        # A cached artifact from an earlier build must not mask the result.
+        monkeypatch.setattr(torch._inductor.config, "fx_graph_cache", False)
+        monkeypatch.setattr(torch._functorch.config, "enable_autograd_cache", False)
+        device, dtype = torch.device("cuda:0"), torch.float64
+        gen = torch.Generator(device=device).manual_seed(7)
+        n_sys, n_per = 2, 24
+        n = n_sys * n_per
+        L = 9.0
+        cell = (torch.eye(3, dtype=dtype, device=device) * L).repeat(n_sys, 1, 1)
+        positions = L * torch.rand(n, 3, generator=gen, dtype=dtype, device=device)
+        moments = 0.5 * torch.randn(
+            n, (lmax + 1) ** 2, generator=gen, dtype=dtype, device=device
+        )
+        batch_idx = torch.arange(n_sys, dtype=torch.int32, device=device)
+        batch_idx = batch_idx.repeat_interleave(n_per)
+        kw = {
+            "sigma": 0.8,
+            "alpha": 0.6,
+            "mesh_dimensions": (24, 24, 24),
+            "spline_order": 6,
+        }
+
+        ref = self._grads(
+            multipole_pme_reciprocal_space, positions, moments, cell, batch_idx, **kw
+        )
+        for _ in range(2):
+            torch._dynamo.reset()
+            compiled = torch.compile(multipole_pme_reciprocal_space, fullgraph=True)
+            out = self._grads(compiled, positions, moments, cell, batch_idx, **kw)
+            for got, want in zip(out, ref, strict=True):
+                torch.testing.assert_close(got, want, rtol=1e-9, atol=1e-9)

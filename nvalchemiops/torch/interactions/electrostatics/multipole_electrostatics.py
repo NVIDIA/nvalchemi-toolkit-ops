@@ -34,6 +34,7 @@ autograd-connected to ``positions`` and ``multipole_moments``.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -460,8 +461,11 @@ def multipole_reciprocal_space_energy(
     sigma: float,
     alpha: float,
     k_cutoff: float | None = None,
+    miller_indices: torch.Tensor | None = None,
     normalize: NormMode | int | str = NormMode.MULTIPOLES,
     cache: MultipoleSCFCache | None = None,
+    source_weights: torch.Tensor | None = None,
+    reduce_partial: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     r"""Reciprocal-space half of an Ewald-split multipole electrostatic energy.
 
@@ -512,7 +516,14 @@ def multipole_reciprocal_space_energy(
         the self-interaction overlap (matches ``GTOElectrostaticEnergy``).
     k_cutoff : float, optional
         Maximum ``|k|`` to include in the reciprocal-space sum. Required when
-        ``cache`` is not supplied; ignored when a pre-built cache is passed.
+        ``cache`` is not supplied and ``miller_indices`` is not given; ignored
+        when a pre-built cache is passed. Cannot be combined with
+        ``miller_indices``.
+    miller_indices : torch.Tensor, optional
+        Caller-retained half-space Miller topology ``(K, 3)`` replacing the
+        ``k_cutoff``-derived grid. See :func:`prepare_multipole_scf_cache`; it
+        gives a static-shape, ``torch.compile``-traceable k-grid that stays
+        differentiable in ``cell``.
     normalize : NormMode | int | str
         Normalization convention for the density basis. Defaults to
         ``NormMode.MULTIPOLES`` (the only physically meaningful choice for
@@ -532,6 +543,13 @@ def multipole_reciprocal_space_energy(
         ``alpha``, and ``normalize`` are still validated or resolved before
         cache use; ``k_cutoff`` is ignored because the cache already encodes
         the k-grid. The caller owns matching the cache to the system.
+    source_weights, reduce_partial : optional
+        Structure-factor weights and reduction for callers holding part of a
+        system; see :func:`multipole_scf_step_energy` (batched path only).
+        ``reduce_partial`` must stay on the autograd graph, for example
+        ``torch.distributed.nn.functional.all_reduce``, for correct forces, stress
+        and charge gradients. A caller sums only the per-atom energies of the
+        atoms it owns.
 
     Returns
     -------
@@ -567,9 +585,15 @@ def multipole_reciprocal_space_energy(
         raise ValueError(f"sigma must be positive, got {sigma}")
     if alpha <= 0.0:
         raise ValueError(f"alpha must be positive, got {alpha}")
-    if cache is None and (k_cutoff is None or k_cutoff <= 0.0):
+    if miller_indices is not None and k_cutoff is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
+    if (
+        cache is None
+        and miller_indices is None
+        and (k_cutoff is None or k_cutoff <= 0.0)
+    ):
         raise ValueError(
-            "Either a pre-built cache or a positive k_cutoff "
+            "Either a pre-built cache, miller_indices, or a positive k_cutoff "
             f"must be supplied (got k_cutoff={k_cutoff})."
         )
 
@@ -591,6 +615,7 @@ def multipole_reciprocal_space_energy(
             sigma=sigma,
             receiver_sigmas=[sigma],
             k_cutoff=k_cutoff,
+            miller_indices=miller_indices,
             l_max=l_max,
             density_normalize=norm_mode,
             feature_normalize=norm_mode,
@@ -621,4 +646,6 @@ def multipole_reciprocal_space_energy(
         batch_idx=batch_idx,
         include_self_interaction=True,
         quadrupoles=quadrupoles,
+        source_weights=source_weights,
+        reduce_partial=reduce_partial,
     )

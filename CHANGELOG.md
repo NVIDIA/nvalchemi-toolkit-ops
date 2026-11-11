@@ -2,15 +2,40 @@
 
 ## Unreleased
 
-### Changed
+### Added
 
-- The per-(order, lmax) PME multipole kernel modules no longer generate
-  Warp adjoint code. Gradients are computed with hand-written backward
-  kernels, and skipping the adjoint removes most of the cold
-  whole-package compile time.
+- Multipole PME and Ewald accept an optional `total_charge` for the
+  uniform-background correction, so a caller holding part of a system can pass
+  the globally reduced charge. The batched PME and Ewald entry points also take
+  `source_weights` (scales each atom's contribution to the spread or structure
+  factor only) and `reduce_partial` (combines the partial mesh or structure
+  factor across holders of the system before the energy is evaluated). Omitting
+  the new arguments keeps the previous behavior.
+- Multipole Ewald reciprocal space accepts a caller-retained half-space
+  `miller_indices` topology, so the k-grid is built without data-dependent
+  sizes and the path can be traced by `torch.compile`.
+- `fire2_step_coord` accepts `reduce_partials` and `reduce_max_norm`, and the
+  variable-cell mix phase accepts `reduce_partials` and `global_atom_counts`,
+  so a caller holding part of each system, such as one rank of a
+  domain-decomposed run, gets whole-system values in the mixing and step clamp.
+  Omitting them keeps the previous behavior.
+  `fire2_update_absent_systems` updates the per-system controls of systems with
+  no local atoms. With `reduce_partials` plus `global_atom_counts`, the cell
+  mix accepts ranks that hold no atoms of a system. A rank with no atoms at all
+  also passes `whole_system_sums=True` to `fire2_step_coord_cell_apply`.
 
 ### Fixed
 
+- Multipole PME used the transposed inverse cell for the k-grid, which gave
+  wrong energies, forces and stress for triclinic cells.
+- Multipole PME position and cell gradients at `l >= 1` were silently wrong
+  under `torch.compile` because Inductor dropped the Hermitian RFFT doubling
+  from the generated backward.
+- Multipole Ewald `miller_indices` validation now matches `ewald_summation`:
+  it is rejected together with `k_cutoff` or `k_vectors`, and a cell/topology
+  device mismatch raises instead of moving the topology.
+- The multipole real-space cell-gradient autograd Function stays traceable
+  under dynamic shapes.
 - JAX `batch_query_cell_list` with `rebuild_flags` needed temporary memory
   for a second neighbor list and was slower than a full query. The previous
   neighbor matrix, counts and shifts were merged back with `jnp.where`,
@@ -20,6 +45,13 @@
   inverted the cell with `jnp.linalg.inv`, which runs cuSOLVER/cuBLAS on GPU and
   cannot be captured in XLA command buffers. They now use the Warp cell-inverse
   kernel that some routes already used.
+
+### Changed
+
+- The per-(order, lmax) PME multipole kernel modules no longer generate
+  Warp adjoint code. Gradients are computed with hand-written backward
+  kernels, and skipping the adjoint removes most of the cold
+  whole-package compile time.
 
 ## 0.5.0
 
