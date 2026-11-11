@@ -3451,17 +3451,16 @@ class TestReciprocalMillerIndices:
             for got, want in zip(out, ref, strict=True):
                 torch.testing.assert_close(got, want, rtol=1e-9, atol=1e-9)
 
-    @pytest.mark.parametrize(
-        "conflict",
-        [
-            {"k_vectors": torch.zeros(1, 3, dtype=torch.float64, device="cuda:0")},
-            {"k_cutoff": 2.0},
-        ],
-        ids=["k_vectors", "k_cutoff"],
-    )
+    @pytest.mark.parametrize("conflict", ["k_vectors", "k_cutoff"])
     def test_rejects_conflicting_topology_source(self, conflict):
         from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
             prepare_multipole_scf_cache,
+        )
+
+        conflict = (
+            {"k_vectors": torch.zeros(1, 3, dtype=torch.float64, device="cuda:0")}
+            if conflict == "k_vectors"
+            else {"k_cutoff": 2.0}
         )
 
         cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
@@ -3474,18 +3473,17 @@ class TestReciprocalMillerIndices:
                 **conflict,
             )
 
-    @pytest.mark.parametrize(
-        "conflict",
-        [
-            {"k_vectors": torch.zeros(2, 1, 3, dtype=torch.float64, device="cuda:0")},
-            {"k_cutoff": 2.0},
-        ],
-        ids=["k_vectors", "k_cutoff"],
-    )
+    @pytest.mark.parametrize("conflict", ["k_vectors", "k_cutoff"])
     def test_batched_rejects_conflicting_topology_source(self, conflict):
         """A batched cell with ``miller_indices`` and another source is rejected."""
         from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
             prepare_multipole_scf_cache,
+        )
+
+        conflict = (
+            {"k_vectors": torch.zeros(2, 1, 3, dtype=torch.float64, device="cuda:0")}
+            if conflict == "k_vectors"
+            else {"k_cutoff": 2.0}
         )
 
         _, _, cell, _ = self._system(1)
