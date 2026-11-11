@@ -12,6 +12,7 @@
 
 ### Added
 
+- **Segmented matrix multiplication:** Added Warp `segment_mm` with FP32/BF16 PyTorch and JAX bindings, runtime device lengths, and higher-order framework differentiation. Supports whole-system JAX `shard_map` and PyTorch DDP training with caller-packed local systems.
 - **L-BFGS optimizer:** Added an L-BFGS geometry optimizer with Warp, PyTorch, and JAX bindings for fixed-cell and variable-cell relaxation.
 - **Trust-region step control:** L-BFGS bounds step sizes with a trust region without energy evaluations.
 - **Batch state management:** Added `LBFGSState` and `LBFGSCellState` structures with preparation functions that allocate and validate optimizer state.

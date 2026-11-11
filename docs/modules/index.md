@@ -11,6 +11,7 @@ alone may not provide sufficient information.
 
 torch/neighbors.rst
 torch/segment_ops.rst
+torch/segment_mm.rst
 torch/dispersion.rst
 torch/electrostatics.rst
 torch/dynamics.rst
@@ -25,6 +26,7 @@ torch/autograd.rst
 jax/dynamics.rst
 jax/neighbors.rst
 jax/segment_ops.rst
+jax/segment_mm.rst
 jax/dispersion.rst
 jax/electrostatics.rst
 ```
@@ -36,6 +38,7 @@ jax/electrostatics.rst
 
 warp/neighbors.rst
 warp/segment_ops.rst
+warp/segment_mm.rst
 warp/dispersion.rst
 warp/electrostatics.rst
 warp/lj.rst

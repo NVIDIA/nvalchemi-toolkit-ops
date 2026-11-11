@@ -24,6 +24,7 @@ ALCHEMI Toolkit-Ops provides integrators for different statistical ensembles:
 | **Velocity Verlet** | NVE | Energy | Testing, production NVE runs |
 | **Langevin (BAOAB)** | NVT | Temperature | Canonical sampling, equilibration |
 | **Nosé-Hoover Chain** | NVT | Temperature | Deterministic thermostat, long runs |
+| **CSVR (Bussi)** | NVT | Temperature | Canonical sampling with minimal dynamics perturbation |
 | **NPT (MTK)** | NPT | Temperature, Pressure | Constant pressure simulations |
 | **NPH (MTK)** | NPH | Enthalpy, Pressure | Adiabatic constant pressure |
 | **Velocity Rescaling** | - | - | Quick equilibration (non-canonical) |
@@ -338,6 +339,48 @@ $$
 
 - Martyna, Tobias, Klein (1994). J Chem Phys, 101, 4177
 
+### CSVR (NVT)
+
+Stochastic velocity rescaling scales the velocities of each system by one factor
+$\alpha$, chosen so that the kinetic energy $K$ relaxes to $\bar K = N_f k_B T / 2$
+with time constant $\tau$ and samples the canonical distribution:
+
+$$
+\alpha^2 = c + r\,(R_1^2 + S) + 2 R_1 \sqrt{c\,r},
+\qquad c = e^{-\Delta t/\tau},
+\qquad r = \frac{(1-c)\,\bar K}{N_f K}
+$$
+
+where $R_1 \sim \mathcal{N}(0, 1)$ and $S \sim \chi^2_{N_f-1}$.
+
+```python
+from nvalchemiops.dynamics.integrators import (
+    csvr_thermostat,
+    velocity_verlet_position_update,
+    velocity_verlet_velocity_finalize,
+)
+
+for step in range(num_steps):
+    csvr_thermostat(
+        velocities, masses, target_temp, tau, dt, ndof,
+        random_seed=seed + step, ke=ke, scale=scale,
+    )
+    velocity_verlet_position_update(positions, velocities, forces, masses, dt)
+    forces = compute_forces(positions)
+    velocity_verlet_velocity_finalize(velocities, forces, masses, dt)
+```
+
+**Key Properties:**
+
+- Maintains canonical (NVT) ensemble
+- $\tau$ controls the thermalization rate; $\tau = 0$ resamples the kinetic energy each call
+- Stochastic (requires a new random seed each step)
+- Energy given to the bath, `ke * (1 - scale**2)`, gives a conserved effective energy
+
+**References:**
+
+- Bussi, Donadio, Parrinello (2007). J. Chem. Phys. 126, 014101
+
 ### Velocity Rescaling
 
 Simple rescaling of velocities to match target temperature:
@@ -351,7 +394,7 @@ $$
 - Very fast equilibration
 - **Does NOT** produce canonical ensemble
 - Useful for initial equilibration before switching to proper thermostat
-- Can cause artifacts if used for production runs
+- Can cause artifacts if used for production runs; use CSVR for a canonical alternative
 
 ### NPT (Isothermal-Isobaric)
 
