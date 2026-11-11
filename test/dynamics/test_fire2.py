@@ -5015,6 +5015,139 @@ class TestFire2PartialSystems:
                 torch.testing.assert_close(shard[key], ref[key], rtol=1e-12, atol=1e-12)
 
     @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("compute_reductions", [True, False])
+    @pytest.mark.parametrize("hooks", ["partials", "max_norm", "both"])
+    def test_coordinate_hook_combinations(self, device, hooks, compute_reductions):
+        """Each hook combination, with ``compute_reductions`` on and off.
+
+        ``reduce_partials`` replaces ``compute_reductions``. With only
+        ``reduce_max_norm``, ``compute_reductions=False`` must keep the caller's
+        whole-system sums, and ``True`` mixes against the local sums.
+        """
+        use_partials = hooks in ("partials", "both")
+        use_max = hooks in ("max_norm", "both")
+        whole = use_partials or not compute_reductions
+        full = self._system(device, with_cell=False)
+        self._make_uphill(full, 1)
+        ref = {k: v.clone() for k, v in full.items()}
+        sums = tuple(torch.zeros(2, dtype=torch.float64, device=device) for _ in "abc")
+        fire2_step_coord(
+            ref["positions"],
+            ref["velocities"],
+            ref["forces"],
+            ref["batch_idx"],
+            ref["alpha"],
+            ref["dt"],
+            ref["nsteps_inc"],
+            vf=sums[0],
+            v_sumsq=sums[1],
+            f_sumsq=sums[2],
+            **self.HP,
+        )
+        # Alternate atoms: every shard holds both systems, so local sums differ
+        # from the whole-system sums. Whole-system cases also drop a system.
+        idx = torch.arange(full["positions"].shape[0], device=device)
+        keeps = (
+            self._layout("each_rank_lacks_a_system", device)
+            if whole
+            else [idx[idx % 2 == 0], idx[idx % 2 == 1]]
+        )
+        zero = tuple(torch.zeros_like(x) for x in sums)
+
+        def run(shard, peers, peer_max):
+            seen = {}
+
+            def sum_partials(vf, vv, ff):
+                seen["local"] = (vf.clone(), vv.clone(), ff.clone())
+                for buf, other in zip((vf, vv, ff), peers):
+                    buf += other
+
+            def max_reduce(mn):
+                seen["max"] = mn.clone()
+                if peer_max is not None:
+                    torch.maximum(mn, peer_max, out=mn)
+
+            kwargs = {}
+            if use_partials:
+                kwargs["reduce_partials"] = sum_partials
+            if use_max:
+                kwargs["reduce_max_norm"] = max_reduce
+            if not compute_reductions and not use_partials:
+                kwargs.update(
+                    vf=sums[0].clone(),
+                    v_sumsq=sums[1].clone(),
+                    f_sumsq=sums[2].clone(),
+                    compute_reductions=False,
+                )
+            fire2_step_coord(
+                shard["positions"],
+                shard["velocities"],
+                shard["forces"],
+                shard["batch_idx"],
+                shard["alpha"],
+                shard["dt"],
+                shard["nsteps_inc"],
+                **kwargs,
+                **self.HP,
+            )
+            return seen
+
+        peers = [zero] * len(keeps)
+        if use_partials:
+            local = [run(self._shard(full, k), zero, None)["local"] for k in keeps]
+            combined = tuple(sum(loc[q] for loc in local) for q in range(3))
+            peers = [tuple(combined[q] - loc[q] for q in range(3)) for loc in local]
+        global_max = None
+        if use_max:
+            maxima = [
+                run(self._shard(full, k), peers[i], None)["max"]
+                for i, k in enumerate(keeps)
+            ]
+            global_max = torch.stack(maxima).max(dim=0).values
+        shards = [self._shard(full, k) for k in keeps]
+        for i, shard in enumerate(shards):
+            run(shard, peers[i], global_max)
+
+        if whole:
+            # Without ``reduce_max_norm`` each shard clamps by its own norm, so
+            # positions and dt only match the whole system when it is given.
+            for key in ("positions", "velocities") if use_max else ("velocities",):
+                merged = torch.empty_like(ref[key])
+                for shard, keep in zip(shards, keeps):
+                    merged[keep] = shard[key]
+                torch.testing.assert_close(merged, ref[key], rtol=1e-12, atol=1e-12)
+            for shard in shards:
+                for key in (
+                    ("alpha", "dt", "nsteps_inc")
+                    if use_max
+                    else (
+                        "alpha",
+                        "nsteps_inc",
+                    )
+                ):
+                    torch.testing.assert_close(
+                        shard[key], ref[key], rtol=1e-12, atol=1e-12
+                    )
+        else:
+            # Local sums: each shard mixes like a standalone step on its atoms.
+            for shard, keep in zip(shards, keeps):
+                alone = self._shard(full, keep)
+                fire2_step_coord(
+                    alone["positions"],
+                    alone["velocities"],
+                    alone["forces"],
+                    alone["batch_idx"],
+                    alone["alpha"],
+                    alone["dt"],
+                    alone["nsteps_inc"],
+                    **self.HP,
+                )
+                for key in ("velocities", "alpha", "nsteps_inc"):
+                    torch.testing.assert_close(
+                        shard[key], alone[key], rtol=1e-12, atol=1e-12
+                    )
+
+    @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("uphill", [0, 1])
     @pytest.mark.parametrize("layout", list(LAYOUTS))
     def test_variable_cell_controls_match_on_every_shard(self, device, layout, uphill):

@@ -519,6 +519,7 @@ def _fire2_step_coord_shared(
     maxstep,
     reduce_partials,
     reduce_max_norm,
+    compute_reductions=True,
 ) -> None:
     """Coordinate-only FIRE2 step for a caller that holds part of each system.
 
@@ -528,6 +529,10 @@ def _fire2_step_coord_shared(
     this caller holds no atoms, so collective hooks stay matched across callers.
     Systems with no local atoms get their ``alpha``, ``dt`` and ``nsteps_inc``
     from the reduced sums, so every caller ends with the same controls.
+
+    ``reduce_partials`` takes the place of ``compute_reductions``. With only
+    ``reduce_max_norm``, ``compute_reductions=False`` keeps the caller's sums,
+    which are then whole-system sums.
     """
     vec_type = _TORCH_TO_WP_VEC[positions.dtype]
     has_atoms = positions.shape[0] > 0
@@ -561,7 +566,7 @@ def _fire2_step_coord_shared(
             wp_ff,
             wp_max_norm,
             compute_max_norm=True,
-            compute_reductions=reduce_partials is None,
+            compute_reductions=compute_reductions and reduce_partials is None,
             **params,
         )
     else:
@@ -578,9 +583,10 @@ def _fire2_step_coord_shared(
             wp_vf,
             maxstep=maxstep,
         )
-    if reduce_partials is not None:
+    if reduce_partials is not None or not compute_reductions:
         # The mixing and clamp kernels write the controls only through a local
-        # atom; update the systems this caller holds no atom of.
+        # atom; update the systems this caller holds no atom of. This needs
+        # whole-system sums: the hook's, or the caller's own when they are kept.
         atom_counts = torch.zeros(
             alpha.shape[0], dtype=torch.int32, device=alpha.device
         )
@@ -783,6 +789,7 @@ def fire2_step_coord(
             maxstep,
             reduce_partials,
             reduce_max_norm,
+            compute_reductions,
         )
         return
 
