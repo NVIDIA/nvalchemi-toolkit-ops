@@ -163,6 +163,48 @@ def _coord_cell_ext_metadata(
     return atom_ptr, wp_atom_ptr, wp_ext_atom_ptr, wp_ext_batch_idx
 
 
+def _cell_row_reductions(
+    wp_ext_vel, wp_ext_forces, wp_dt, wp_ext_atom_ptr, out, *, vec_type
+) -> None:
+    """Fill ``out`` with the FIRE2 sums over each system's 2 cell rows.
+
+    Reduces the cell rows of the packed arrays directly with ``fire2_reduce``
+    instead of subtracting the atom sums from whole-packed sums, which loses
+    digits when the atom sums dominate. The cell rows of system ``s`` sit at
+    ``ext_atom_ptr[s + 1] - 2`` and ``- 1``. The gather is a device index with no
+    host sync.
+
+    Parameters
+    ----------
+    wp_ext_vel, wp_ext_forces : wp.array
+        Packed ``(N + 2M,)`` velocities and forces.
+    wp_dt : wp.array
+        Per-system timestep, shape ``(M,)``.
+    wp_ext_atom_ptr : wp.array
+        Extended CSR pointers, shape ``(M + 1,)``.
+    out : tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(vf, v_sumsq, f_sumsq)`` of shape ``(M,)``; overwritten.
+    vec_type : type
+        Warp vector type of the packed arrays.
+    """
+    vf = out[0]
+    M = vf.shape[0]
+    ends = wp.to_torch(wp_ext_atom_ptr)[1:].long()
+    rows = torch.stack((ends - 2, ends - 1), dim=1).reshape(-1)
+    cell_vel = wp.to_torch(wp_ext_vel)[rows].contiguous()
+    cell_forces = wp.to_torch(wp_ext_forces)[rows].contiguous()
+    cell_bidx = torch.arange(M, dtype=torch.int32, device=vf.device).repeat_interleave(
+        2
+    )
+    fire2_reduce(
+        wp.from_torch(cell_vel, dtype=vec_type),
+        wp.from_torch(cell_forces, dtype=vec_type),
+        wp_dt,
+        wp.from_torch(cell_bidx, dtype=wp.int32),
+        *(wp.from_torch(buf) for buf in out),
+    )
+
+
 @scoped_torch_warp_stream
 def _coord_cell_mix_impl(
     positions,
@@ -321,23 +363,19 @@ def _coord_cell_mix_impl(
         # same on every caller, so counted once).
         wp_vv = wp.from_torch(v_sumsq)
         wp_ff = wp.from_torch(f_sumsq)
-        fire2_reduce(
-            wp_ext_vel, wp_ext_forces, wp_dt, wp_ext_batch_idx, wp_vf, wp_vv, wp_ff
-        )
-        atoms = tuple(torch.zeros_like(buf) for buf in (vf, v_sumsq, f_sumsq))
-        fire2_reduce(
-            wp_vel,
-            wp_forces,
+        fire2_reduce(wp_vel, wp_forces, wp_dt, wp_bidx, wp_vf, wp_vv, wp_ff)
+        cell_parts = tuple(torch.empty_like(buf) for buf in (vf, v_sumsq, f_sumsq))
+        _cell_row_reductions(
+            wp_ext_vel,
+            wp_ext_forces,
             wp_dt,
-            wp_bidx,
-            *(wp.from_torch(buf) for buf in atoms),
+            wp_ext_atom_ptr,
+            cell_parts,
+            vec_type=vec_type,
         )
-        cell_parts = tuple(
-            total - atom for total, atom in zip((vf, v_sumsq, f_sumsq), atoms)
-        )
-        reduce_partials(*atoms)
-        for total, atom, cell_part in zip((vf, v_sumsq, f_sumsq), atoms, cell_parts):
-            total.copy_(atom + cell_part)
+        reduce_partials(vf, v_sumsq, f_sumsq)
+        for total, cell_part in zip((vf, v_sumsq, f_sumsq), cell_parts):
+            total.add_(cell_part)
         compute_reductions = False
     fire2_update(
         wp_ext_vel,
@@ -1644,7 +1682,7 @@ def fire2_compute_extended_reductions(
         wp.from_torch(atom_partial[2]),
     )
 
-    # total: pack the extended (atom + cell) DOFs and reduce over them.
+    # cell term: pack the extended (atom + cell) DOFs and reduce the cell rows.
     if ext_velocities is None:
         ext_velocities = torch.empty(N_ext, 3, dtype=dtype, device=device)
     if ext_forces is None:
@@ -1696,20 +1734,14 @@ def fire2_compute_extended_reductions(
             batch_idx=wp_bidx,
         )
 
-    total = _triple()
-    fire2_reduce(
+    _cell_row_reductions(
         wp_ext_vel,
         wp_ext_forces,
         wp_dt,
-        wp_ext_batch_idx,
-        wp.from_torch(total[0]),
-        wp.from_torch(total[1]),
-        wp.from_torch(total[2]),
+        wp_ext_atom_ptr,
+        cell_term,
+        vec_type=vec_type,
     )
-
-    # cell term = total (atom + cell) - atom partial.
-    for i in range(3):
-        cell_term[i].copy_(total[i] - atom_partial[i])
 
     return atom_partial, cell_term
 

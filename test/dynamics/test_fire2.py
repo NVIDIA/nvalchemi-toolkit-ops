@@ -4550,6 +4550,138 @@ class TestFire2ComputeReductions:
         torch.testing.assert_close(ad, ar, rtol=rtol, atol=rtol)
 
 
+class TestFire2CellTermPrecision:
+    """The cell sums are reduced directly, not as (atoms + cell) - atoms.
+
+    Many atoms with large forces and a small cell force make the atom sums
+    dwarf the cell sums, so a subtraction in fp32 cancels most digits.
+    """
+
+    M = 2
+    PER = 6000
+
+    @classmethod
+    def _state(cls, device):
+        M, per = cls.M, cls.PER
+        N = M * per
+        g = torch.Generator(device="cpu").manual_seed(0)
+        f32 = torch.float32
+
+        def r(*shape, scale=1.0):
+            return (torch.randn(*shape, generator=g, dtype=f32) * scale).to(device)
+
+        return dict(
+            positions=torch.rand(N, 3, generator=g, dtype=f32).to(device),
+            velocities=r(N, 3),
+            forces=r(N, 3, scale=10.0),
+            cell=(torch.eye(3, dtype=f32) * 10).expand(M, 3, 3).contiguous().to(device),
+            cell_velocities=r(M, 3, 3, scale=1e-2),
+            cell_force=r(M, 3, 3, scale=1e-2 * per),
+            batch_idx=torch.arange(
+                M, dtype=torch.int32, device=device
+            ).repeat_interleave(per),
+            dt=torch.full((M,), 0.05, dtype=f32, device=device),
+        )
+
+    @staticmethod
+    def _reference(ext_vel, ext_forces, dt, M):
+        """Float64 sums over the 2 cell rows of each system (packed layout)."""
+        ref = []
+        n_ext = ext_vel.shape[0]
+        per = (n_ext - 2 * M) // M
+        for s in range(M):
+            end = (s + 1) * (per + 2)
+            v = ext_vel[end - 2 : end].double()
+            f = ext_forces[end - 2 : end].double()
+            w = v + f * dt[s].double()
+            ref.append(torch.stack([(w * f).sum(), (w * w).sum(), (f * f).sum()]))
+        return torch.stack(ref).T  # (3, M)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_extended_reductions_cell_term_is_direct(self, device):
+        """``cell_term`` matches a float64 reference to fp32 precision."""
+        st = self._state(device)
+        N_ext = st["positions"].shape[0] + 2 * self.M
+        ev = torch.empty(N_ext, 3, dtype=torch.float32, device=device)
+        ef = torch.empty_like(ev)
+        _, cell_t = fire2_compute_extended_reductions(
+            st["positions"],
+            st["velocities"],
+            st["forces"],
+            st["cell"],
+            st["cell_velocities"],
+            st["cell_force"],
+            st["batch_idx"],
+            st["dt"],
+            ext_velocities=ev,
+            ext_forces=ef,
+        )
+        ref = self._reference(ev, ef, st["dt"], self.M)
+        got = torch.stack(cell_t).double()
+        torch.testing.assert_close(got, ref, rtol=1e-4, atol=0.0)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_mix_hook_cell_term_is_direct(self, device):
+        """With the atom sums zeroed by the hook, the mix sums are the cell sums."""
+        st = self._state(device)
+        M = self.M
+        N_ext = st["positions"].shape[0] + 2 * M
+        ev = torch.empty(N_ext, 3, dtype=torch.float32, device=device)
+        ef = torch.empty_like(ev)
+        vf, vv, ff, mn = (
+            torch.zeros(M, dtype=torch.float32, device=device) for _ in range(4)
+        )
+
+        def drop_atoms(a, b, c):
+            a.zero_()
+            b.zero_()
+            c.zero_()
+
+        # The mix rewrites the velocities, so take the reference first.
+        ev0 = torch.empty_like(ev)
+        ef0 = torch.empty_like(ef)
+        fire2_compute_extended_reductions(
+            st["positions"],
+            st["velocities"],
+            st["forces"],
+            st["cell"],
+            st["cell_velocities"],
+            st["cell_force"],
+            st["batch_idx"],
+            st["dt"],
+            ext_velocities=ev0,
+            ext_forces=ef0,
+        )
+        ref = self._reference(ev0, ef0, st["dt"], M)
+        fire2_step_coord_cell_mix(
+            st["positions"],
+            st["velocities"],
+            st["forces"],
+            st["cell"],
+            st["cell_velocities"],
+            st["cell_force"],
+            st["batch_idx"],
+            torch.full((M,), 0.09, dtype=torch.float32, device=device),
+            st["dt"].clone(),
+            torch.zeros(M, dtype=torch.int32, device=device),
+            vf=vf,
+            v_sumsq=vv,
+            f_sumsq=ff,
+            max_norm=mn,
+            ext_velocities=ev,
+            ext_forces=ef,
+            reduce_partials=drop_atoms,
+            global_atom_counts=torch.full(
+                (M,), self.PER, dtype=torch.int32, device=device
+            ),
+            **{k: v for k, v in FIRE2_CELL_DEFAULTS.items() if k != "maxstep"},
+        )
+        torch.cuda.synchronize()
+        torch.testing.assert_close(
+            torch.stack([vf, vv, ff]).double(), ref, rtol=1e-4, atol=0.0
+        )
+
+
 class TestFire2PartialSystems:
     """A caller that holds part of each system reproduces the whole-system step.
 
