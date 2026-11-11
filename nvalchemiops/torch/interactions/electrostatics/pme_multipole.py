@@ -6267,6 +6267,10 @@ def multipole_particle_mesh_ewald(
         ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;
         forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.
     """
+    if batch_idx is None and (source_weights is not None or reduce_partial is not None):
+        raise ValueError(
+            "source_weights and reduce_partial require the batched path (batch_idx)."
+        )
     if sigma <= 0.0:
         raise ValueError(f"sigma must be positive, got {sigma}")
 

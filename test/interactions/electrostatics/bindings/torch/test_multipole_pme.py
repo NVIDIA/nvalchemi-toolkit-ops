@@ -1709,6 +1709,28 @@ class TestParticleMeshEwald:
                 source_weights=torch.ones_like(charges),
             )
 
+    @pytest.mark.parametrize("name", ["source_weights", "reduce_partial"])
+    def test_total_energy_partial_arguments_need_the_batched_path(self, name):
+        """The single-system total energy rejects the partial-system arguments."""
+        sigma, alpha = 1.0, 0.5
+        _, positions, charges, _, cell, idx_j, nptr, sh, _ = self._setup(
+            N=6, L=9.0, seed=0x5EED, sigma=sigma, alpha=alpha
+        )
+        value = torch.ones_like(charges) if name == "source_weights" else (lambda m: m)
+        with pytest.raises(ValueError, match="batched path"):
+            multipole_particle_mesh_ewald(
+                positions,
+                pack_charges_dipoles(charges, None),
+                cell,
+                idx_j,
+                nptr,
+                sh,
+                sigma=sigma,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                **{name: value},
+            )
+
     @pytest.mark.parametrize("alpha", [0.4, 0.6])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
     @pytest.mark.parametrize("spline_order", [4, 5, 6])
