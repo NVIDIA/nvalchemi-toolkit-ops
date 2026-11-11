@@ -5956,10 +5956,10 @@ def multipole_pme_reciprocal_space(
         Applied to the spread mesh ``(B, nx, ny, nz)`` before the FFT, to sum
         partial meshes held by several callers (batched path).
         Keep it on the autograd graph, for example with
-        ``torch.distributed.nn.functional.all_reduce``, so forces, stress and charge
-        gradients stay correct; a detached sum such as ``torch.distributed.all_reduce``
-        leaves the energy exact but those gradients wrong. A caller sums only the
-        per-atom energies of the atoms it owns.
+        ``torch.distributed.nn.functional.all_reduce``, so that forces, stress and
+        charge gradients stay correct. A detached sum, such as
+        ``torch.distributed.all_reduce``, gives the exact energy but wrong
+        gradients. A caller sums only the per-atom energies of the atoms it owns.
 
     Returns
     -------
