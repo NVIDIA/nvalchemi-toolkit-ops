@@ -168,6 +168,9 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_batch_multipole_pme_spread_unified_forward",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_batch_quad_gradpos",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_batch_quad_spread",
+    # Registered k-grid runtime bodies scope conversions and launches to Torch.
+    "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_batch_pme_k_squared_backward",
+    "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_batch_pme_k_squared_forward",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_convolve_double_backward_run",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_gather_grad_field",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_hessian_contract",
@@ -225,8 +228,12 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_double_backward_impl",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_forward_impl",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_run_fill",
+    # Every no-store fill/compute launch already runs inside _scoped_stream.
+    "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_run_fp32_nostore",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_s_int_empty",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_wp",
+    # Input views and zero-length sentinels only; weighted callers scope launches.
+    "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_weighted_recip_warp_inputs",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_run_geometry",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_run_moments",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_backward_values",
@@ -252,16 +259,24 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_wp_from_torch",
     "nvalchemiops/torch/interactions/electrostatics/slab.py::_prepare_slab_geometry",
     "nvalchemiops/torch/interactions/electrostatics/slab.py::_run_slab_correction_op",
+    # Prepared fixed-cell geometry launches inside scoped_torch_warp_stream.
+    "nvalchemiops/torch/neighbors/_cluster_tile_state.py::_prepare_cluster_tile_storage",
     # Eager sizing returns a host allocation count on the scoped Torch stream.
     "nvalchemiops/torch/neighbors/_cell_grid.py::_select_pair_grid",
     "nvalchemiops/torch/neighbors/_dispatch.py::estimate_neighbor_list_costs",
     "nvalchemiops/torch/neighbors/batch_cell_list.py::_batch_query_cell_list_optional",
     "nvalchemiops/torch/neighbors/batch_cell_list.py::estimate_batch_cell_list_sizes",
+    # Shared build runtime already uses scoped_torch_warp_stream.
+    "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_batch_build_cluster_tile_list_impl",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_batch_cluster_tile_direct_csr_fill_pair_outputs",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_batch_query_cluster_tile_coo_optional",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_batch_query_cluster_tile_optional",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::batch_cluster_tile_neighbor_list",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::batch_query_cluster_tile",
+    # Conversion-only geometry helpers called by stream-scoped query runtimes.
+    # Direct-CSR helpers also allocate empty dynamic-geometry sentinels.
+    "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_wp_direct_csr_geometry_inputs",
+    "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_wp_fixed_cluster_geometry",
     # Compiled pair_fn registration factories: raw Warp calls are confined to
     # nested torch.library.custom_op runtime bodies with registered fake behavior.
     "nvalchemiops/torch/neighbors/batch_naive.py::_register_compiled_batch_naive_no_pbc_pair_op",
@@ -270,15 +285,23 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/neighbors/cell_list.py::_query_cell_list_direct_eager",
     "nvalchemiops/torch/neighbors/cell_list.py::_query_cell_list_optional",
     "nvalchemiops/torch/neighbors/cell_list.py::estimate_cell_list_sizes",
+    # Shared build runtime already uses scoped_torch_warp_stream.
+    "nvalchemiops/torch/neighbors/cluster_tile.py::_build_cluster_tile_list_impl",
     "nvalchemiops/torch/neighbors/cluster_tile.py::_cluster_tile_direct_csr_fill_pair_outputs",
     "nvalchemiops/torch/neighbors/cluster_tile.py::_mat33f_from_torch",
     "nvalchemiops/torch/neighbors/cluster_tile.py::_query_cluster_tile_coo_optional",
     "nvalchemiops/torch/neighbors/cluster_tile.py::_query_cluster_tile_optional",
     "nvalchemiops/torch/neighbors/cluster_tile.py::cluster_tile_neighbor_list",
+    # Conversion-only geometry helpers called by stream-scoped query runtimes.
+    # Direct-CSR helpers also allocate empty dynamic-geometry sentinels.
+    "nvalchemiops/torch/neighbors/cluster_tile.py::_wp_direct_csr_geometry_inputs",
+    "nvalchemiops/torch/neighbors/cluster_tile.py::_wp_fixed_cluster_geometry",
     "nvalchemiops/torch/neighbors/naive.py::_register_compiled_naive_no_pbc_pair_op",
     "nvalchemiops/torch/neighbors/naive.py::_register_compiled_naive_pbc_pair_op",
     "nvalchemiops/torch/neighbors/naive.py::_naive_pair_outputs_forward",
     "nvalchemiops/torch/neighbors/neighbor_utils.py::compute_naive_num_shifts",
+    # Array conversion precedes a compute_inv_cells launch in scoped_warp_stream.
+    "nvalchemiops/torch/neighbors/prepared_neighbor_list.py::_prepare_fixed_cell_inverse",
 }
 
 APPROVED_CUSTOM_OPS_WITHOUT_FAKE = {

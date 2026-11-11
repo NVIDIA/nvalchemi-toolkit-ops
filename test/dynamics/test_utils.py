@@ -781,16 +781,71 @@ class TestVelocityInitialization:
 
         vel_np = velocities.numpy()
         mass_np = masses.numpy()
+        # 2*KE/kT is chi-squared with `dof` degrees of freedom, so the measured
+        # temperature has relative standard deviation sqrt(2/dof). Six sigma
+        # keeps a fixed-seed draw far from the bound on any RNG stream.
+        rtol = 6.0 * np.sqrt(2.0 / dof)
         for sys_id in range(num_systems):
             start = sys_id * atoms_per_system
             end = (sys_id + 1) * atoms_per_system
-            print(f"System {sys_id}: start={start}, end={end}")
             sys_vel = vel_np[start:end]
             sys_mass = mass_np[start:end]
             ke = 0.5 * np.sum(sys_mass[:, np.newaxis] * sys_vel**2)
             measured_temp = 2.0 * ke / dof
-            print(measured_temp, temps[sys_id])
-            np.testing.assert_allclose(measured_temp, temps[sys_id], rtol=0.15)
+            np.testing.assert_allclose(measured_temp, temps[sys_id], rtol=rtol)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("out_variant", [False, True])
+    def test_batch_idx_com_removal_ignores_stale_scratch(self, device, out_variant):
+        """batch_idx mode removes COM for every system without ``num_systems``.
+
+        Pre-fill ``com_velocities`` with a large value. If a launch covers only
+        the first system, the stale value leaks into the later systems.
+        """
+        num_systems = 3
+        atoms_per_system = 64
+        total_atoms = num_systems * atoms_per_system
+        masses = wp.array(np.ones(total_atoms), dtype=wp.float64, device=device)
+        temperatures = wp.array([1.0] * num_systems, dtype=wp.float64, device=device)
+        batch_idx = wp.array(
+            np.repeat(np.arange(num_systems), atoms_per_system).astype(np.int32),
+            dtype=wp.int32,
+            device=device,
+        )
+        total_momentum = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+        total_mass = wp.zeros(num_systems, dtype=wp.float64, device=device)
+        com_velocities = wp.empty(num_systems, dtype=wp.vec3d, device=device)
+        com_velocities.fill_(wp.vec3d(100.0, 100.0, 100.0))
+        velocities = wp.zeros(total_atoms, dtype=wp.vec3d, device=device)
+
+        if out_variant:
+            initialize_velocities_out(
+                masses,
+                temperatures,
+                velocities,
+                total_momentum,
+                total_mass,
+                com_velocities,
+                random_seed=7,
+                batch_idx=batch_idx,
+                device=device,
+            )
+        else:
+            initialize_velocities(
+                velocities,
+                masses,
+                temperatures,
+                total_momentum,
+                total_mass,
+                com_velocities,
+                random_seed=7,
+                batch_idx=batch_idx,
+                device=device,
+            )
+        wp.synchronize_device(device)
+
+        vel_np = velocities.numpy().reshape(num_systems, atoms_per_system, 3)
+        np.testing.assert_allclose(vel_np.mean(axis=1), 0.0, atol=1e-12)
 
 
 # ==============================================================================

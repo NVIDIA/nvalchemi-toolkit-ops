@@ -2220,9 +2220,16 @@ class TestClusterTileCompile:
 
         compiled = run(positions)
         assert len(compiled) == 7
-        assert all(
-            torch.equal(expected, actual) for expected, actual in zip(eager, compiled)
+        # Each row-group block appends its tiles at an atomic_add offset, so the
+        # tile order depends on block scheduling. Compare the active tiles as a
+        # set, as the batched test does, and the remaining outputs exactly.
+        assert torch.equal(eager[0], compiled[0])
+        active = int(eager[0].item())
+        assert sorted(zip(*[x[:active].cpu().tolist() for x in eager[1:3]])) == sorted(
+            zip(*[x[:active].cpu().tolist() for x in compiled[1:3]])
         )
+        for expected, actual in zip(eager[3:], compiled[3:]):
+            assert torch.equal(expected, actual)
 
     @pytest.mark.slow
     def test_cluster_tile_fullgraph_requires_static_capacity(self, device, dtype):
