@@ -307,6 +307,12 @@ def prepare_multipole_scf_cache(
     MultipoleSCFCache
         Frozen dataclass. All tensors live on the resolved device.
     """
+    # Checked before the batched dispatch, which ignores ``k_vectors``.
+    if k_vectors is not None and miller_indices is not None:
+        raise ValueError("k_vectors cannot be combined with miller_indices")
+    if k_cutoff is not None and miller_indices is not None:
+        raise ValueError("miller_indices cannot be combined with k_cutoff")
+
     # Batched build: dispatch to the (B, 3, 3) branch.
     if cell.ndim == 3:
         return _prepare_multipole_scf_cache_batch(
@@ -334,10 +340,6 @@ def prepare_multipole_scf_cache(
         raise ValueError(f"feature_max_l must be 0, 1, or 2, got {feature_max_l}")
     if alpha is not None and alpha <= 0.0:
         raise ValueError(f"alpha, when given, must be positive, got {alpha}")
-    if k_vectors is not None and miller_indices is not None:
-        raise ValueError("k_vectors cannot be combined with miller_indices")
-    if k_cutoff is not None and miller_indices is not None:
-        raise ValueError("miller_indices cannot be combined with k_cutoff")
     if (
         k_vectors is None
         and miller_indices is None

@@ -3474,6 +3474,30 @@ class TestReciprocalMillerIndices:
                 **conflict,
             )
 
+    @pytest.mark.parametrize(
+        "conflict",
+        [
+            {"k_vectors": torch.zeros(2, 1, 3, dtype=torch.float64, device="cuda:0")},
+            {"k_cutoff": 2.0},
+        ],
+        ids=["k_vectors", "k_cutoff"],
+    )
+    def test_batched_rejects_conflicting_topology_source(self, conflict):
+        """A batched cell with ``miller_indices`` and another source is rejected."""
+        from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
+            prepare_multipole_scf_cache,
+        )
+
+        _, _, cell, _ = self._system(1)
+        with pytest.raises(ValueError, match="cannot be combined"):
+            prepare_multipole_scf_cache(
+                cell,
+                sigma=self.SIGMA,
+                receiver_sigmas=[self.SIGMA],
+                miller_indices=self._topology(cell),
+                **conflict,
+            )
+
     def test_rejects_miller_indices_on_other_device(self):
         from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
             prepare_multipole_scf_cache,
