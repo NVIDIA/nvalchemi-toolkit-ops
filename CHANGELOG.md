@@ -34,6 +34,12 @@
   its CPU float32 results differed from the PyTorch and Warp results by about
   3e-8 per atom. The JAX real-space cores now use the same device gate as the
   PyTorch and Warp launchers: float32 runs in float32 only on CUDA.
+- `remove_com_motion`, `remove_com_motion_out`, `initialize_velocities`, and
+  `initialize_velocities_out` in `batch_idx` mode computed the center-of-mass
+  velocity of the first system only when `num_systems` was not given. The other
+  systems subtracted whatever the `com_velocities` scratch array held, which
+  gave wrong and sometimes non-finite velocities. The center-of-mass launch now
+  covers every system in `com_velocities`.
 - Multipole PME used the transposed inverse cell for the k-grid, which gave
   wrong energies, forces and stress for triclinic cells.
 - Multipole PME position and cell gradients at `l >= 1` were silently wrong
