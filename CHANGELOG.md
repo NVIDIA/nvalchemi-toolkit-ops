@@ -40,6 +40,11 @@
   systems subtracted whatever the `com_velocities` scratch array held, which
   gave wrong and sometimes non-finite velocities. The center-of-mass launch now
   covers every system in `com_velocities`.
+- The `torch-cu12` extra allowed PyTorch 2.15, which PyTorch publishes only
+  for CUDA 13. pip chose PyTorch 2.15 from PyPI even with the CUDA 12.6 PyTorch
+  index on the command line, and that build cannot start CUDA on a CUDA 12
+  driver. The extra now requires `torch<2.15.0`. The installation guide shows
+  the pip and `uv pip` commands that select the CUDA 12.6 index.
 - Multipole PME used the transposed inverse cell for the k-grid, which gave
   wrong energies, forces and stress for triclinic cells.
 - Multipole PME position and cell gradients at `l >= 1` were silently wrong

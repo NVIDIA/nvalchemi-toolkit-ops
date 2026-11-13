@@ -42,8 +42,9 @@ torch = [
     "torch>=2.10.0",
 ]
 
+# PyTorch publishes no CUDA 12 build of torch 2.15 or newer.
 torch-cu12 = [
-    "torch>=2.10.0",
+    "torch>=2.10.0,<2.15.0",
 ]
 
 torch-cu13 = [
