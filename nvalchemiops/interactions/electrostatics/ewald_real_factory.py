@@ -337,11 +337,10 @@ def _make_forward_pair_fn(
             ``dE/dsep``; ``n`` == integer shift). The block is f64 (``wp.mat33d``)
             regardless of ``wp_dtype`` to match the f64 cache the chain allocates.
             """
-            # Pair math runs in input precision; only the accumulators stay
-            # float64. wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7
-            # error, so evaluating it in float64 cannot beat evaluating it in
-            # float32 -- it just costs a float64 erfc, exp and several divides
-            # on every pair.
+            # Pair math runs in core_scalar precision; only the accumulators
+            # stay float64. The cores call wp_erfc_input_precision, which is the
+            # native erfc in float64 and a float32-grade approximation in
+            # float32.
             qj_s = core_scalar(charges[j])
             separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
             distance = core_scalar(wp.length(separation_vector))
@@ -416,10 +415,9 @@ def _make_forward_pair_fn(
         ``i``. ``HAS_FORCE``, ``HAS_CHARGE`` and ``CELL_GRAD`` are static
         specializations, so inactive sentinel buffers are not read.
         """
-        # Pair math runs in input precision; only the accumulators stay float64.
-        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
-        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
-        # costs a float64 erfc, exp and several divides on every pair.
+        # Pair math runs in core_scalar precision; only the accumulators stay
+        # float64. The cores call wp_erfc_input_precision, which is the native
+        # erfc in float64 and a float32-grade approximation in float32.
         qj_s = core_scalar(charges[j])
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
         distance = core_scalar(wp.length(separation_vector))
@@ -497,10 +495,9 @@ def _make_backward_pair_fn(
         thread-local atom-``i`` accumulators. ``HAS_CHARGE`` and ``CELL_GRAD`` are
         static specializations, so inactive sentinel buffers are not read.
         """
-        # Pair math runs in input precision; only the accumulators stay float64.
-        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
-        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
-        # costs a float64 erfc, exp and several divides on every pair.
+        # Pair math runs in core_scalar precision; only the accumulators stay
+        # float64. The cores call wp_erfc_input_precision, which is the native
+        # erfc in float64 and a float32-grade approximation in float32.
         qj_s = core_scalar(charges[j])
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
         distance = core_scalar(wp.length(separation_vector))
