@@ -109,6 +109,11 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_batch.py::_batch_rho_q_position_grad_forward",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_batch.py::_wp_in",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_batch.py::_wp_out",
+    # Registered receiver phi-hat op-chain bodies; each is scoped_torch_warp_stream.
+    "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_receiver_phi_hat_backward",
+    "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_receiver_phi_hat_forward",
+    "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_receiver_phi_hat_quadrupole_backward",
+    "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_receiver_phi_hat_quadrupole_forward",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_source_phi_hat_backward",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_source_phi_hat_double_backward",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd_kernels.py::_source_phi_hat_forward",
