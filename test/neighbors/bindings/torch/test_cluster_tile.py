@@ -811,11 +811,25 @@ class TestTileNeighborListCorrectness:
         if primary_cutoff == inner_cutoff:
             assert dual[5][0, 0].cpu().tolist() == [0, 0, 0]
 
+    @pytest.mark.parametrize("flip_qr_sign", [False, True], ids=["qr", "qr_neg"])
     @pytest.mark.parametrize("rotated", [False, True], ids=["skewed", "rotated"])
     def test_qr_height_certificate_sheared_translated_pair(
-        self, device, dtype, rotated
+        self, device, dtype, rotated, flip_qr_sign, monkeypatch
     ):
-        """QR heights certify a strongly sheared cell after fractional failure."""
+        """QR heights certify a strongly sheared cell after fractional failure.
+
+        QR is unique only up to the signs of ``diag(R)``, and LAPACK builds
+        differ in which sign they return. ``qr_neg`` flips them to cover a
+        LAPACK that returns negative diagonal entries.
+        """
+        if flip_qr_sign:
+            real_qr = torch.linalg.qr
+
+            def negated_qr(matrix, *args, **kwargs):
+                q, r = real_qr(matrix, *args, **kwargs)
+                return torch.return_types.linalg_qr((-q, -r))
+
+            monkeypatch.setattr(torch.linalg, "qr", negated_qr)
         base_cell = torch.tensor(
             [[10.0, 0.0, 0.0], [19.5, 10.0, 0.0], [6.5, 13.0, 10.0]],
             dtype=dtype,
@@ -853,7 +867,7 @@ class TestTileNeighborListCorrectness:
         reciprocal_bound = cutoff * torch.linalg.vector_norm(
             torch.linalg.inv(cell_cpu), dim=0
         )
-        qr_heights = torch.linalg.qr(cell_cpu.T).R.diagonal()
+        qr_heights = torch.linalg.qr(cell_cpu.T).R.diagonal().abs()
         assert reciprocal_bound.max().item() > 0.5
         assert cutoff < (0.5 - 1.0e-4) * qr_heights[1:].min().item()
 
