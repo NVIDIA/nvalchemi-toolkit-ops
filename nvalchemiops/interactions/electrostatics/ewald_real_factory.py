@@ -269,9 +269,9 @@ def _core_scalar(wp_dtype: type) -> type:
     Torch-layer callers that know the runtime device (``_ewald_real_chain.py``,
     ``_ewald_direct.py``) and the direct Warp launcher in ``ewald_kernels.py``
     resolve ``core_scalar`` themselves, additionally gated on CUDA, and pass
-    it explicitly -- they never reach this function. It remains the
-    device-agnostic (no CUDA gate) behavior for callers that have not been
-    updated yet (the JAX bindings).
+    it explicitly -- they never reach this function. The JAX bindings pass
+    one from :func:`_core_scalar_for_platform`. This fallback has no CUDA
+    gate, so a caller that relies on it gets float32 cores on CPU too.
 
     Read at kernel-specialisation time, not per call: the value is part of the
     ``lru_cache`` key on the ``_make_*_pair_fn`` builders.

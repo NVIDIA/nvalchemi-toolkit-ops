@@ -30,6 +30,10 @@
   float32-grade approximation for float64 inputs, so float64 multipole
   real-space energies and gradients were accurate to only about 1e-7. They now
   use the native float64 `erfc`, as the monopole Ewald kernels do.
+- JAX `ewald_real_space` evaluated float32 CPU inputs in a float32 core, so
+  its CPU float32 results differed from the PyTorch and Warp results by about
+  3e-8 per atom. The JAX real-space cores now use the same device gate as the
+  PyTorch and Warp launchers: float32 runs in float32 only on CUDA.
 - Multipole PME used the transposed inverse cell for the k-grid, which gave
   wrong energies, forces and stress for triclinic cells.
 - Multipole PME position and cell gradients at `l >= 1` were silently wrong

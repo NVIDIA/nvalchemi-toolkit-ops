@@ -39,7 +39,10 @@ from jax.custom_derivatives import SymbolicZero
 from jax.scipy.special import erfc
 from warp import JaxCallableGraphMode, jax_callable
 
-from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
+from nvalchemiops.interactions.electrostatics._factory_common import (
+    _core_scalar_for_platform,
+    _DerivState,
+)
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
     batch_ewald_reciprocal_space_fill_structure_factors,
@@ -114,12 +117,33 @@ def _jax_can_tile_ewald_recip() -> bool:
 # ==============================================================================
 
 
+def _on_cuda_dispatch(call, reference: jax.Array, dtype):
+    """Run ``call(on_cuda)`` with the platform that ``reference`` lives on.
+
+    The real-space cores evaluate float32 inputs in float32 only on CUDA, as the
+    Torch and Warp launchers do. Eagerly ``reference`` has a concrete device.
+    While tracing it has none, so :func:`jax.lax.platform_dependent` defers the
+    choice to lowering. float64 inputs use the same kernel on every platform.
+    """
+    if jnp.dtype(dtype) == jnp.float64:
+        return call(True)
+    try:
+        platforms = {device.platform for device in reference.devices()}
+    except (AttributeError, jax.errors.ConcretizationTypeError):
+        return jax.lax.platform_dependent(
+            cpu=lambda: call(False),
+            default=lambda: call(True),
+        )
+    return call(bool(platforms & {"gpu", "cuda", "rocm"}))
+
+
 @functools.cache
 def _jax_ewald_real_forward(
     batched: bool,
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    on_cuda: bool,
 ):
     """Return the lazy JAX wrapper for a factory-backed Ewald real forward kernel."""
     return make_jax_kernel_factory(
@@ -130,6 +154,7 @@ def _jax_ewald_real_forward(
             deriv_state=deriv_state,
             cell_grad=cell_grad,
             order="forward",
+            core_scalar=_core_scalar_for_platform(wp_dtype, on_cuda=on_cuda),
         ),
         4,
         ["pair_energies", "atomic_forces", "charge_gradients", "virial"],
@@ -142,6 +167,7 @@ def _jax_ewald_real_double_backward(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    on_cuda: bool,
 ):
     """Return the lazy JAX wrapper for a factory-backed Ewald real HVP kernel."""
     output_names = ["grad_grad_energy", "grad_positions", "grad_charges"]
@@ -155,6 +181,7 @@ def _jax_ewald_real_double_backward(
             deriv_state=deriv_state,
             cell_grad=cell_grad,
             order="double_backward",
+            core_scalar=_core_scalar_for_platform(wp_dtype, on_cuda=on_cuda),
         ),
         len(output_names),
         output_names,
@@ -639,30 +666,34 @@ def _launch_ewald_real_forward_factory(
         else _empty_mat(dtype)
     )
 
-    kernel = _jax_ewald_real_forward(
-        is_batched,
-        neighbor_input,
-        deriv_state,
-        compute_virial,
-    )[dtype]
-    energies, forces, charge_grads, virial = kernel(
-        positions,
-        charges,
-        cell,
-        batch_arg,
-        idx_arg,
-        ptr_arg,
-        shifts_arg,
-        matrix_arg,
-        matrix_shifts_arg,
-        int(mask_value),
-        alpha,
-        energies,
-        forces_arg,
-        charge_arg,
-        virial_arg,
-        launch_dims=(num_atoms,),
-    )
+    def launch(on_cuda: bool):
+        kernel = _jax_ewald_real_forward(
+            is_batched,
+            neighbor_input,
+            deriv_state,
+            compute_virial,
+            on_cuda,
+        )[dtype]
+        return kernel(
+            positions,
+            charges,
+            cell,
+            batch_arg,
+            idx_arg,
+            ptr_arg,
+            shifts_arg,
+            matrix_arg,
+            matrix_shifts_arg,
+            int(mask_value),
+            alpha,
+            energies,
+            forces_arg,
+            charge_arg,
+            virial_arg,
+            launch_dims=(num_atoms,),
+        )
+
+    energies, forces, charge_grads, virial = _on_cuda_dispatch(launch, positions, dtype)
 
     return (
         energies,
@@ -1984,12 +2015,7 @@ def _ewald_real_energy_derivatives_jvp_impl(
         shifts_i32 = _empty_vec(jnp.int32)
         matrix_i32 = neighbor_matrix.astype(jnp.int32)
         matrix_shifts_i32 = neighbor_matrix_shifts.astype(jnp.int32)
-        kernel = _jax_ewald_real_double_backward(
-            batch_idx is not None,
-            "matrix",
-            deriv_state,
-            False,
-        )[dtype]
+        neighbor_input = "matrix"
     else:
         if neighbor_list is None or neighbor_ptr is None or neighbor_shifts is None:
             raise ValueError(
@@ -2000,41 +2026,45 @@ def _ewald_real_energy_derivatives_jvp_impl(
         shifts_i32 = neighbor_shifts.astype(jnp.int32)
         matrix_i32 = _empty_matrix_i32()
         matrix_shifts_i32 = _empty_shift_matrix()
-        kernel = _jax_ewald_real_double_backward(
-            batch_idx is not None,
-            "list",
-            deriv_state,
-            False,
-        )[dtype]
+        neighbor_input = "list"
 
     grad_energy = jnp.ones((num_systems,), dtype=jnp.float64)
-    grad_grad_energy = jnp.zeros((num_systems,), dtype=jnp.float64)
-    grad_positions = jnp.zeros((num_atoms, 3), dtype=dtype)
-    grad_charges = jnp.zeros((num_atoms,), dtype=jnp.float64)
+    grad_grad_energy_in = jnp.zeros((num_systems,), dtype=jnp.float64)
+    grad_positions_in = jnp.zeros((num_atoms, 3), dtype=dtype)
+    grad_charges_in = jnp.zeros((num_atoms,), dtype=jnp.float64)
 
-    grad_grad_energy, grad_positions, grad_charges = kernel(
-        v_pos_arr,
-        v_charge_arr,
-        _empty_mat(dtype),
-        grad_energy,
-        positions_cast,
-        charges_cast,
-        cell_cast,
-        batch_i32,
-        idx_j,
-        neighbor_ptr_i32,
-        shifts_i32,
-        matrix_i32,
-        matrix_shifts_i32,
-        int(mask_value),
-        alpha_arr,
-        grad_grad_energy,
-        grad_positions,
-        grad_charges,
-        _empty_mat(dtype),
-        launch_dims=(num_atoms,),
-    )
-    del grad_grad_energy
+    def launch(on_cuda: bool):
+        kernel = _jax_ewald_real_double_backward(
+            batch_idx is not None,
+            neighbor_input,
+            deriv_state,
+            False,
+            on_cuda,
+        )[dtype]
+        return kernel(
+            v_pos_arr,
+            v_charge_arr,
+            _empty_mat(dtype),
+            grad_energy,
+            positions_cast,
+            charges_cast,
+            cell_cast,
+            batch_i32,
+            idx_j,
+            neighbor_ptr_i32,
+            shifts_i32,
+            matrix_i32,
+            matrix_shifts_i32,
+            int(mask_value),
+            alpha_arr,
+            grad_grad_energy_in,
+            grad_positions_in,
+            grad_charges_in,
+            _empty_mat(dtype),
+            launch_dims=(num_atoms,),
+        )
+
+    _, grad_positions, grad_charges = _on_cuda_dispatch(launch, positions_cast, dtype)
     return primal_out, (grad_positions, grad_charges)
 
 

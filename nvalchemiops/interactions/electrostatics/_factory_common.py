@@ -186,13 +186,10 @@ def _use_fp32_electrostatics() -> bool:
     """Device-agnostic fast/legacy decision (no CUDA gate).
 
     Equivalent to ``not electrostatics_uses_legacy_fp32()``. Kept as the
-    fallback for call sites that have not been updated to gate on device
-    explicitly and pass a resolved ``core_scalar`` instead (currently the
-    JAX bindings, whose kernels are specialized per dtype before the device
-    is known) -- for those, this makes the fast path available on CPU too,
-    unlike the torch chain and direct Warp launcher call sites, which pass an
-    explicit, CUDA-gated ``core_scalar`` (see :func:`_resolve_core_scalar`)
-    and never reach this function.
+    fallback for call sites that do not pass a resolved ``core_scalar``. The
+    Torch chain, the direct Warp launcher, and the JAX bindings all pass an
+    explicit, CUDA-gated ``core_scalar`` (see :func:`_resolve_core_scalar`
+    and :func:`_core_scalar_for_platform`) and never reach this function.
     """
     return not electrostatics_uses_legacy_fp32()
 
@@ -219,9 +216,28 @@ def _resolve_core_scalar(wp_dtype: type, device: Any) -> type:
     type
         ``wp.float64`` or ``wp_dtype``.
     """
-    if wp_dtype is wp.float64:
-        return wp.float64
-    if not wp.get_device(device).is_cuda:
+    return _core_scalar_for_platform(wp_dtype, on_cuda=wp.get_device(device).is_cuda)
+
+
+def _core_scalar_for_platform(wp_dtype: type, *, on_cuda: bool) -> type:
+    """Real-space core precision for a caller that knows only its platform.
+
+    Same rule as :func:`_resolve_core_scalar`, for callers such as the JAX
+    bindings that pick a kernel before a Warp device exists.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        Warp scalar dtype of the caller's inputs.
+    on_cuda : bool
+        Whether the kernel will launch on a CUDA device.
+
+    Returns
+    -------
+    type
+        ``wp.float64`` or ``wp_dtype``.
+    """
+    if wp_dtype is wp.float64 or not on_cuda:
         return wp.float64
     return wp.float64 if electrostatics_uses_legacy_fp32() else wp_dtype
 
