@@ -796,11 +796,15 @@ class TestVelocityInitialization:
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("out_variant", [False, True])
-    def test_batch_idx_com_removal_ignores_stale_scratch(self, device, out_variant):
+    @pytest.mark.parametrize("stale", [100.0, float("inf"), float("nan")])
+    def test_batch_idx_com_removal_ignores_stale_scratch(
+        self, device, out_variant, stale
+    ):
         """batch_idx mode removes COM for every system without ``num_systems``.
 
-        Pre-fill ``com_velocities`` with a large value. If a launch covers only
-        the first system, the stale value leaks into the later systems.
+        Pre-fill ``com_velocities`` with a stale value. If a launch covers only
+        the first system, the stale value leaks into the later systems. A
+        non-finite stale value gives non-finite velocities.
         """
         num_systems = 3
         atoms_per_system = 64
@@ -815,7 +819,7 @@ class TestVelocityInitialization:
         total_momentum = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
         total_mass = wp.zeros(num_systems, dtype=wp.float64, device=device)
         com_velocities = wp.empty(num_systems, dtype=wp.vec3d, device=device)
-        com_velocities.fill_(wp.vec3d(100.0, 100.0, 100.0))
+        com_velocities.fill_(wp.vec3d(stale, stale, stale))
         velocities = wp.zeros(total_atoms, dtype=wp.vec3d, device=device)
 
         if out_variant:
@@ -845,6 +849,7 @@ class TestVelocityInitialization:
         wp.synchronize_device(device)
 
         vel_np = velocities.numpy().reshape(num_systems, atoms_per_system, 3)
+        assert np.isfinite(vel_np).all()
         np.testing.assert_allclose(vel_np.mean(axis=1), 0.0, atol=1e-12)
 
 
