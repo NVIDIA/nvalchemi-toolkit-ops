@@ -1503,7 +1503,7 @@ def _launch_both(
 
     ``ref`` is the legacy monopole ``ewald_real_space_energy`` (σ-free); ``new``
     is the GTO ``multipole_real_space_monopole_csr_energy`` at ``sigma_value``
-    (default ``σ = 0`` → bit-identical to ``ref``).
+    (default ``σ = 0`` → bit-identical to ``ref`` in float64).
     """
     inputs = _to_warp(system, device, wp_dtype)
     alpha = wp.from_numpy(
@@ -1546,8 +1546,55 @@ def _launch_both(
     return ref.numpy(), new.numpy()
 
 
+def _parity_tol(ref: np.ndarray, wp_dtype: type) -> dict:
+    """Absolute tolerance for comparing a kernel against a float64 reference.
+
+    The tolerance scales with the largest per-atom energy and with the epsilon
+    of the input dtype. float64 allows a few ULP for a different summation
+    order. float32 allows for the float32 core that the Ewald kernel uses on
+    CUDA.
+    """
+    scale = max(float(np.abs(ref).max()), np.finfo(np.float64).tiny)
+    if wp_dtype == wp.float64:
+        return {"rtol": 0.0, "atol": 64 * np.finfo(np.float64).eps * scale}
+    return {"rtol": 0.0, "atol": 16 * np.finfo(np.float32).eps * scale}
+
+
+def _exact_real_space_energy(
+    system: dict, alpha: float, sigma: float = 0.0
+) -> np.ndarray:
+    """Per-atom l=0 GTO-Ewald real-space energy from ``math.erfc``, in float64.
+
+    Each pair adds ``0.5 * q_i * q_j * (erfc(b r) - erfc(a r)) / r`` to atom ``i``,
+    with ``a = 1/(2 sigma)`` and ``b = 1/(2 sigma_c)``. At ``sigma = 0`` the
+    ``erfc(a r)`` term is zero and ``b = alpha``.
+    """
+    positions = system["positions"]
+    charges = system["charges"]
+    cell = system["cell"][0]
+    idx_j = system["idx_j"]
+    ptr = system["neighbor_ptr"]
+    shifts = system["unit_shifts"]
+    b = 0.5 / math.sqrt(sigma * sigma + 0.25 / (alpha * alpha))
+    energies = np.zeros(system["num_atoms"], dtype=np.float64)
+    for i in range(system["num_atoms"]):
+        for e in range(ptr[i], ptr[i + 1]):
+            j = idx_j[e]
+            sep = positions[j] - positions[i] + shifts[e].astype(np.float64) @ cell
+            r = float(np.linalg.norm(sep))
+            t0 = math.erfc(b * r)
+            if sigma > 0.0:
+                t0 -= math.erfc(r / (2.0 * sigma))
+            energies[i] += 0.5 * charges[i] * charges[j] * t0 / r
+    return energies
+
+
 class TestMonopoleCollapse:
-    r"""l_max=0 branch must reproduce :func:`ewald_real_space_energy` exactly."""
+    r"""l_max=0 branch must reproduce :func:`ewald_real_space_energy`.
+
+    In float64 both kernels use the native ``erfc``, so the per-atom energies
+    agree to 1e-15. For float32 inputs see :func:`_parity_tol`.
+    """
 
     def test_two_atoms_closed_form(self, device):
         """Two opposite charges at r=3, alpha=0.3 — closed-form plus parity."""
@@ -1591,12 +1638,17 @@ class TestMonopoleCollapse:
 
     @pytest.mark.parametrize("seed", [0, 7, 42])
     def test_random_systems_float32(self, device, seed):
-        """Float32 inputs (float64 accumulators). Both kernels agree to 1 ULP float64."""
+        """Float32 inputs (float64 accumulators). Both kernels agree to float32 precision.
+
+        On CUDA the Ewald kernel evaluates float32 inputs in a float32 core, and
+        the multipole kernel evaluates them in float64, so the gap is float32
+        rounding rather than float64 rounding.
+        """
         rng = np.random.default_rng(seed)
         system = _random_system(10, box_size=5.0, rng=rng)
         alpha = 0.5
         ref, new = _launch_both(system, device, alpha, wp_dtype=wp.float32)
-        np.testing.assert_allclose(new, ref, rtol=1e-13, atol=1e-15)
+        np.testing.assert_allclose(new, ref, **_parity_tol(ref, wp.float32))
 
     def test_nonzero_unit_shifts(self, device):
         """Pairs with non-zero periodic shifts: verify that cell · shift is
@@ -1624,6 +1676,23 @@ class TestMonopoleCollapse:
         expected = 0.5 * 1.0 * -1.0 * math.erfc(alpha * 6.0) / 6.0
         assert float(new.sum()) == pytest.approx(expected, abs=1e-7)
 
+    @pytest.mark.parametrize("sigma", [0.0, 0.5])
+    @pytest.mark.parametrize("seed", [0, 7])
+    def test_float64_matches_exact_erfc(self, device, seed, sigma):
+        """float64 l=0 energy matches a ``math.erfc`` sum to float64 precision.
+
+        This fails if the multipole kernel evaluates ``erfc`` with the ~1e-7
+        float32-grade approximation instead of the native float64 ``erfc``.
+        """
+        rng = np.random.default_rng(seed)
+        system = _random_system(25, box_size=5.0, rng=rng)
+        alpha = 0.4
+        _, new = _launch_both(
+            system, device, alpha, wp_dtype=wp.float64, sigma_value=sigma
+        )
+        exact = _exact_real_space_energy(system, alpha, sigma)
+        np.testing.assert_allclose(new, exact, **_parity_tol(exact, wp.float64))
+
 
 class TestT0InteractionTensor:
     """Indirect tests for ``damped_coulomb_T0`` via the public kernel."""
@@ -1648,7 +1717,7 @@ class TestT0InteractionTensor:
             }
             alpha = 0.25
             _, new = _launch_both(system, device, alpha)
-            # wp_erfc's ~1e-7 absolute error dominates at large r → use abs tol.
+            # Absolute tolerance, because erfc(alpha*r)/r is small at large r.
             expected = 0.5 * math.erfc(alpha * r) / r
             assert float(new.sum()) == pytest.approx(expected, abs=1e-7)
 
