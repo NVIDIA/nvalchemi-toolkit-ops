@@ -66,6 +66,25 @@ CUDA 12 environment is required.
 $ pip install 'nvalchemi-toolkit-ops[torch]'
 ```
 
+For a CUDA 12 environment, install the `torch-cu12` extra from the PyTorch
+CUDA 12.6 index. pip reads only the published package metadata, so the index
+must be on the command line. Without it, pip installs a CUDA 13 build of
+PyTorch from PyPI.
+
+```bash
+$ pip install 'nvalchemi-toolkit-ops[torch-cu12]' \
+    --extra-index-url https://download.pytorch.org/whl/cu126
+```
+
+With `uv pip`, select the PyTorch backend instead:
+
+```bash
+$ uv pip install 'nvalchemi-toolkit-ops[torch-cu12]' --torch-backend cu126
+```
+
+PyTorch publishes no CUDA 12 build of PyTorch 2.15 or newer, so the
+`torch-cu12` extra installs PyTorch 2.14 at most.
+
 Verify the PyTorch bindings are available:
 
 ```bash

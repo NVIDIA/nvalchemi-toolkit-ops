@@ -205,7 +205,9 @@ The `torch` and `jax` extras use CUDA 13 by default and are equivalent to the
 explicit `torch-cu13` and `jax-cu13` extras. Use `torch-cu12` and `jax-cu12`
 when CUDA 12.6 PyTorch wheels or CUDA 12 JAX plugins are required. The PyTorch
 indexes used for explicit CUDA selection are `cu130` for CUDA 13 and `cu126`
-for the CUDA 12 fallback.
+for the CUDA 12 fallback. pip and `uv pip` read only the published package
+metadata, so `torch-cu12` needs the `cu126` index on the command line.
+PyTorch publishes no CUDA 12 build of PyTorch 2.15 or newer.
 
 ```bash
 # Standalone install
@@ -216,6 +218,11 @@ uv pip install nvalchemi-toolkit-ops torch==2.11.0
 uv pip install nvalchemi-toolkit-ops \
     torch==2.11.0+cu130 \
     --extra-index-url https://download.pytorch.org/whl/cu130
+
+# CUDA 12 PyTorch wheels
+pip install 'nvalchemi-toolkit-ops[torch-cu12]' \
+    --extra-index-url https://download.pytorch.org/whl/cu126
+uv pip install 'nvalchemi-toolkit-ops[torch-cu12]' --torch-backend cu126
 ```
 
 See the [installation guide](https://nvidia.github.io/nvalchemi-toolkit-ops/userguide/about/install.html#cuda-13-installation)
