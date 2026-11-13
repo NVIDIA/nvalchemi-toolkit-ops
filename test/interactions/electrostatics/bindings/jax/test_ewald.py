@@ -3389,3 +3389,103 @@ class TestEwaldEnergyReduction:
         assert atom_energies.shape == (2,)
         assert system_energies.shape == (1,)
         assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+
+class TestRealSpaceCorePrecision:
+    """JAX real-space cores follow the same device gate as the Warp launcher."""
+
+    @staticmethod
+    def _random_csr_system(num_atoms=16, box=6.0, seed=0):
+        """Neutral random system with a full CSR pair list and zero shifts."""
+        rng = np.random.default_rng(seed)
+        positions = rng.uniform(0.0, box, (num_atoms, 3))
+        charges = rng.uniform(-1.0, 1.0, num_atoms)
+        charges -= charges.mean()
+        cell = np.eye(3) * box
+        idx_i, idx_j = np.where(~np.eye(num_atoms, dtype=bool))
+        neighbor_ptr = np.concatenate(
+            [[0], np.cumsum(np.bincount(idx_i, minlength=num_atoms))]
+        )
+        shifts = np.zeros((idx_j.size, 3), dtype=np.int32)
+        return positions, charges, cell, idx_i, idx_j, neighbor_ptr, shifts
+
+    def _warp_reference(self, system, alpha, wp_dtype, device):
+        """Per-atom energies from the Warp launcher, which gates on device."""
+        import warp as wp
+
+        from nvalchemiops.interactions.electrostatics.ewald_kernels import (
+            ewald_real_space_energy,
+        )
+
+        positions, charges, cell, _, idx_j, neighbor_ptr, shifts = system
+        np_dtype = np.float32 if wp_dtype == wp.float32 else np.float64
+        vec = wp.vec3f if wp_dtype == wp.float32 else wp.vec3d
+        mat = wp.mat33f if wp_dtype == wp.float32 else wp.mat33d
+        energies = wp.zeros(positions.shape[0], dtype=wp.float64, device=device)
+        ewald_real_space_energy(
+            wp.array(positions.astype(np_dtype), dtype=vec, device=device),
+            wp.array(charges.astype(np_dtype), dtype=wp_dtype, device=device),
+            wp.array(cell[None].astype(np_dtype), dtype=mat, device=device),
+            wp.array(idx_j.astype(np.int32), dtype=wp.int32, device=device),
+            wp.array(neighbor_ptr.astype(np.int32), dtype=wp.int32, device=device),
+            wp.array(shifts, dtype=wp.vec3i, device=device),
+            wp.array(np.array([alpha], dtype=np_dtype), dtype=wp_dtype, device=device),
+            energies,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
+        return energies.numpy()
+
+    def _jax_energies(self, system, alpha, dtype, jax_device, jit):
+        """Per-atom energies from the JAX binding on ``jax_device``."""
+        positions, charges, cell, idx_i, idx_j, neighbor_ptr, shifts = system
+
+        def put(array, array_dtype):
+            return jax.device_put(jnp.asarray(array, dtype=array_dtype), jax_device)
+
+        def run(pos, chg, cel, nl, ptr, sh):
+            return ewald_real_space(
+                pos,
+                chg,
+                cel,
+                alpha,
+                neighbor_list=nl,
+                neighbor_ptr=ptr,
+                neighbor_shifts=sh,
+            )
+
+        args = (
+            put(positions, dtype),
+            put(charges, dtype),
+            put(cell, dtype),
+            put(np.stack([idx_i, idx_j]), jnp.int32),
+            put(neighbor_ptr, jnp.int32),
+            put(shifts, jnp.int32),
+        )
+        return np.asarray(jax.jit(run)(*args) if jit else run(*args))
+
+    @pytest.mark.parametrize("jit", [False, True])
+    def test_cpu_float32_matches_warp_launcher(self, jit):
+        """CPU float32 inputs evaluate in float64, as the Warp launcher does.
+
+        Before the gate, the JAX path evaluated CPU float32 inputs in a
+        float32 core and differed from Torch and Warp by about 3e-8 per atom.
+        """
+        import warp as wp
+
+        system = self._random_csr_system()
+        alpha = 0.4
+        ref = self._warp_reference(system, alpha, wp.float32, "cpu")
+        got = self._jax_energies(system, alpha, jnp.float32, jax.devices("cpu")[0], jit)
+        np.testing.assert_array_equal(got, ref)
+
+    @pytest.mark.parametrize("jit", [False, True])
+    def test_cuda_float32_matches_warp_launcher(self, device, jit):
+        """CUDA float32 inputs keep the float32 core, as the Warp launcher does."""
+        import warp as wp
+
+        system = self._random_csr_system()
+        alpha = 0.4
+        ref = self._warp_reference(system, alpha, wp.float32, "cuda:0")
+        got = self._jax_energies(system, alpha, jnp.float32, jax.devices("gpu")[0], jit)
+        np.testing.assert_array_equal(got, ref)
