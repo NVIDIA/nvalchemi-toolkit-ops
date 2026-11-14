@@ -4,6 +4,13 @@
 
 ### Added
 
+- `langevin_baoab_half_step` and `langevin_baoab_half_step_out` accept the
+  `random_seed` as a one-element `wp.array(dtype=wp.int32)` in device memory.
+  The kernel reads it at run time and a one-thread kernel advances it by one
+  after the launch, so a CUDA graph that captured the half step draws fresh
+  noise on every replay (a Python `int` seed is a constant of the captured
+  launch and repeats the same noise). `seed[0] == s` reproduces `random_seed=s`
+  bit for bit. An `int` seed behaves as before.
 - Multipole PME and Ewald accept an optional `total_charge` for the
   uniform-background correction, so a caller holding part of a system can pass
   the globally reduced charge. The batched PME and Ewald entry points also take
