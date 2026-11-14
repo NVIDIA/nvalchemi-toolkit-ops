@@ -829,6 +829,23 @@ _half_step_families_dseed = _build_half_step_families(wp.array(dtype=wp.int32))
 _half_step_out_families_dseed = _build_half_step_out_families(wp.array(dtype=wp.int32))
 
 
+def _check_device_seed(seed: wp.array, positions: wp.array, device) -> None:
+    """Validate a device-side RNG seed before any launch (the kernels read and advance ``seed[0]``)."""
+    if seed.dtype != wp.int32:
+        raise TypeError(
+            f"device random_seed must have dtype wp.int32, got {seed.dtype}"
+        )
+    if seed.ndim != 1 or tuple(seed.shape) != (1,):
+        raise ValueError(
+            f"device random_seed must have shape (1,), got {tuple(seed.shape)}"
+        )
+    expected = positions.device if device is None else wp.get_device(device)
+    if seed.device != expected:
+        raise ValueError(
+            f"device random_seed is on {seed.device}, but the integrator arrays are on {expected}"
+        )
+
+
 # ==============================================================================
 # Functional Interface - Mutating
 # ==============================================================================
@@ -962,6 +979,8 @@ def langevin_baoab_half_step(
     langevin_baoab_finalize : Complete the BAOAB step
     """
     device_seed = isinstance(random_seed, wp.array)
+    if device_seed:
+        _check_device_seed(random_seed, positions, device)
     seed = random_seed if device_seed else wp.uint64(random_seed)
     dispatch_family(
         _half_step_families_dseed if device_seed else _half_step_families,
@@ -1143,6 +1162,8 @@ def langevin_baoab_half_step_out(
     validate_out_array(positions_out, positions, "positions_out")
     validate_out_array(velocities_out, velocities, "velocities_out")
     device_seed = isinstance(random_seed, wp.array)
+    if device_seed:
+        _check_device_seed(random_seed, positions, device)
     seed = random_seed if device_seed else wp.uint64(random_seed)
     dispatch_family(
         _half_step_out_families_dseed if device_seed else _half_step_out_families,

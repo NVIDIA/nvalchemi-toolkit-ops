@@ -159,6 +159,59 @@ class TestLangevinDeviceSeed:
         np.testing.assert_array_equal(a["velocities"].numpy(), b["velocities"].numpy())
 
 
+class TestLangevinDeviceSeedValidation:
+    """A malformed device seed is rejected on the host, before any launch."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("api", ["inplace", "out"])
+    @pytest.mark.parametrize(
+        "make_seed,exc",
+        [
+            pytest.param(
+                lambda d: wp.zeros(0, dtype=wp.int32, device=d), ValueError, id="empty"
+            ),
+            pytest.param(
+                lambda d: wp.zeros(2, dtype=wp.int32, device=d), ValueError, id="shape2"
+            ),
+            pytest.param(
+                lambda d: wp.zeros((1, 1), dtype=wp.int32, device=d),
+                ValueError,
+                id="ndim2",
+            ),
+            pytest.param(
+                lambda d: wp.zeros(1, dtype=wp.uint64, device=d), TypeError, id="dtype"
+            ),
+            pytest.param(
+                lambda d: wp.zeros(1, dtype=wp.int32, device="cpu"),
+                ValueError,
+                id="device",
+            ),
+        ],
+    )
+    def test_bad_seed_raises(self, device, api, make_seed, exc):
+        arrays, kw = _make_state(device, wp.vec3f, wp.float32, np.float32, "single")
+        seed = make_seed(device)
+        before = arrays["velocities"].numpy().copy()
+        with pytest.raises(exc):
+            if api == "inplace":
+                _half_step(arrays, kw, seed)
+            else:
+                langevin_baoab_half_step_out(
+                    arrays["positions"],
+                    arrays["velocities"],
+                    arrays["forces"],
+                    arrays["masses"],
+                    arrays["dt"],
+                    arrays["temperature"],
+                    arrays["friction"],
+                    seed,
+                    wp.zeros(N_ATOMS, dtype=wp.vec3f, device=device),
+                    wp.zeros(N_ATOMS, dtype=wp.vec3f, device=device),
+                    **kw,
+                )
+        np.testing.assert_array_equal(before, arrays["velocities"].numpy())
+
+
 class TestLangevinDeviceSeedGraph:
     """The device seed under CUDA-graph capture and replay."""
 
