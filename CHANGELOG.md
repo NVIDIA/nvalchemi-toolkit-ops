@@ -4,6 +4,13 @@
 
 ### Added
 
+- `langevin_baoab_half_step` and `langevin_baoab_half_step_out` take an optional,
+  read-only `step_offset` (`wp.array(dtype=wp.int32)`). The kernels draw their
+  noise from `random_seed + step_offset[0]`, read when they run, so a CUDA graph
+  that captured the half step draws fresh noise on every replay once the caller
+  advances the counter (for example `step_offset.add_(1)` on the torch tensor
+  behind it). `random_seed` stays the `uint64` launch argument. `None` or an
+  empty array is offset 0; existing callers see no change.
 - Multipole PME and Ewald accept an optional `total_charge` for the
   uniform-background correction, so a caller holding part of a system can pass
   the globally reduced charge. The batched PME and Ewald entry points also take
