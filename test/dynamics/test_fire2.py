@@ -58,7 +58,7 @@ from nvalchemiops.torch.fire2 import (
 # ==============================================================================
 
 DEVICES = ["cuda:0"]
-CELL_MOTION_DEVICES = ["cpu"] + (
+CPU_AND_CUDA_DEVICES = ["cpu"] + (
     ["cuda:0"] if wp.is_cuda_available() and torch.cuda.is_available() else []
 )
 
@@ -1372,6 +1372,117 @@ class TestFire2TorchRegistration:
 
 class TestFire2TorchCoord:
     """Tests for the PyTorch adapter fire2_step_coord."""
+
+    @pytest.mark.parametrize(
+        "device, n_atoms",
+        [
+            *((device, 4096) for device in CPU_AND_CUDA_DEVICES),
+            pytest.param(
+                "cuda:0",
+                1_048_576,
+                marks=[
+                    pytest.mark.gpu,
+                    pytest.mark.slow,
+                    pytest.mark.skipif(
+                        "cuda:0" not in CPU_AND_CUDA_DEVICES, reason="requires CUDA"
+                    ),
+                ],
+                id="large-cuda",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "options, expected_displacement, expected_dt, expected_alpha",
+        [
+            ({"maxstep": 1 / 1024}, 1 / 1024, 1 / 128, 0.25),
+            (
+                {"delaystep": 0, "dtgrow": 2.0, "tmax": 1.0, "maxstep": 1.0},
+                1 / 32,
+                0.25,
+                0.25 * 0.985,
+            ),
+        ],
+        ids=["clamp", "grow"],
+    )
+    def test_coord_step_uses_same_state_for_all_atoms(
+        self,
+        device,
+        n_atoms,
+        dtype,
+        options,
+        expected_displacement,
+        expected_dt,
+        expected_alpha,
+    ):
+        """Adapt and clamp the timestep once for the entire system."""
+        # The large CUDA case spans enough blocks to expose the race. Use a
+        # power-of-two timestep so float32 reductions of unit forces are exact.
+        positions = torch.zeros((n_atoms, 3), device=device, dtype=dtype)
+        velocities = torch.zeros_like(positions)
+        forces = torch.zeros_like(positions)
+        forces[:, 0] = 1.0
+        batch_idx = torch.zeros(n_atoms, dtype=torch.int32, device=device)
+        dt = torch.full((1,), 0.125, device=device, dtype=dtype)
+        alpha = torch.full_like(dt, 0.25)
+        nsteps_inc = torch.zeros(1, dtype=torch.int32, device=device)
+
+        fire2_step_coord(
+            positions, velocities, forces, batch_idx, alpha, dt, nsteps_inc, **options
+        )
+
+        torch.testing.assert_close(
+            positions, forces * expected_displacement, atol=1e-7, rtol=1e-5
+        )
+        torch.testing.assert_close(dt, torch.full_like(dt, expected_dt))
+        torch.testing.assert_close(alpha, torch.full_like(alpha, expected_alpha))
+        torch.testing.assert_close(nsteps_inc, torch.ones_like(nsteps_inc))
+
+    @pytest.mark.parametrize("device", CPU_AND_CUDA_DEVICES)
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_coord_step_adapts_state_across_group_boundary(self, device, dtype):
+        """A downhill group grows its timestep while an uphill group shrinks it."""
+        # The second group starts inside a mix thread's chunk. Its remaining
+        # atoms also start new chunks and must read the same pre-update state.
+        boundary = 3
+        n_atoms = boundary + 4096
+        positions = torch.zeros((n_atoms, 3), device=device, dtype=dtype)
+        velocities = torch.zeros_like(positions)
+        velocities[boundary:, 0] = -0.5
+        forces = torch.zeros_like(positions)
+        forces[:, 0] = 1.0
+        batch_idx = torch.zeros(n_atoms, dtype=torch.int32, device=device)
+        batch_idx[boundary:] = 1
+        dt = torch.tensor([0.125, 0.25], device=device, dtype=dtype)
+        alpha = torch.tensor([0.75, 0.5], device=device, dtype=dtype)
+        nsteps_inc = torch.tensor([2, 7], device=device, dtype=torch.int32)
+
+        fire2_step_coord(
+            positions,
+            velocities,
+            forces,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            delaystep=0,
+            dtgrow=2.0,
+            dtshrink=0.5,
+            alphashrink=0.5,
+            alpha0=0.25,
+            tmax=1.0,
+            maxstep=1.0,
+        )
+
+        expected_positions = forces * (1 / 32)
+        expected_positions[boundary:] = forces[boundary:] * (1 / 128)
+        torch.testing.assert_close(positions, expected_positions)
+        torch.testing.assert_close(
+            velocities[boundary:], torch.zeros_like(velocities[boundary:])
+        )
+        torch.testing.assert_close(dt, dt.new_tensor([0.25, 0.125]))
+        torch.testing.assert_close(alpha, alpha.new_tensor([0.375, 0.25]))
+        torch.testing.assert_close(nsteps_inc, nsteps_inc.new_tensor([3, 0]))
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
@@ -2703,7 +2814,7 @@ class TestFire2EdgeCases:
         """fire2_step with zero forces but non-zero velocities stays finite.
 
         When all forces are zero but velocities are non-zero: P=v.f=0 (uphill),
-        the f_sumsq=0 guard ensures ratio=0, and kernel 3 zeros velocities
+        the f_sumsq=0 guard ensures ratio=0, and the clamp kernel zeros velocities
         for the uphill system. All outputs must remain finite.
         """
         N, M = 10, 1
@@ -3230,7 +3341,7 @@ class TestFire2TorchCoordCell:
                 **FIRE2_CELL_DEFAULTS,
             )
 
-    @pytest.mark.parametrize("device", CELL_MOTION_DEVICES)
+    @pytest.mark.parametrize("device", CPU_AND_CUDA_DEVICES)
     @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
     def test_cell_only_motion_preserves_fractional_coordinates(
         self, device, torch_dtype

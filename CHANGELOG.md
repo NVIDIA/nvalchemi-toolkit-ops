@@ -26,6 +26,9 @@
 
 ### Fixed
 
+- FIRE2 timestep adaptation and displacement clamping now update shared
+  per-system state after all atom threads finish reading it. This fixes two
+  data races that could give atoms in the same system inconsistent displacements.
 - Multipole PME used the transposed inverse cell for the k-grid, which gave
   wrong energies, forces and stress for triclinic cells.
 - Multipole PME position and cell gradients at `l >= 1` were silently wrong
