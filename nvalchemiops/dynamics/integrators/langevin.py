@@ -130,25 +130,11 @@ __all__ = [
 
 
 @wp.func
-def _seed_value(seed: wp.uint64) -> int:
-    """RNG seed passed as a launch argument (a constant of the launch)."""
-    return int(seed)
-
-
-@wp.func
-def _seed_value(seed: wp.array(dtype=wp.int32)) -> int:  # noqa: F811
-    """RNG seed read from device memory when the kernel runs.
-
-    Nothing about the seed is baked into the launch, so a CUDA graph that
-    captured the kernel draws fresh noise on every replay.
-    """
-    return seed[0]
-
-
-@wp.kernel
-def _advance_seed_kernel(seed: wp.array(dtype=wp.int32)):
-    """Increment the device seed by one (single thread, runs after the half step)."""
-    seed[0] = seed[0] + 1
+def _step_offset_value(step_offset: wp.array(dtype=wp.int32)) -> int:
+    """Step counter added to the RNG seed; ``None`` from Python arrives as an empty array (offset 0)."""
+    if step_offset.shape[0] > 0:
+        return step_offset[0]
+    return 0
 
 
 @wp.kernel
@@ -160,7 +146,8 @@ def _langevin_baoab_half_step_kernel(
     dt: wp.array(dtype=Any),
     temperature: wp.array(dtype=Any),
     friction: wp.array(dtype=Any),
-    random_seed: Any,
+    random_seed: wp.uint64,
+    step_offset: wp.array(dtype=wp.int32),
 ):
     """BAOAB Langevin half-step: B-A-O-A sequence (in-place).
 
@@ -188,6 +175,9 @@ def _langevin_baoab_half_step_kernel(
         Friction coefficient. Shape (1,) for single, (B,) for batched.
     random_seed : int
         Random seed for stochastic forces.
+    step_offset : wp.array(dtype=wp.int32)
+        Read-only step counter in device memory, added to ``random_seed`` when the
+        kernel runs (empty array: offset 0).
 
     Launch Grid
     -----------
@@ -220,7 +210,9 @@ def _langevin_baoab_half_step_kernel(
     c2 = wp.sqrt(c2_sq)
 
     # Generate Gaussian random numbers using Box-Muller
-    rng_state = wp.rand_init(_seed_value(random_seed), atom_idx)
+    rng_state = wp.rand_init(
+        int(random_seed) + _step_offset_value(step_offset), atom_idx
+    )
 
     xi = type(vel)(
         type(kT)(wp.randn(rng_state)),
@@ -250,7 +242,8 @@ def _langevin_baoab_half_step_out_kernel(
     dt: wp.array(dtype=Any),
     temperature: wp.array(dtype=Any),
     friction: wp.array(dtype=Any),
-    random_seed: Any,
+    random_seed: wp.uint64,
+    step_offset: wp.array(dtype=wp.int32),
     positions_out: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
@@ -280,6 +273,9 @@ def _langevin_baoab_half_step_out_kernel(
         Friction coefficient. Shape (1,) for single, (B,) for batched.
     random_seed : int
         Random seed for stochastic forces.
+    step_offset : wp.array(dtype=wp.int32)
+        Read-only step counter in device memory, added to ``random_seed`` when the
+        kernel runs (empty array: offset 0).
     positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)
         Output atomic positions. Shape (N,).
     velocities_out : wp.array(dtype=wp.vec3f or wp.vec3d)
@@ -315,7 +311,9 @@ def _langevin_baoab_half_step_out_kernel(
     c2_sq = kT * (type(kT)(1.0) - c1 * c1) * inv_mass
     c2 = wp.sqrt(c2_sq)
 
-    rng_state = wp.rand_init(_seed_value(random_seed), atom_idx)
+    rng_state = wp.rand_init(
+        int(random_seed) + _step_offset_value(step_offset), atom_idx
+    )
 
     xi = type(vel)(
         type(kT)(wp.randn(rng_state)),
@@ -346,7 +344,8 @@ def _batch_langevin_baoab_half_step_kernel(
     dt: wp.array(dtype=Any),
     temperature: wp.array(dtype=Any),
     friction: wp.array(dtype=Any),
-    random_seed: Any,
+    random_seed: wp.uint64,
+    step_offset: wp.array(dtype=wp.int32),
 ):
     """BAOAB Langevin half-step for batched systems (in-place).
 
@@ -376,6 +375,9 @@ def _batch_langevin_baoab_half_step_kernel(
         Friction coefficient. Shape (1,) for single, (B,) for batched.
     random_seed : int
         Random seed for stochastic forces.
+    step_offset : wp.array(dtype=wp.int32)
+        Read-only step counter in device memory, added to ``random_seed`` when the
+        kernel runs (empty array: offset 0).
 
     Launch Grid
     -----------
@@ -412,7 +414,9 @@ def _batch_langevin_baoab_half_step_kernel(
     c2_sq = kT * (type(kT)(1.0) - c1 * c1) * inv_mass
     c2 = wp.sqrt(c2_sq)
 
-    rng_state = wp.rand_init(_seed_value(random_seed), atom_idx)
+    rng_state = wp.rand_init(
+        int(random_seed) + _step_offset_value(step_offset), atom_idx
+    )
 
     xi = type(vel)(
         type(kT)(wp.randn(rng_state)),
@@ -443,7 +447,8 @@ def _batch_langevin_baoab_half_step_out_kernel(
     dt: wp.array(dtype=Any),
     temperature: wp.array(dtype=Any),
     friction: wp.array(dtype=Any),
-    random_seed: Any,
+    random_seed: wp.uint64,
+    step_offset: wp.array(dtype=wp.int32),
     positions_out: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
@@ -475,6 +480,9 @@ def _batch_langevin_baoab_half_step_out_kernel(
         Friction coefficient. Shape (1,) for single, (B,) for batched.
     random_seed : int
         Random seed for stochastic forces.
+    step_offset : wp.array(dtype=wp.int32)
+        Read-only step counter in device memory, added to ``random_seed`` when the
+        kernel runs (empty array: offset 0).
     positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)
         Output atomic positions. Shape (N,).
     velocities_out : wp.array(dtype=wp.vec3f or wp.vec3d)
@@ -515,7 +523,9 @@ def _batch_langevin_baoab_half_step_out_kernel(
     c2_sq = kT * (type(kT)(1.0) - c1 * c1) * inv_mass
     c2 = wp.sqrt(c2_sq)
 
-    rng_state = wp.rand_init(_seed_value(random_seed), atom_idx)
+    rng_state = wp.rand_init(
+        int(random_seed) + _step_offset_value(step_offset), atom_idx
+    )
 
     xi = type(vel)(
         type(kT)(wp.randn(rng_state)),
@@ -545,7 +555,8 @@ def _langevin_baoab_half_step_ptr_kernel(
     dt: wp.array(dtype=Any),
     temperature: wp.array(dtype=Any),
     friction: wp.array(dtype=Any),
-    random_seed: Any,
+    random_seed: wp.uint64,
+    step_offset: wp.array(dtype=wp.int32),
 ):
     """BAOAB Langevin half-step using atom_ptr (in-place).
 
@@ -571,6 +582,9 @@ def _langevin_baoab_half_step_ptr_kernel(
         Friction coefficient per system. Shape (num_systems,).
     random_seed : int
         Random seed for stochastic forces.
+    step_offset : wp.array(dtype=wp.int32)
+        Read-only step counter in device memory, added to ``random_seed`` when the
+        kernel runs (empty array: offset 0).
 
     Launch Grid
     -----------
@@ -611,7 +625,7 @@ def _langevin_baoab_half_step_ptr_kernel(
         c2 = wp.sqrt(c2_sq)
 
         # Generate Gaussian random numbers
-        rng_state = wp.rand_init(_seed_value(random_seed), i)
+        rng_state = wp.rand_init(int(random_seed) + _step_offset_value(step_offset), i)
         xi = type(vel)(
             type(kT)(wp.randn(rng_state)),
             type(kT)(wp.randn(rng_state)),
@@ -641,7 +655,8 @@ def _langevin_baoab_half_step_ptr_out_kernel(
     dt: wp.array(dtype=Any),
     temperature: wp.array(dtype=Any),
     friction: wp.array(dtype=Any),
-    random_seed: Any,
+    random_seed: wp.uint64,
+    step_offset: wp.array(dtype=wp.int32),
     positions_out: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
@@ -669,6 +684,9 @@ def _langevin_baoab_half_step_ptr_out_kernel(
         Friction coefficient per system. Shape (num_systems,).
     random_seed : int
         Random seed for stochastic forces.
+    step_offset : wp.array(dtype=wp.int32)
+        Read-only step counter in device memory, added to ``random_seed`` when the
+        kernel runs (empty array: offset 0).
     positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)
         Output positions. Shape (num_atoms_total,).
     velocities_out : wp.array(dtype=wp.vec3f or wp.vec3d)
@@ -712,7 +730,7 @@ def _langevin_baoab_half_step_ptr_out_kernel(
         c2_sq = kT * (type(kT)(1.0) - c1 * c1) * inv_mass
         c2 = wp.sqrt(c2_sq)
 
-        rng_state = wp.rand_init(_seed_value(random_seed), i)
+        rng_state = wp.rand_init(int(random_seed) + _step_offset_value(step_offset), i)
         xi = type(vel)(
             type(kT)(wp.randn(rng_state)),
             type(kT)(wp.randn(rng_state)),
@@ -731,119 +749,121 @@ def _langevin_baoab_half_step_ptr_out_kernel(
 # Kernel Overloads via KernelFamily
 # ==============================================================================
 
-# Half-step families are built once per seed argument type: ``wp.uint64`` (the seed is a launch
-# argument) and ``wp.array(dtype=wp.int32)`` (the seed lives in device memory and is read at run time).
+# Half-step (inplace) -- keyed by vec_dtype
+_half_step_families = build_family_dict(
+    _langevin_baoab_half_step_kernel,
+    lambda v, t: [
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.uint64,
+        wp.array(dtype=wp.int32),
+    ],
+    _batch_langevin_baoab_half_step_kernel,
+    lambda v, t: [
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=t),
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.uint64,
+        wp.array(dtype=wp.int32),
+    ],
+    _langevin_baoab_half_step_ptr_kernel,
+    lambda v, t: [
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=t),
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.uint64,
+        wp.array(dtype=wp.int32),
+    ],
+)
+
+# Half-step (out) -- keyed by vec_dtype
+_half_step_out_families = build_family_dict(
+    _langevin_baoab_half_step_out_kernel,
+    lambda v, t: [
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.uint64,
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+    ],
+    _batch_langevin_baoab_half_step_out_kernel,
+    lambda v, t: [
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=t),
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.uint64,
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+    ],
+    _langevin_baoab_half_step_ptr_out_kernel,
+    lambda v, t: [
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+        wp.array(dtype=t),
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.array(dtype=t),
+        wp.uint64,
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=v),
+        wp.array(dtype=v),
+    ],
+)
 
 
-def _build_half_step_families(seed_t) -> dict:
-    """Half-step (inplace) families keyed by vec_dtype, for one seed argument type."""
-    return build_family_dict(
-        _langevin_baoab_half_step_kernel,
-        lambda v, t: [
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            seed_t,
-        ],
-        _batch_langevin_baoab_half_step_kernel,
-        lambda v, t: [
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=t),
-            wp.array(dtype=wp.int32),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            seed_t,
-        ],
-        _langevin_baoab_half_step_ptr_kernel,
-        lambda v, t: [
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=t),
-            wp.array(dtype=wp.int32),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            seed_t,
-        ],
-    )
+_EMPTY_STEP_OFFSET: dict[str, wp.array] = {}
 
 
-def _build_half_step_out_families(seed_t) -> dict:
-    """Half-step (out) families keyed by vec_dtype, for one seed argument type."""
-    return build_family_dict(
-        _langevin_baoab_half_step_out_kernel,
-        lambda v, t: [
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            seed_t,
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-        ],
-        _batch_langevin_baoab_half_step_out_kernel,
-        lambda v, t: [
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=t),
-            wp.array(dtype=wp.int32),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            seed_t,
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-        ],
-        _langevin_baoab_half_step_ptr_out_kernel,
-        lambda v, t: [
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-            wp.array(dtype=t),
-            wp.array(dtype=wp.int32),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            wp.array(dtype=t),
-            seed_t,
-            wp.array(dtype=v),
-            wp.array(dtype=v),
-        ],
-    )
-
-
-_half_step_families = _build_half_step_families(wp.uint64)
-_half_step_out_families = _build_half_step_out_families(wp.uint64)
-_half_step_families_dseed = _build_half_step_families(wp.array(dtype=wp.int32))
-_half_step_out_families_dseed = _build_half_step_out_families(wp.array(dtype=wp.int32))
-
-
-def _check_device_seed(seed: wp.array, positions: wp.array, device) -> None:
-    """Validate a device-side RNG seed before any launch (the kernels read and advance ``seed[0]``)."""
-    if seed.dtype != wp.int32:
-        raise TypeError(
-            f"device random_seed must have dtype wp.int32, got {seed.dtype}"
-        )
-    if seed.ndim != 1 or tuple(seed.shape) != (1,):
-        raise ValueError(
-            f"device random_seed must have shape (1,), got {tuple(seed.shape)}"
-        )
+def _resolve_step_offset(step_offset, positions: wp.array, device) -> wp.array:
+    """The ``step_offset`` kernel argument: the caller's int32 device array, or a cached empty array (offset 0) for ``None``."""
     expected = positions.device if device is None else wp.get_device(device)
-    if seed.device != expected:
-        raise ValueError(
-            f"device random_seed is on {seed.device}, but the integrator arrays are on {expected}"
+    if step_offset is None:
+        key = str(expected)
+        if key not in _EMPTY_STEP_OFFSET:
+            _EMPTY_STEP_OFFSET[key] = wp.zeros(0, dtype=wp.int32, device=expected)
+        return _EMPTY_STEP_OFFSET[key]
+    if step_offset.dtype != wp.int32:
+        raise TypeError(
+            f"step_offset must have dtype wp.int32, got {step_offset.dtype}"
         )
+    if step_offset.ndim != 1:
+        raise ValueError(
+            f"step_offset must be 1-D, got shape {tuple(step_offset.shape)}"
+        )
+    if step_offset.device != expected:
+        raise ValueError(
+            f"step_offset is on {step_offset.device}, but the integrator arrays are on {expected}"
+        )
+    return step_offset
 
 
 # ==============================================================================
@@ -859,10 +879,11 @@ def langevin_baoab_half_step(
     dt: wp.array,
     temperature: wp.array,
     friction: wp.array,
-    random_seed: int | wp.array,
+    random_seed: int,
     batch_idx: wp.array = None,
     atom_ptr: wp.array = None,
     device: str = None,
+    step_offset: wp.array | None = None,
 ) -> None:
     r"""
     Perform BAOAB Langevin half-step (B-A-O-A sequence) in-place.
@@ -908,20 +929,22 @@ def langevin_baoab_half_step(
         Temperature :math:`k_B T`. Shape (1,) for single, (B,) for batched.
     friction : wp.array(dtype=wp.float32 or wp.float64)
         Friction coefficient :math:`\gamma`. Shape (1,) for single, (B,) for batched.
-    random_seed : int or wp.array(dtype=wp.int32)
-        Random seed for stochastic forces. A Python ``int`` is a constant of the
-        launch. A one-element ``wp.array(dtype=wp.int32)`` on the same device holds
-        the seed of THIS call: the kernel reads it at run time and a second tiny
-        kernel advances it by one afterwards, so a CUDA graph that captured the
-        call draws fresh noise on every replay (an ``int`` seed would be baked into
-        the graph and repeat the same noise). ``seed[0] == s`` reproduces
-        ``random_seed=s`` bit for bit.
+    random_seed : int
+        Random seed for stochastic forces (a launch argument, ``uint64``; seeds of
+        ``2**31`` and above are fine).
     batch_idx : wp.array(dtype=wp.int32), optional
         System index for each atom. For batched mode (atomic operations).
     atom_ptr : wp.array(dtype=wp.int32), optional
         CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).
     device : str, optional
         Warp device. If None, inferred from positions.
+    step_offset : wp.array(dtype=wp.int32), optional
+        Read-only step counter in device memory. The kernel draws its noise from
+        ``random_seed + step_offset[0]`` read when it runs, so a CUDA graph that
+        captured the call draws fresh noise on every replay as long as the caller
+        advances the counter (for example ``step_offset.add_(1)`` on the torch
+        tensor behind it); a Python ``int`` seed alone is baked into the graph.
+        ``None`` or an empty array means offset 0. The op never writes it.
 
     Example
     -------
@@ -978,12 +1001,10 @@ def langevin_baoab_half_step(
     --------
     langevin_baoab_finalize : Complete the BAOAB step
     """
-    device_seed = isinstance(random_seed, wp.array)
-    if device_seed:
-        _check_device_seed(random_seed, positions, device)
-    seed = random_seed if device_seed else wp.uint64(random_seed)
+    seed = wp.uint64(random_seed)
+    offset = _resolve_step_offset(step_offset, positions, device)
     dispatch_family(
-        _half_step_families_dseed if device_seed else _half_step_families,
+        _half_step_families,
         positions,
         batch_idx=batch_idx,
         atom_ptr=atom_ptr,
@@ -997,6 +1018,7 @@ def langevin_baoab_half_step(
             temperature,
             friction,
             seed,
+            offset,
         ],
         inputs_batch=[
             positions,
@@ -1008,6 +1030,7 @@ def langevin_baoab_half_step(
             temperature,
             friction,
             seed,
+            offset,
         ],
         inputs_ptr=[
             positions,
@@ -1019,12 +1042,9 @@ def langevin_baoab_half_step(
             temperature,
             friction,
             seed,
+            offset,
         ],
     )
-    if device_seed:
-        wp.launch(
-            _advance_seed_kernel, dim=1, inputs=[random_seed], device=random_seed.device
-        )
 
 
 def langevin_baoab_finalize(
@@ -1089,12 +1109,13 @@ def langevin_baoab_half_step_out(
     dt: wp.array,
     temperature: wp.array,
     friction: wp.array,
-    random_seed: int | wp.array,
+    random_seed: int,
     positions_out: wp.array,
     velocities_out: wp.array,
     batch_idx: wp.array = None,
     atom_ptr: wp.array = None,
     device: str = None,
+    step_offset: wp.array | None = None,
 ) -> tuple[wp.array, wp.array]:
     r"""
     Perform BAOAB Langevin half-step (B-A-O-A sequence) non-mutating.
@@ -1137,10 +1158,8 @@ def langevin_baoab_half_step_out(
         Temperature :math:`k_B T`. Shape (1,) for single, (B,) for batched.
     friction : wp.array
         Friction coefficient :math:`\gamma`. Shape (1,) for single, (B,) for batched.
-    random_seed : int or wp.array(dtype=wp.int32)
-        Random seed for stochastic forces. A one-element ``wp.array(dtype=wp.int32)``
-        holds the seed in device memory (read at run time, advanced by one after
-        the launch); see :func:`langevin_baoab_half_step`.
+    random_seed : int
+        Random seed for stochastic forces (a launch argument, ``uint64``).
     positions_out : wp.array
         Pre-allocated output array for new positions.  Must match
         ``positions`` in shape, dtype, and device.
@@ -1153,6 +1172,13 @@ def langevin_baoab_half_step_out(
         CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).
     device : str, optional
         Warp device. If None, inferred from positions.
+    step_offset : wp.array(dtype=wp.int32), optional
+        Read-only step counter in device memory. The kernel draws its noise from
+        ``random_seed + step_offset[0]`` read when it runs, so a CUDA graph that
+        captured the call draws fresh noise on every replay as long as the caller
+        advances the counter (for example ``step_offset.add_(1)`` on the torch
+        tensor behind it); a Python ``int`` seed alone is baked into the graph.
+        ``None`` or an empty array means offset 0. The op never writes it.
 
     Returns
     -------
@@ -1161,12 +1187,10 @@ def langevin_baoab_half_step_out(
     """
     validate_out_array(positions_out, positions, "positions_out")
     validate_out_array(velocities_out, velocities, "velocities_out")
-    device_seed = isinstance(random_seed, wp.array)
-    if device_seed:
-        _check_device_seed(random_seed, positions, device)
-    seed = random_seed if device_seed else wp.uint64(random_seed)
+    seed = wp.uint64(random_seed)
+    offset = _resolve_step_offset(step_offset, positions, device)
     dispatch_family(
-        _half_step_out_families_dseed if device_seed else _half_step_out_families,
+        _half_step_out_families,
         positions,
         batch_idx=batch_idx,
         atom_ptr=atom_ptr,
@@ -1180,6 +1204,7 @@ def langevin_baoab_half_step_out(
             temperature,
             friction,
             seed,
+            offset,
             positions_out,
             velocities_out,
         ],
@@ -1193,6 +1218,7 @@ def langevin_baoab_half_step_out(
             temperature,
             friction,
             seed,
+            offset,
             positions_out,
             velocities_out,
         ],
@@ -1206,14 +1232,11 @@ def langevin_baoab_half_step_out(
             temperature,
             friction,
             seed,
+            offset,
             positions_out,
             velocities_out,
         ],
     )
-    if device_seed:
-        wp.launch(
-            _advance_seed_kernel, dim=1, inputs=[random_seed], device=random_seed.device
-        )
     return positions_out, velocities_out
 
 

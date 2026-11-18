@@ -14,14 +14,20 @@
 # limitations under the License.
 
 """
-Unit tests for the device-side RNG seed of the Langevin half step.
+Unit tests for the device-side step offset of the Langevin half step.
+
+``random_seed`` stays the ``wp.uint64`` launch argument; an optional, read-only
+``step_offset`` (``wp.array(dtype=wp.int32)``) is added to it when the kernel runs
+(``None`` or an empty array: offset 0). The caller advances the counter.
 
 Tests cover:
-- a ``wp.array(dtype=wp.int32)`` seed reproduces the Python ``int`` seed bit for
-  bit (in-place and ``_out`` APIs; single, batch_idx and atom_ptr modes)
-- the device seed is advanced by one per call
-- a half step captured in a CUDA graph draws fresh noise on every replay and
-  follows the eager ``random_seed + k`` sequence bitwise
+- ``step_offset=None`` and an empty offset equal the plain int-seed op bit for bit
+- eager offsets 0..4 equal the seeds ``s .. s + 4`` (in-place and ``_out`` APIs;
+  single, batch_idx and atom_ptr modes); the op never writes the offset
+- seeds of ``2**31`` and above work
+- a malformed offset is rejected before any launch
+- a half step captured in a CUDA graph draws fresh noise on every replay when the
+  caller advances the counter inside the graph
 """
 
 import numpy as np
@@ -80,7 +86,7 @@ def _make_state(device, vec, scl, np_dtype, mode):
     return arrays, kw
 
 
-def _half_step(arrays, kw, seed):
+def _half_step(arrays, kw, seed, step_offset=None):
     langevin_baoab_half_step(
         arrays["positions"],
         arrays["velocities"],
@@ -90,89 +96,114 @@ def _half_step(arrays, kw, seed):
         arrays["temperature"],
         arrays["friction"],
         seed,
+        step_offset=step_offset,
         **kw,
     )
 
 
-def _dev_seed(value, device):
+@wp.kernel
+def _bump(counter: wp.array(dtype=wp.int32)):
+    """Stand-in for the caller's ``step_offset.add_(1)``."""
+    counter[0] = counter[0] + 1
+
+
+def _offset(value, device):
     return wp.array([value], dtype=wp.int32, device=device)
 
 
-class TestLangevinDeviceSeed:
-    """Device-side seed against the Python ``int`` seed."""
+def _out_step(base, kw, seed, step_offset, device, vec):
+    pos_out = wp.zeros(N_ATOMS, dtype=vec, device=device)
+    vel_out = wp.zeros(N_ATOMS, dtype=vec, device=device)
+    langevin_baoab_half_step_out(
+        base["positions"],
+        base["velocities"],
+        base["forces"],
+        base["masses"],
+        base["dt"],
+        base["temperature"],
+        base["friction"],
+        seed,
+        pos_out,
+        vel_out,
+        step_offset=step_offset,
+        **kw,
+    )
+    return pos_out.numpy(), vel_out.numpy()
+
+
+class TestLangevinStepOffset:
+    """``step_offset`` against the Python ``int`` seed."""
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("mode", MODES)
     @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
-    def test_matches_int_seed_and_advances(
+    def test_none_equals_int_seed(
         self, device, mode, dtype_vec, dtype_scalar, np_dtype
     ):
-        """seed[0] == s equals random_seed=s bitwise, and seed[0] is s + 1 afterwards, over a sequence of steps."""
+        """step_offset=None is bitwise the int-seed op (same call, same noise)."""
+        a, kw = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
+        b, _ = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
+        _half_step(a, kw, 5)
+        _half_step(b, kw, 5, step_offset=None)
+        for name in ("positions", "velocities"):
+            np.testing.assert_array_equal(a[name].numpy(), b[name].numpy())
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_empty_offset_is_zero(
+        self, device, mode, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """An empty step_offset array is offset 0 (a defined default, not an out-of-bounds read)."""
+        a, kw = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
+        b, _ = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
+        _half_step(a, kw, 5)
+        _half_step(b, kw, 5, step_offset=wp.zeros(0, dtype=wp.int32, device=device))
+        for name in ("positions", "velocities"):
+            np.testing.assert_array_equal(a[name].numpy(), b[name].numpy())
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("base_seed", [9, 2**31 + 7, 2**40 + 3])
+    def test_offset_equals_shifted_seed(
+        self, device, mode, dtype_vec, dtype_scalar, np_dtype, base_seed
+    ):
+        """Offsets 0..4 with seed s equal the int seeds s .. s + 4, bitwise; the op leaves the offset alone."""
         ref, kw = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
         dev, _ = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
-        seed = _dev_seed(1234, device)
-        for k in range(4):
-            _half_step(ref, kw, 1234 + k)
-            _half_step(dev, kw, seed)
-            assert seed.numpy()[0] == 1234 + k + 1
+        for k in range(5):
+            off = _offset(k, device)
+            _half_step(ref, kw, base_seed + k)
+            _half_step(dev, kw, base_seed, step_offset=off)
+            assert off.numpy()[0] == k
         for name in ("positions", "velocities"):
             np.testing.assert_array_equal(ref[name].numpy(), dev[name].numpy())
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("mode", MODES)
     @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
-    def test_out_api_matches_int_seed(
+    def test_out_api_matches_shifted_seed(
         self, device, mode, dtype_vec, dtype_scalar, np_dtype
     ):
-        """The non-mutating API takes the device seed too (inputs untouched, outputs bitwise equal)."""
+        """The non-mutating API takes the offset too (inputs untouched, outputs bitwise equal to the shifted int seed)."""
         base, kw = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
-        seed = _dev_seed(77, device)
-        outs = []
-        for s in (77, seed):
-            pos_out = wp.zeros(N_ATOMS, dtype=dtype_vec, device=device)
-            vel_out = wp.zeros(N_ATOMS, dtype=dtype_vec, device=device)
-            langevin_baoab_half_step_out(
-                base["positions"],
-                base["velocities"],
-                base["forces"],
-                base["masses"],
-                base["dt"],
-                base["temperature"],
-                base["friction"],
-                s,
-                pos_out,
-                vel_out,
-                **kw,
-            )
-            outs.append((pos_out.numpy(), vel_out.numpy()))
-        np.testing.assert_array_equal(outs[0][0], outs[1][0])
-        np.testing.assert_array_equal(outs[0][1], outs[1][1])
-        assert seed.numpy()[0] == 78
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_int_seed_unchanged(self, device):
-        """A Python int seed stays a launch constant: same seed, same noise."""
-        a, kw = _make_state(device, wp.vec3f, wp.float32, np.float32, "batch_idx")
-        b, _ = _make_state(device, wp.vec3f, wp.float32, np.float32, "batch_idx")
-        _half_step(a, kw, 5)
-        _half_step(b, kw, 5)
-        np.testing.assert_array_equal(a["velocities"].numpy(), b["velocities"].numpy())
+        want = _out_step(base, kw, 80, None, device, dtype_vec)
+        got = _out_step(base, kw, 77, _offset(3, device), device, dtype_vec)
+        np.testing.assert_array_equal(want[0], got[0])
+        np.testing.assert_array_equal(want[1], got[1])
+        none = _out_step(base, kw, 80, None, device, dtype_vec)
+        np.testing.assert_array_equal(want[1], none[1])
 
 
-class TestLangevinDeviceSeedValidation:
-    """A malformed device seed is rejected on the host, before any launch."""
+class TestLangevinStepOffsetValidation:
+    """A malformed step_offset is rejected on the host, before any launch."""
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("api", ["inplace", "out"])
     @pytest.mark.parametrize(
-        "make_seed,exc",
+        "make_offset,exc",
         [
-            pytest.param(
-                lambda d: wp.zeros(0, dtype=wp.int32, device=d), ValueError, id="empty"
-            ),
-            pytest.param(
-                lambda d: wp.zeros(2, dtype=wp.int32, device=d), ValueError, id="shape2"
-            ),
             pytest.param(
                 lambda d: wp.zeros((1, 1), dtype=wp.int32, device=d),
                 ValueError,
@@ -188,32 +219,20 @@ class TestLangevinDeviceSeedValidation:
             ),
         ],
     )
-    def test_bad_seed_raises(self, device, api, make_seed, exc):
+    def test_bad_offset_raises(self, device, api, make_offset, exc):
         arrays, kw = _make_state(device, wp.vec3f, wp.float32, np.float32, "single")
-        seed = make_seed(device)
+        off = make_offset(device)
         before = arrays["velocities"].numpy().copy()
         with pytest.raises(exc):
             if api == "inplace":
-                _half_step(arrays, kw, seed)
+                _half_step(arrays, kw, 1, step_offset=off)
             else:
-                langevin_baoab_half_step_out(
-                    arrays["positions"],
-                    arrays["velocities"],
-                    arrays["forces"],
-                    arrays["masses"],
-                    arrays["dt"],
-                    arrays["temperature"],
-                    arrays["friction"],
-                    seed,
-                    wp.zeros(N_ATOMS, dtype=wp.vec3f, device=device),
-                    wp.zeros(N_ATOMS, dtype=wp.vec3f, device=device),
-                    **kw,
-                )
+                _out_step(arrays, kw, 1, off, device, wp.vec3f)
         np.testing.assert_array_equal(before, arrays["velocities"].numpy())
 
 
-class TestLangevinDeviceSeedGraph:
-    """The device seed under CUDA-graph capture and replay."""
+class TestLangevinStepOffsetGraph:
+    """The step offset under CUDA-graph capture and replay."""
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("mode", MODES)
@@ -225,15 +244,15 @@ class TestLangevinDeviceSeedGraph:
         n_replays = 5
         ref, kw = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
         cap, _ = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
-        seed = _dev_seed(900, device)
-        # warm up (module load / overload build) on a scratch state, then restore the seed
+        offset = _offset(0, device)
+        # warm up (module load / overload build) on a scratch state
         scratch, _ = _make_state(device, dtype_vec, dtype_scalar, np_dtype, mode)
-        _half_step(scratch, kw, seed)
-        seed.fill_(900)
+        _half_step(scratch, kw, 900, step_offset=offset)
         wp.synchronize_device(device)
         with wp.ScopedCapture(device=device) as capture:
-            # capture records the launches without running them
-            _half_step(cap, kw, seed)
+            # capture records the launches without running them; the caller's counter advance is part of the graph
+            _half_step(cap, kw, 900, step_offset=offset)
+            wp.launch(_bump, dim=1, inputs=[offset], device=device)
         v_prev = cap["velocities"].numpy().copy()
         increments = []
         for k in range(n_replays):
@@ -246,7 +265,7 @@ class TestLangevinDeviceSeedGraph:
             np.testing.assert_array_equal(
                 ref["positions"].numpy(), cap["positions"].numpy()
             )
-        assert seed.numpy()[0] == 900 + n_replays
+        assert offset.numpy()[0] == n_replays
         # fresh noise on every replay: no two velocity increments are equal
         for i in range(n_replays):
             for j in range(i + 1, n_replays):
