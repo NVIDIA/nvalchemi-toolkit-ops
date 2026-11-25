@@ -9,7 +9,7 @@ authors = [
 ]
 description = "High-performance NVIDIA Warp primitives for GPU-enabled computational chemistry and atomistic simulation workflows."
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.11,<3.16"
 license = "Apache-2.0"
 dependencies = [
     "warp-lang >= 1.16.0",
@@ -52,15 +52,18 @@ torch-cu13 = [
 ]
 
 jax = [
-    "jax[cuda13]>=0.10.0,<0.10.2",
+    "jax[cuda13]>=0.10.0,<0.10.2; python_version < '3.15'",
+    "jax[cuda13]==0.11.1; python_version >= '3.15'",
 ]
 
 jax-cu12 = [
-    "jax[cuda12]>=0.10.0,<0.10.2",
+    "jax[cuda12]>=0.10.0,<0.10.2; python_version < '3.15'",
+    "jax[cuda12]==0.11.1; python_version >= '3.15'",
 ]
 
 jax-cu13 = [
-    "jax[cuda13]>=0.10.0,<0.10.2",
+    "jax[cuda13]>=0.10.0,<0.10.2; python_version < '3.15'",
+    "jax[cuda13]==0.11.1; python_version >= '3.15'",
 ]
 
 [tool.hatch.build.targets.wheel]

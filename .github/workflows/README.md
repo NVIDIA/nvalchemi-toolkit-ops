@@ -62,9 +62,9 @@ workflow only consumes what it publishes.
 | push to `pull-request/<N>` | `test-minimal` (3 shards) + `test-impacted` + coverage gate |
 | `merge_group` | same as above; restores caches, writes none |
 | push to `main` | `cache-warm.yml`, then `test-full` |
-| `schedule` (nightly) | `cache-warm.yml`, `test-full` (4 Python × CUDA 13), `test-cuda12` |
+| `schedule` (nightly) | `cache-warm.yml`, `test-full` and `test-cuda12` (Python 3.11–3.15) |
 | `pull_request_target: closed` | `cleanup-pr-caches.yml` |
-| label `ciflow:all` on a PR | `test-full` instead of the fast tier |
+| label `ciflow:all` on a PR | `test-full` on CUDA 13 and `test-cuda12` on Python 3.15 instead of the fast tier |
 | label `ciflow:skip` on a PR | no GPU tests |
 
 ## Test tiers
@@ -138,8 +138,8 @@ run. Nightly and on `main`.
                       ref is ephemeral ----------------------->  WRITE nothing
 
    [C] nightly/full   schedule | push->main | label ciflow:all
-       test-full      4 python x CUDA 13, --slow                  READ warp
-       test-cuda12    4 python x CUDA 12, nightly only            READ warp
+       test-full      5 Python versions x CUDA 13, --slow        READ warp
+       test-cuda12    5 Python versions nightly, 3.15 on PR      READ warp
                       each lane keeps its OWN cache line ------>  WRITE warp-<ref>-py<V>-cuda<N>
 ```
 
@@ -179,7 +179,7 @@ unreclaimable.
 ### Why warming covers only py3.12 / CUDA 13
 
 That is the combination the pull-request tier runs, and the only lane where a
-human waits. Warming all eight combinations would cost 3.6 GB of the 10 GB cache
+human waits. Warming all ten combinations would cost 4.5 GB of the 10 GB cache
 budget; one costs 450 MB. The nightly matrix jobs restore *and* save their own
 per-combination cache, so each lane stays warm from its own previous run without
 a dedicated producer.

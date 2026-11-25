@@ -92,9 +92,10 @@ The benchmark modules share a single entry point,
 directory for each reportable run, then promote a complete, reviewed CSV set
 into the documentation only after validation.
 
-JAX is constrained below 0.10.2 because of reported GPU scatter performance
-regressions that affect electrostatics workloads, including Ewald and PME;
-see [JAX issue #38806](https://github.com/jax-ml/jax/issues/38806).
+The JAX extras require `>=0.10.0,<0.10.2` on Python 3.11–3.14 and `==0.11.1`
+on Python 3.15. The older range avoids the GPU scatter-add slowdown reported
+in [JAX issue #38806](https://github.com/jax-ml/jax/issues/38806), which can
+affect electrostatics workloads such as Ewald and PME.
 
 ::::{dropdown} Commands and controls
 

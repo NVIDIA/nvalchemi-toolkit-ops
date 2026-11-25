@@ -60,8 +60,8 @@ runs:
     - name: Setup UV
       shell: bash -x -e -u -o pipefail {0}
       env:
-        UV_VERSION: "0.9.25"
-        UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
+        UV_VERSION: "0.13.10"
+        UV_CHECKSUM: "51781aafe6950cc659f79873e1bdca55fbb9da6e0ef650bf98093a0f0aaaf453"
       run: |
         UV_INSTALLER=$(mktemp)
         curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
