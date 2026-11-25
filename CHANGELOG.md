@@ -74,6 +74,8 @@
 
 ### Changed
 
+- Add Python 3.15 support. JAX extras use 0.11.1 on 3.15 and keep the existing
+  range on 3.11–3.14.
 - The per-(order, lmax) PME multipole kernel modules no longer generate
   Warp adjoint code. Gradients are computed with hand-written backward
   kernels, and skipping the adjoint removes most of the cold
